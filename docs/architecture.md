@@ -163,3 +163,18 @@ The live spike exposed an existing Claude session-limit condition. Structured
 provider limits create per-worker/provider cooldowns so new queued work can use
 other providers without repeatedly launching a known-exhausted provider. An
 in-flight native turn still fails visibly; its possible effects are not replayed.
+
+## Private control gateway
+
+For network binding, the existing launcher process exposes an allowlisted HTTP
+gateway and starts Next.js on a separate loopback port. Workflow callback URLs
+point directly at that private port. The public gateway rejects internal engine
+routes, including encoded traversal variants, and removes untrusted forwarding
+headers. Administrator API access requires the control-plane token or signed
+HttpOnly cookie; enrolled worker tokens grant only worker API access. HTTPS is
+terminated by the private-network proxy. No extra gateway daemon stays resident.
+
+The network-mode smoke starts the real launcher with authentication required,
+verifies token/cookie behavior and cross-origin rejection, checks that internal
+Workflow routes cannot be reached through the gateway, and submits a task whose
+private Workflow callback still dispatches successfully.

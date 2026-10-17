@@ -233,10 +233,12 @@ for a trusted private transport. Revoke a worker with
 
 For private-network exposure, set `HARNESS_BIND_HOST` to the listening interface
 and terminate HTTPS with a tailnet proxy. Network binding enables administrator
-authentication automatically. `/login` accepts the token in
-`<HARNESS_DATA_DIR>/admin-token` and issues an HttpOnly session cookie. Generate
-that file by opening `/login` and submitting a first request; do not publish it
-or put it in git. Worker credentials are separate and cannot administer tasks.
+authentication automatically and starts an allowlisted gateway in the launcher
+process. Next.js and internal Workflow callbacks remain on a separate loopback
+port. Network-mode development does not proxy HMR WebSockets; use loopback
+`pnpm dev` for editing and `pnpm start` for private-network use. `/login` accepts the token in
+`<HARNESS_DATA_DIR>/admin-token` and issues an HttpOnly session cookie. The launcher creates
+that file on network startup; do not publish it or put it in git. Worker credentials are separate and cannot administer tasks.
 The default loopback-only development flow needs no login.
 
 This is a trusted-worker prototype, not a multi-tenant sandbox: native tools run
@@ -277,3 +279,8 @@ Structured Claude usage-limit events also place that worker/provider into a
 cooldown until its reported reset (five minutes if no reset was supplied).
 Queued tasks for other providers can continue. A turn that already encountered
 the limit remains failed for explicit follow-up; it is not silently rerun.
+
+
+Run `pnpm test:security` after a build to exercise the authenticated network gateway.
+See [private deployment preparation](deploy/README.md) for Linux service templates
+and the remaining real-hardware acceptance gates.

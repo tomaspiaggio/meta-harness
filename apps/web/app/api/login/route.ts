@@ -15,7 +15,7 @@ export async function POST(request: Request) {
       { ok: true },
       {
         headers: {
-          "Set-Cookie": `harness_session=${loginCookie()}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400${new URL(request.url).protocol === "https:" ? "; Secure" : ""}`,
+          "Set-Cookie": `harness_session=${loginCookie()}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400${new URL(request.url).protocol === "https:" || !["localhost", "127.0.0.1", "::1"].includes(process.env.HARNESS_BIND_HOST ?? "127.0.0.1") ? "; Secure" : ""}`,
           "Cache-Control": "no-store",
         },
       },

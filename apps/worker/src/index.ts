@@ -3,9 +3,14 @@ import { availableParallelism, freemem, hostname, loadavg } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { captureSnapshot, restoreSnapshot } from "@harness/checkpoints";
-import { executeTurn, type Provider, type RuntimeEvent } from "@harness/core";
+import {
+  executeTurn,
+  HarnessError,
+  type Provider,
+  type RuntimeEvent,
+} from "@harness/core";
 import type { NativeSessionStore } from "@harness/core/native-store";
-import type { WorkerReport } from "@harness/core/scheduling";
+import { parseWorkerReport, type WorkerReport } from "@harness/core/scheduling";
 import { createRuntime } from "@harness/runtimes";
 import type { WorkerAssignment } from "@harness/storage/control";
 import { WorkerClient } from "./client";
@@ -53,7 +58,11 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
   );
 const detected: Provider[] = ["demo"];
 if (executable(process.env.CODEX_BIN ?? "codex")) detected.push("codex");
-if (executable(process.env.CLAUDE_BIN ?? "claude")) detected.push("claude");
+if (
+  process.env.HARNESS_CLAUDE_RUNTIME === "sdk" ||
+  executable(process.env.CLAUDE_BIN ?? "claude")
+)
+  detected.push("claude");
 const providers = process.env.HARNESS_PROVIDERS
   ? (process.env.HARNESS_PROVIDERS.split(",") as Provider[])
   : detected;
@@ -252,6 +261,13 @@ async function lane() {
       console.error(
         `Control connection: ${error instanceof Error ? error.message : String(error)}`,
       );
+      if (
+        error instanceof HarnessError &&
+        (error.status === 401 || error.status === 403)
+      ) {
+        process.exitCode = 1;
+        shutdown.abort(new Error("Worker credential was rejected."));
+      }
     }
     await delay(pollMs, undefined, { signal: shutdown.signal }).catch(() => {});
   }
@@ -260,6 +276,7 @@ async function lane() {
 console.log(
   `Worker ${identity.id}; control ${identity.serverUrl}; ${concurrency} slot(s); idle agents: 0`,
 );
+parseWorkerReport(report());
 let reporting = false;
 const reportingTimer = setInterval(() => {
   if (reporting) return;

@@ -1,0 +1,19 @@
+[Unit]
+Description=Meta Harness execution worker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=meta-harness
+WorkingDirectory=/opt/meta-harness/apps/worker
+EnvironmentFile=/etc/meta-harness/worker.env
+ExecStart=/usr/bin/node --import tsx src/index.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

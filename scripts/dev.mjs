@@ -1,8 +1,11 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createGateway } from "./gateway.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -20,6 +23,31 @@ const env = {
   NEXT_TELEMETRY_DISABLED: "1",
 };
 const bindHost = process.env.HARNESS_BIND_HOST ?? "127.0.0.1";
+const network = !["127.0.0.1", "localhost", "::1"].includes(bindHost);
+let privatePort = Number(process.env.PORT ?? 3000);
+let gateway;
+if (network) {
+  const probe = createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  privatePort = probe.address().port;
+  await new Promise((resolve) => probe.close(resolve));
+  gateway = createGateway(privatePort);
+  await new Promise((resolve, reject) => {
+    gateway.once("error", reject);
+    gateway.listen(Number(process.env.PORT ?? 3000), bindHost, resolve);
+  });
+}
+if (network || process.env.HARNESS_REQUIRE_AUTH === "1") {
+  try {
+    writeFileSync(
+      join(directory, "admin-token"),
+      randomBytes(32).toString("base64url"),
+      { mode: 0o600, flag: "wx" },
+    );
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+}
 const children = [];
 let stopping = false;
 let exitCode = 0;
@@ -27,6 +55,9 @@ function stop(code = 0) {
   if (stopping) return;
   stopping = true;
   exitCode = code;
+  process.exitCode = code;
+  gateway?.close();
+  gateway?.closeAllConnections();
   for (const child of children) {
     try {
       process.kill(-child.pid, "SIGTERM");
@@ -56,7 +87,9 @@ for (const [name, cwd, args] of [
       }),
       production ? "start" : "dev",
       "--hostname",
-      bindHost,
+      "127.0.0.1",
+      "--port",
+      String(privatePort),
     ],
   ],
   ["worker", join(root, "apps/worker"), ["--import", "tsx", "src/index.ts"]],
@@ -69,7 +102,13 @@ for (const [name, cwd, args] of [
     continue;
   const child = spawn(process.execPath, args, {
     cwd,
-    env,
+    env: {
+      ...env,
+      PORT: String(privatePort),
+      ...(network
+        ? { WORKFLOW_LOCAL_BASE_URL: `http://127.0.0.1:${privatePort}` }
+        : {}),
+    },
     stdio: "inherit",
     detached: true,
   });
@@ -88,5 +127,5 @@ for (const [name, cwd, args] of [
   });
 }
 console.log(
-  `Data: ${directory}\nLocal UI: http://127.0.0.1:${env.PORT ?? 3000}`,
+  `Data: ${directory}\nUI: http://${network ? bindHost : "127.0.0.1"}:${env.PORT ?? 3000}${network ? " (use HTTPS through your private proxy)" : ""}`,
 );

@@ -13,7 +13,7 @@
     "start": "node scripts/dev.mjs --production",
     "check": "biome check . && node scripts/check-boundaries.mjs && turbo run typecheck --concurrency=1",
     "format": "biome check --write .",
-    "test": "tsx --test --test-concurrency=1 packages/*/src/*.test.ts",
+    "test": "tsx --test --test-concurrency=1 packages/*/src/*.test.ts scripts/*.test.mjs",
     "smoke": "node scripts/smoke.mjs",
     "workflow": "node scripts/workflow.mjs",
     "test:restart": "node scripts/restart-smoke.mjs",
@@ -21,7 +21,8 @@
     "worker": "node scripts/worker.mjs",
     "worker:enroll": "node --import tsx scripts/enroll-worker.mjs",
     "start:control": "node scripts/dev.mjs --production --control-only",
-    "bench:claude": "node --import tsx scripts/claude-bench.mjs"
+    "bench:claude": "node --import tsx scripts/claude-bench.mjs",
+    "test:security": "node scripts/security-smoke.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

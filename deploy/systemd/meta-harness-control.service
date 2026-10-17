@@ -1,0 +1,19 @@
+[Unit]
+Description=Meta Harness control plane
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=meta-harness
+WorkingDirectory=/opt/meta-harness
+EnvironmentFile=/etc/meta-harness/control.env
+ExecStart=/usr/bin/node scripts/dev.mjs --production --control-only
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
