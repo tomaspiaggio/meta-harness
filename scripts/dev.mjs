@@ -19,6 +19,7 @@ const env = {
   WORKFLOW_LOCAL_DATA_DIR: join(directory, "workflow"),
   NEXT_TELEMETRY_DISABLED: "1",
 };
+const bindHost = process.env.HARNESS_BIND_HOST ?? "127.0.0.1";
 const children = [];
 let stopping = false;
 let exitCode = 0;
@@ -55,11 +56,17 @@ for (const [name, cwd, args] of [
       }),
       production ? "start" : "dev",
       "--hostname",
-      "127.0.0.1",
+      bindHost,
     ],
   ],
   ["worker", join(root, "apps/worker"), ["--import", "tsx", "src/index.ts"]],
 ]) {
+  if (
+    name === "worker" &&
+    (process.env.HARNESS_RUN_WORKER === "0" ||
+      process.argv.includes("--control-only"))
+  )
+    continue;
   const child = spawn(process.execPath, args, {
     cwd,
     env,

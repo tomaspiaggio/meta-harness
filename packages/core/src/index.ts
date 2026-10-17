@@ -45,17 +45,19 @@ export interface ClaimedTurn {
 }
 
 export interface RuntimeInput {
+  turnId?: string;
   session: Session;
   prompt: string;
   instructions: string;
   directory: string;
   signal: AbortSignal;
-  emit: (event: RuntimeEvent) => void;
+  emit: (event: RuntimeEvent) => void | Promise<void>;
 }
 
 export type RuntimeEvent =
   | { type: "text"; text: string }
-  | { type: "native-session"; id: string };
+  | { type: "native-session"; id: string }
+  | { type: "checkpoint" };
 
 export interface AgentRuntime {
   run(input: RuntimeInput): Promise<void>;
@@ -72,14 +74,22 @@ export interface TurnStore {
     now: number,
     leaseMs: number,
   ): boolean;
-  appendOutput(turnId: string, generation: number, text: string): void;
-  saveNativeId(turnId: string, generation: number, nativeId: string): void;
+  appendOutput(
+    turnId: string,
+    generation: number,
+    text: string,
+  ): void | Promise<void>;
+  saveNativeId(
+    turnId: string,
+    generation: number,
+    nativeId: string,
+  ): void | Promise<void>;
   finish(
     turnId: string,
     generation: number,
     status: "completed" | "failed" | "interrupted",
     error?: string,
-  ): void;
+  ): void | Promise<void>;
 }
 
 export function isTerminal(status: TurnStatus): boolean {
@@ -103,31 +113,35 @@ export function readTurnOutcome(store: TurnStore, turnId: string) {
 
 /** No retry here: the runtime may already have produced external effects. */
 export async function executeTurn(
-  store: TurnStore,
+  store: Pick<TurnStore, "appendOutput" | "saveNativeId" | "finish">,
   claim: ClaimedTurn,
   runtime: AgentRuntime,
   directory: string,
   signal: AbortSignal,
+  checkpoint?: () => Promise<void>,
 ): Promise<void> {
   const { turn, session, workspace } = claim;
   try {
     await runtime.run({
+      turnId: turn.id,
       session,
       prompt: turn.prompt,
       instructions: workspace.instructions,
       directory,
       signal,
-      emit(event) {
+      async emit(event) {
         if (event.type === "native-session") {
-          store.saveNativeId(turn.id, turn.generation, event.id);
+          await store.saveNativeId(turn.id, turn.generation, event.id);
+        } else if (event.type === "text") {
+          await store.appendOutput(turn.id, turn.generation, event.text);
         } else {
-          store.appendOutput(turn.id, turn.generation, event.text);
+          await checkpoint?.();
         }
       },
     });
-    store.finish(turn.id, turn.generation, "completed");
+    await store.finish(turn.id, turn.generation, "completed");
   } catch (error) {
-    store.finish(
+    await store.finish(
       turn.id,
       turn.generation,
       signal.aborted ? "interrupted" : "failed",

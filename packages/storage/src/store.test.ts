@@ -134,8 +134,8 @@ test("ordinary execution functions save native state and fail without retrying r
       {
         async run(input) {
           calls++;
-          input.emit({ type: "native-session", id: "resume-me" });
-          input.emit({ type: "text", text: "partial" });
+          await input.emit({ type: "native-session", id: "resume-me" });
+          await input.emit({ type: "text", text: "partial" });
           throw new Error("lost connection after effect");
         },
       },

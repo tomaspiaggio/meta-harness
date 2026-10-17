@@ -108,3 +108,33 @@ read this machine's SQLite database or local provider session store.
 Actual provider subscription authentication, live continuation, checkpoint
 portability, browser state, ARM64 hosts, and hosted network connectivity need
 their own compatibility spikes. This slice does not imply those guarantees.
+
+
+## Distributed prototype (2026-10-17)
+
+`ControlStore` extends the original SQLite adapter with tasks, workers, scoped
+credential hashes, event deduplication, claim deduplication, and checkpoints.
+Workers use authenticated HTTP and have no runtime dependency on the central
+SQLite file. Local startup uses the database only once to enroll a local identity.
+
+Admission is an ordinary pure function in `core/scheduling`. The control plane
+performs admission and claims in one transaction, ordered by priority and age.
+Memory/CPU reservations and host headroom are estimates, not OS resource limits.
+A task's provider session remains independent of its orchestration run.
+
+Worker events carry a turn ID, generation, and contiguous sequence. Network
+retries reuse the same sequence/content; conflicting reuse fails. Claims also
+carry a stable request ID so a lost claim response cannot silently claim a second
+job. Completion acknowledgements are idempotent. Heartbeats and mutations are
+bound to both generation and enrolled worker identity.
+
+The Demo runtime checkpoints execution files between deterministic steps. The
+manifest includes file checksums, rejects symlinks and unsafe paths, and has fixed
+size/file-count bounds. Publishing the checkpoint and its accepted output in one
+SQLite transaction defines the replay boundary. Only Demo requeues automatically
+after a lost lease. Native provider turns remain interrupted; same-provider
+native-state transfer is a separate compatibility gate.
+
+The disposable bench uses two actual HTTP worker processes and separate execution
+caches, but both run on the developer machine. It establishes protocol behavior,
+not hardware, provider authentication, Pi compatibility, or Sandbox networking.

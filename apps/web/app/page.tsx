@@ -37,6 +37,12 @@ export default function Home() {
   const refresh = useRef<() => Promise<void>>(async () => {});
   const selected = state.sessions.find((s) => s.id === sessionId);
   const active = state.turns.some((turn) => !isTerminal(turn.status));
+  useEffect(() => {
+    const query = new URLSearchParams(location.search);
+    if (query.get("workspace"))
+      setWorkspaceId(query.get("workspace") ?? "business");
+    if (query.get("session")) setSessionId(query.get("session"));
+  }, []);
 
   // Single in-flight request, no polling in hidden tabs, faster refresh during work.
   useEffect(() => {
@@ -58,6 +64,10 @@ export default function Home() {
         const response = await fetch(`/api/state?${query}`, {
           signal: controller.signal,
         });
+        if (response.status === 401) {
+          location.assign("/login");
+          return;
+        }
         const next: State & { error?: string } = await response.json();
         if (!response.ok)
           throw new Error(next.error ?? "Cannot load workspace.");
@@ -101,6 +111,9 @@ export default function Home() {
           m<span> / </span>meta harness
         </a>
         <div className="sidebar-label">YOUR WORKSPACES</div>
+        <a className="tasks-link" href="/tasks">
+          Tasks & capacity ↗
+        </a>
         <nav aria-label="Workspaces">
           {state.workspaces.map((workspace) => (
             <button

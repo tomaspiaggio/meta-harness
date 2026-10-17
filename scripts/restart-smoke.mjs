@@ -24,6 +24,9 @@ const env = {
   WORKFLOW_LOCAL_DATA_DIR: join(directory, "workflow"),
   WORKFLOW_LOCAL_BASE_URL: base,
   NEXT_TELEMETRY_DISABLED: "1",
+  HARNESS_MEMORY_RESERVE_MIB: "0",
+  HARNESS_MAX_LOAD_PER_CPU: "10000",
+  HARNESS_PROVIDERS: "demo",
 };
 const children = [];
 let logs = "";

@@ -9,6 +9,7 @@
   "dependencies": {
     "@harness/core": "workspace:*",
     "@harness/storage": "workspace:*",
-    "@harness/runtimes": "workspace:*"
+    "@harness/runtimes": "workspace:*",
+    "@harness/checkpoints": "workspace:*"
   }
 }

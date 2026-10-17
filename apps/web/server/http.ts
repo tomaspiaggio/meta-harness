@@ -1,4 +1,5 @@
 import { HarnessError } from "@harness/core";
+import { authorizeAdmin } from "./security";
 
 export function localRequest(request: Request): void {
   const url = new URL(request.url);
@@ -6,7 +7,10 @@ export function localRequest(request: Request): void {
   const host = request.headers.get("host");
   if (
     !host ||
-    !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ||
+    (["localhost", "127.0.0.1", "::1"].includes(
+      process.env.HARNESS_BIND_HOST ?? "127.0.0.1",
+    ) &&
+      !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) ||
     (origin && new URL(origin).host !== host) ||
     request.headers.get("sec-fetch-site") === "cross-site"
   ) {
@@ -15,13 +19,21 @@ export function localRequest(request: Request): void {
       403,
     );
   }
+  authorizeAdmin(request);
 }
 
 export async function jsonBody(
   request: Request,
 ): Promise<Record<string, unknown>> {
   localRequest(request);
-  if (Number(request.headers.get("content-length") ?? 0) > 32_768)
+  return readJson(request);
+}
+
+export async function readJson(
+  request: Request,
+  maxBytes = 32_768,
+): Promise<Record<string, unknown>> {
+  if (Number(request.headers.get("content-length") ?? 0) > maxBytes)
     throw new HarnessError("Request too large.", 413);
   // Bound even chunked input before parsing JSON.
   const reader = request.body?.getReader();
@@ -32,7 +44,7 @@ export async function jsonBody(
     const { done, value } = await reader.read();
     if (done) break;
     bytes += value.byteLength;
-    if (bytes > 32_768) {
+    if (bytes > maxBytes) {
       await reader.cancel();
       throw new HarnessError("Request too large.", 413);
     }

@@ -17,7 +17,8 @@ pnpm dev
 Open **http://127.0.0.1:3000**. Start with **Demo** to exercise the real Workflow →
 SQLite queue → worker → saved output path without an account or model calls.
 Business, Tech, and Fundraising are seeded; create additional workspaces in the UI.
-Each workspace can contain independent sessions.
+Each workspace can contain independent sessions. Open **/tasks** for the durable
+backlog, worker capacity, pause controls, worker targeting, and draining.
 
 For everyday use with less memory than the development compiler:
 
@@ -47,7 +48,7 @@ and account entitlement.
   Permission mode is `dontAsk`; operations that need a permission prompt may be
   denied. No permission bypass. Global MCP configurations are excluded.
 - Both start on demand and exit after each turn. Each session gets its own
-  working directory under `.data/sessions/<session-id>`.
+  working directory under `.data/worker-cache/<worker-id>/sessions/<session-id>`.
 - Output appears as provider messages arrive; this is message streaming, not
   token-by-token rendering. Provider errors and partial output remain visible.
 
@@ -116,12 +117,15 @@ copying `.data` alone is **not** a portable provider checkpoint.
 - A graceful shutdown terminates the current provider process and records an
   interruption. A hard kill is detected after lease expiry when a worker runs again.
 
-This is a **single-machine implementation**, bound to loopback. SQLite isn't the
-future distributed queue, and a local filesystem isn't Vercel-hosted persistence.
+The control plane owns SQLite. Workers communicate through authenticated HTTP
+and can run on separate machines without sharing database files. The default
+launcher binds to loopback. A local filesystem still is not Vercel-hosted
+persistence.
 The local Workflow world is a development backend; production durability requires
 the hosted world or another supported persistent backend. Browser takeover,
-cross-workspace memory, artifacts, portable checkpoint bundles, remote enrollment,
-and Vercel deployment are not implemented yet.
+cross-workspace memory, published artifacts, native provider checkpoint transfer,
+and Vercel deployment are not implemented yet. Demo checkpoints and remote worker
+enrollment are implemented; real Pi/Sandbox execution still needs validation.
 
 ## Verify
 
@@ -164,3 +168,79 @@ in the Tech workspace without making model calls.
 `test:restart` uses a temporary database and an available loopback port. It
 restarts the production web process with a queued turn, then starts the worker
 and checks that the original workflow resumes and the turn executes once.
+
+
+## Tasks, capacity, and the failure bench
+
+A task owns an objective, priority, resource profile, and conversation. Every new
+message remains a separate turn. Pausing a task prevents new work from starting;
+active work finishes. Draining a worker prevents it from claiming more turns.
+Selecting a target worker applies to subsequent claims; it does not move a live
+process. An unschedulable heavy task does not block eligible lighter tasks.
+
+Resource profiles reserve estimated memory and CPU capacity. Admission also
+checks reported free host memory, a headroom reserve, load per CPU, provider
+availability, and separate build/browser slots. These are admission controls,
+not OS-enforced limits. A task can use more than its estimate. Free memory is a
+conservative OS measurement (cache reclaim and memory pressure vary by OS).
+All settings apply to this harness worker; unrelated processes are unaffected.
+
+The Demo runtime checkpoints between three deterministic steps. Its files and
+output checkpoint together at the control plane. If a worker disappears, the
+30-second lease expires and another eligible worker restores that checkpoint.
+Demo is explicitly safe to replay. Native Claude/Codex turns remain interrupted
+after worker loss and their native sessions stay pinned to the original worker.
+They do not have the same recovery guarantees as Demo.
+
+```sh
+pnpm build
+pnpm bench
+```
+
+The bench starts an isolated control plane and two separately enrolled worker
+processes with independent local directories. It uses no models and does not
+exhaust real memory. It checks heavy/light admission, abrupt worker loss,
+checkpoint/file restoration, stale-generation rejection, draining, continuation,
+duplicate submission, and credential isolation. Expect about 40 seconds, mostly
+the real lease expiry. It cleans up its processes and temporary credentials and
+writes a non-secret result summary to `.data/bench/latest.json`.
+
+## Connect a remote worker
+
+Run the control plane independently of the Mac before expecting work to survive
+closing the Mac. On the control host:
+
+```sh
+pnpm build
+pnpm start:control
+# In another shell, enroll an identity (the token is written to a 0600 file):
+pnpm worker:enroll --name pi --url https://your-control-host --out /secure/path/pi.json
+```
+
+Copy that credential file securely to the worker host, install this repository
+with Node 24/pnpm, and run:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm worker --credential /secure/path/pi.json
+```
+
+The credential contains the control URL. `HARNESS_CONTROL_URL` can override it.
+Set `HARNESS_WORKER_DATA_DIR` for the worker's local execution cache. Remote
+workers require HTTPS; `HARNESS_ALLOW_INSECURE_HTTP=1` is an explicit override
+for a trusted private transport. Revoke a worker with
+`pnpm worker:enroll --revoke <worker-id>` on the control host.
+
+For private-network exposure, set `HARNESS_BIND_HOST` to the listening interface
+and terminate HTTPS with a tailnet proxy. Network binding enables administrator
+authentication automatically. `/login` accepts the token in
+`<HARNESS_DATA_DIR>/admin-token` and issues an HttpOnly session cookie. Generate
+that file by opening `/login` and submitting a first request; do not publish it
+or put it in git. Worker credentials are separate and cannot administer tasks.
+The default loopback-only development flow needs no login.
+
+This is a trusted-worker prototype, not a multi-tenant sandbox: native tools run
+as the worker's OS user. Worker secrets are omitted from provider subprocess
+environment variables, but same-user filesystem access is not an isolation
+boundary. Keep enrollment files outside execution directories, and isolate
+provider processes before exposing untrusted workloads.

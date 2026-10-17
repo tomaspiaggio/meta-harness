@@ -74,7 +74,9 @@ function input(
     signal,
     prompt: "hello",
     instructions: "test",
-    emit: (event) => events.push(event),
+    emit: (event) => {
+      events.push(event);
+    },
     session: {
       id: "test",
       workspaceId: "tech",

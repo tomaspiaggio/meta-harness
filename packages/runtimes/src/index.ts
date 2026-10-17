@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type {
   AgentRuntime,
@@ -113,7 +115,15 @@ async function runCli(
     cwd: input.directory,
     stdio: ["pipe", "pipe", "pipe"],
     detached: process.platform !== "win32",
-    env: { ...process.env, NO_COLOR: "1" },
+    env: {
+      ...Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([key]) =>
+            !key.startsWith("HARNESS_") && !key.startsWith("WORKFLOW_"),
+        ),
+      ),
+      NO_COLOR: "1",
+    },
   });
   let stderr = "";
   let spawnError: Error | undefined;
@@ -151,7 +161,7 @@ async function runCli(
   );
   let buffer = "";
   let completed = false;
-  const consume = (line: string) => {
+  const consume = async (line: string) => {
     if (!line.trim()) return;
     let value: unknown;
     try {
@@ -169,7 +179,7 @@ async function runCli(
     ) {
       completed = true;
     }
-    for (const event of decodeEvent(provider, value)) input.emit(event);
+    for (const event of decodeEvent(provider, value)) await input.emit(event);
   };
   try {
     child.stdout.setEncoding("utf8");
@@ -179,12 +189,12 @@ async function runCli(
         throw new Error("Provider event exceeded 1 MiB.");
       let newline = buffer.indexOf("\n");
       while (newline !== -1) {
-        consume(buffer.slice(0, newline));
+        await consume(buffer.slice(0, newline));
         buffer = buffer.slice(newline + 1);
         newline = buffer.indexOf("\n");
       }
     }
-    consume(buffer);
+    await consume(buffer);
     const code = await closed;
     input.signal.throwIfAborted();
     if (spawnError)
@@ -207,17 +217,46 @@ export function createRuntime(provider: Provider): AgentRuntime {
   if (provider === "demo") {
     return {
       async run(input) {
-        input.emit({
+        await input.emit({
           type: "native-session",
           id: input.session.nativeId ?? crypto.randomUUID(),
         });
-        for (const text of [
+        const messages = [
           "Local worker connected.\n\n",
           `You said: ${input.prompt}\n\n`,
           "This is the demo runtime. Choose Codex or Claude in a new session to run a real agent.",
-        ]) {
-          await delay(150, undefined, { signal: input.signal });
-          input.emit({ type: "text", text });
+        ];
+        const path = join(input.directory, ".harness-demo-state.json");
+        let next = 0;
+        try {
+          const saved = JSON.parse(await readFile(path, "utf8"));
+          if (
+            saved.turnId === input.turnId &&
+            Number.isInteger(saved.next) &&
+            saved.next >= 0 &&
+            saved.next <= messages.length
+          )
+            next = saved.next;
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            !("code" in error) ||
+            error.code !== "ENOENT"
+          )
+            throw error;
+        }
+        const delayMs = Number(process.env.HARNESS_DEMO_DELAY_MS ?? 150);
+        if (!Number.isSafeInteger(delayMs) || delayMs < 0 || delayMs > 60_000)
+          throw new Error("Invalid Demo delay.");
+        for (let index = next; index < messages.length; index++) {
+          await delay(delayMs, undefined, { signal: input.signal });
+          await input.emit({ type: "text", text: messages[index] });
+          await writeFile(
+            path,
+            JSON.stringify({ turnId: input.turnId, next: index + 1 }),
+            { mode: 0o600 },
+          );
+          await input.emit({ type: "checkpoint" });
         }
       },
     };

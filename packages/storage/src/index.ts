@@ -19,7 +19,7 @@ export function dataDirectory(): string {
 }
 
 export class SqliteStore implements TurnStore {
-  private db: DatabaseSync;
+  protected db: DatabaseSync;
 
   constructor(path = resolve(dataDirectory(), "harness.sqlite")) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -71,7 +71,7 @@ export class SqliteStore implements TurnStore {
     this.db.close();
   }
 
-  private transaction<T>(fn: () => T): T {
+  protected transaction<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const result = fn();
@@ -134,7 +134,9 @@ export class SqliteStore implements TurnStore {
       createdAt: Date.now(),
     };
     this.db
-      .prepare("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?)")
+      .prepare(
+        "INSERT INTO sessions(id, workspaceId, title, provider, nativeId, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
+      )
       .run(session.id, workspaceId, title, provider, null, session.createdAt);
     return session;
   }
@@ -262,7 +264,7 @@ export class SqliteStore implements TurnStore {
     );
   }
 
-  private requireOwnership(id: string, generation: number): void {
+  protected requireOwnership(id: string, generation: number): void {
     const turn = this.getTurn(id);
     if (
       turn.status !== "running" ||
