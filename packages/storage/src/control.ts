@@ -7,6 +7,10 @@ import {
   type Turn,
 } from "@harness/core";
 import type { FileSnapshot, SessionCheckpoint } from "@harness/core/checkpoint";
+import type {
+  NativeSessionEntry,
+  NativeSessionKey,
+} from "@harness/core/native-store";
 import {
   type Allocation,
   admissionReason,
@@ -58,16 +62,42 @@ export class ControlStore extends SqliteStore {
         turnId TEXT, generation INTEGER, createdAt INTEGER NOT NULL,
         PRIMARY KEY(workerId, requestId)
       );
+      CREATE TABLE IF NOT EXISTS native_entries (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT, sessionId TEXT NOT NULL REFERENCES sessions(id),
+        subpath TEXT NOT NULL, uuid TEXT, data TEXT NOT NULL, UNIQUE(sessionId, subpath, uuid)
+      );
+      CREATE TABLE IF NOT EXISTS native_writes (
+        sessionId TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, hash TEXT NOT NULL,
+        PRIMARY KEY(sessionId, id)
+      );
+      CREATE TABLE IF NOT EXISTS provider_cooldowns (
+        workerId TEXT NOT NULL REFERENCES workers(id), provider TEXT NOT NULL,
+        retryAt INTEGER NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(workerId, provider)
+      );
     `);
-    const columns = this.db
-      .prepare("PRAGMA table_info(sessions)")
-      .all()
-      .map((column) => column.name);
-    // Idempotent additive schema changes preserve the existing local conversations.
-    if (!columns.includes("ownerWorkerId"))
-      this.db.exec("ALTER TABLE sessions ADD COLUMN ownerWorkerId TEXT");
-    if (!columns.includes("checkpointId"))
-      this.db.exec("ALTER TABLE sessions ADD COLUMN checkpointId TEXT");
+    this.transaction(() => {
+      const columns = this.db
+        .prepare("PRAGMA table_info(sessions)")
+        .all()
+        .map((column) => column.name);
+      // Idempotent additive schema changes preserve the existing local conversations.
+      if (!columns.includes("ownerWorkerId"))
+        this.db.exec("ALTER TABLE sessions ADD COLUMN ownerWorkerId TEXT");
+      if (!columns.includes("checkpointId"))
+        this.db.exec("ALTER TABLE sessions ADD COLUMN checkpointId TEXT");
+      if (!columns.includes("nativeRevision"))
+        this.db.exec(
+          "ALTER TABLE sessions ADD COLUMN nativeRevision INTEGER NOT NULL DEFAULT 0",
+        );
+      const checkpointColumns = this.db
+        .prepare("PRAGMA table_info(checkpoints)")
+        .all()
+        .map((column) => column.name);
+      if (!checkpointColumns.includes("nativeRevision"))
+        this.db.exec(
+          "ALTER TABLE checkpoints ADD COLUMN nativeRevision INTEGER NOT NULL DEFAULT 0",
+        );
+    });
   }
 
   createWorker(name: string): { id: string; token: string } {
@@ -247,11 +277,37 @@ export class ControlStore extends SqliteStore {
     if (task?.targetWorkerId && task.targetWorkerId !== worker.id)
       return "Task is assigned to another worker";
     const session = this.getSession(turn.sessionId);
+    const cooldown = this.db
+      .prepare(
+        "SELECT * FROM provider_cooldowns WHERE workerId = ? AND provider = ? AND retryAt > ?",
+      )
+      .get(worker.id, session.provider, now);
+    if (cooldown)
+      return `${session.provider} is waiting for its provider reset (${new Date(Number(cooldown.retryAt)).toISOString()})`;
     const owner = this.db
       .prepare("SELECT ownerWorkerId FROM sessions WHERE id = ?")
       .get(session.id)?.ownerWorkerId;
-    if (session.provider !== "demo" && session.nativeId && owner !== worker.id)
-      return "Native provider state is pinned to its original worker";
+    if (
+      session.provider !== "demo" &&
+      session.nativeId &&
+      owner !== worker.id
+    ) {
+      const checkpoint = this.getCheckpoint(session.id);
+      const currentRevision = Number(
+        this.db
+          .prepare("SELECT nativeRevision FROM sessions WHERE id = ?")
+          .get(session.id)?.nativeRevision,
+      );
+      if (
+        session.provider !== "claude" ||
+        !worker.report.portableProviders?.includes("claude") ||
+        !checkpoint ||
+        checkpoint.nativeRevision !== currentRevision ||
+        this.getTurn(checkpoint.turnId).status !== "completed"
+      ) {
+        return "Native provider state is pinned to its original worker until a complete portable checkpoint is available";
+      }
+    }
     return admissionReason(
       {
         ...worker.report,
@@ -468,6 +524,14 @@ export class ControlStore extends SqliteStore {
         if (!result.changes)
           throw new HarnessError("Turn output exceeded 256 KiB.");
       } else if (event.type === "native-session") {
+        const nativeId = this.getSession(
+          this.getTurn(turnId).sessionId,
+        ).nativeId;
+        if (nativeId && nativeId !== event.id)
+          throw new HarnessError(
+            "Native session identity changed unexpectedly.",
+            409,
+          );
         this.db
           .prepare(
             "UPDATE sessions SET nativeId = ?, ownerWorkerId = ? WHERE id = (SELECT sessionId FROM turns WHERE id = ?)",
@@ -491,7 +555,7 @@ export class ControlStore extends SqliteStore {
       this.requireWorkerOwnership(workerId, turnId, generation);
       const turn = this.getTurn(turnId);
       const session = this.getSession(turn.sessionId);
-      if (session.provider !== "demo")
+      if (session.provider !== "demo" && session.provider !== "claude")
         throw new HarnessError(
           "Portable native provider checkpoints are not enabled yet.",
           409,
@@ -507,8 +571,27 @@ export class ControlStore extends SqliteStore {
           throw new HarnessError("Checkpoint ID reused.", 409);
         return;
       }
+      const nativeRevision = Number(
+        this.db
+          .prepare("SELECT nativeRevision FROM sessions WHERE id = ?")
+          .get(session.id)?.nativeRevision ?? 0,
+      );
+      if (
+        session.provider === "claude" &&
+        !this.db
+          .prepare(
+            "SELECT 1 FROM native_entries WHERE sessionId = ? AND subpath = '' LIMIT 1",
+          )
+          .get(session.id)
+      )
+        throw new HarnessError(
+          "Native transcript must be persisted before checkpoint publication.",
+          409,
+        );
       this.db
-        .prepare("INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .prepare(
+          "INSERT INTO checkpoints(id, sessionId, turnId, nativeId, snapshot, output, createdAt, nativeRevision) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
         .run(
           id,
           session.id,
@@ -517,6 +600,7 @@ export class ControlStore extends SqliteStore {
           JSON.stringify(snapshot),
           turn.output,
           Date.now(),
+          nativeRevision,
         );
       this.db
         .prepare("UPDATE sessions SET checkpointId = ? WHERE id = ?")
@@ -542,6 +626,7 @@ export class ControlStore extends SqliteStore {
       sessionId,
       turnId: String(row.turnId),
       nativeId: row.nativeId === null ? null : String(row.nativeId),
+      nativeRevision: Number(row.nativeRevision),
       snapshot: JSON.parse(String(row.snapshot)) as FileSnapshot,
       createdAt: Number(row.createdAt),
     };
@@ -563,16 +648,192 @@ export class ControlStore extends SqliteStore {
     )
       return;
     this.requireWorkerOwnership(workerId, turnId, generation);
+    const session = this.getSession(turn.sessionId);
+    const checkpoint = this.getCheckpoint(session.id);
     if (
       status === "completed" &&
-      this.getSession(turn.sessionId).provider === "demo" &&
+      session.provider === "claude" &&
+      this.hasNativeTranscript(session.id) &&
+      checkpoint?.nativeRevision !==
+        Number(
+          this.db
+            .prepare("SELECT nativeRevision FROM sessions WHERE id = ?")
+            .get(session.id)?.nativeRevision,
+        )
+    ) {
+      throw new HarnessError(
+        "Native transcript advanced after the file checkpoint; publish a new checkpoint.",
+        409,
+      );
+    }
+    if (
+      status === "completed" &&
+      (this.getSession(turn.sessionId).provider === "demo" ||
+        (this.getSession(turn.sessionId).provider === "claude" &&
+          this.hasNativeTranscript(turn.sessionId))) &&
       this.getCheckpoint(turn.sessionId)?.turnId !== turn.id
     ) {
       throw new HarnessError(
-        "A final checkpoint is required before Demo completion.",
+        "A final checkpoint is required before portable completion.",
         409,
       );
     }
     this.finish(turnId, generation, status, error);
+  }
+
+  private hasNativeTranscript(sessionId: string): boolean {
+    return !!this.db
+      .prepare("SELECT 1 FROM native_entries WHERE sessionId = ? LIMIT 1")
+      .get(sessionId);
+  }
+
+  private nativeKey(
+    workerId: string,
+    turnId: string,
+    generation: number,
+    key: NativeSessionKey,
+  ): string {
+    this.requireWorkerOwnership(workerId, turnId, generation);
+    const turn = this.getTurn(turnId);
+    const session = this.getSession(turn.sessionId);
+    if (
+      session.provider !== "claude" ||
+      key.projectKey !== `meta-harness-${session.id}` ||
+      !key.sessionId ||
+      key.sessionId.length > 200 ||
+      (session.nativeId && key.sessionId !== session.nativeId) ||
+      (key.subpath !== undefined &&
+        (typeof key.subpath !== "string" ||
+          key.subpath.length > 512 ||
+          key.subpath.includes("\0")))
+    ) {
+      throw new HarnessError(
+        "Native transcript key is outside this assignment.",
+        403,
+      );
+    }
+    return session.id;
+  }
+
+  appendNative(
+    workerId: string,
+    turnId: string,
+    generation: number,
+    id: string,
+    key: NativeSessionKey,
+    entries: NativeSessionEntry[],
+  ): void {
+    this.transaction(() => {
+      const sessionId = this.nativeKey(workerId, turnId, generation, key);
+      const writeHash = digest(JSON.stringify({ key, entries }));
+      const written = this.db
+        .prepare(
+          "SELECT hash FROM native_writes WHERE sessionId = ? AND id = ?",
+        )
+        .get(sessionId, id);
+      if (written) {
+        if (written.hash !== writeHash)
+          throw new HarnessError(
+            "Native write ID reused for different entries.",
+            409,
+          );
+        return;
+      }
+      let size = Number(
+        this.db
+          .prepare(
+            "SELECT COALESCE(SUM(length(CAST(data AS BLOB))), 0) AS size FROM native_entries WHERE sessionId = ?",
+          )
+          .get(sessionId)?.size,
+      );
+      let added = 0;
+      for (const entry of entries) {
+        const encoded = JSON.stringify(entry);
+        const existing = entry.uuid
+          ? this.db
+              .prepare(
+                "SELECT data FROM native_entries WHERE sessionId = ? AND subpath = ? AND uuid = ?",
+              )
+              .get(sessionId, key.subpath ?? "", entry.uuid)
+          : null;
+        if (existing) {
+          if (existing.data !== encoded)
+            throw new HarnessError(
+              "Native entry UUID reused for different content.",
+              409,
+            );
+          continue;
+        }
+        size += Buffer.byteLength(encoded);
+        if (size > 16 * 1024 * 1024)
+          throw new HarnessError(
+            "Native transcript exceeds this prototype's 16 MiB limit.",
+            413,
+          );
+        this.db
+          .prepare(
+            "INSERT INTO native_entries(sessionId, subpath, uuid, data) VALUES (?, ?, ?, ?)",
+          )
+          .run(sessionId, key.subpath ?? "", entry.uuid ?? null, encoded);
+        added++;
+      }
+      this.db
+        .prepare("INSERT INTO native_writes VALUES (?, ?, ?)")
+        .run(sessionId, id, writeHash);
+      this.db
+        .prepare(
+          "UPDATE sessions SET nativeId = ?, ownerWorkerId = ?, nativeRevision = nativeRevision + ? WHERE id = ?",
+        )
+        .run(key.sessionId, workerId, added ? 1 : 0, sessionId);
+    });
+  }
+
+  loadNative(
+    workerId: string,
+    turnId: string,
+    generation: number,
+    key: NativeSessionKey,
+  ): NativeSessionEntry[] | null {
+    const sessionId = this.nativeKey(workerId, turnId, generation, key);
+    const rows = this.db
+      .prepare(
+        "SELECT data FROM native_entries WHERE sessionId = ? AND subpath = ? ORDER BY sequence",
+      )
+      .all(sessionId, key.subpath ?? "");
+    return rows.length
+      ? rows.map((row) => JSON.parse(String(row.data)) as NativeSessionEntry)
+      : null;
+  }
+
+  nativeSubkeys(
+    workerId: string,
+    turnId: string,
+    generation: number,
+    key: NativeSessionKey,
+  ): string[] {
+    const sessionId = this.nativeKey(workerId, turnId, generation, key);
+    return this.db
+      .prepare(
+        "SELECT DISTINCT subpath FROM native_entries WHERE sessionId = ? AND subpath <> '' ORDER BY subpath",
+      )
+      .all(sessionId)
+      .map((row) => String(row.subpath));
+  }
+
+  coolDownProvider(
+    workerId: string,
+    turnId: string,
+    generation: number,
+    retryAt: number,
+    reason: string,
+  ): void {
+    this.transaction(() => {
+      this.requireWorkerOwnership(workerId, turnId, generation);
+      const provider = this.getSession(this.getTurn(turnId).sessionId).provider;
+      this.db
+        .prepare(`INSERT INTO provider_cooldowns VALUES (?, ?, ?, ?) ON CONFLICT(workerId, provider)
+        DO UPDATE SET retryAt = MAX(provider_cooldowns.retryAt, excluded.retryAt), reason = excluded.reason`)
+        .run(workerId, provider, retryAt, reason);
+    });
   }
 }

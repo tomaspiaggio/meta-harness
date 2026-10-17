@@ -271,3 +271,168 @@ test("unavailable heavy work does not block an eligible light task", () => {
     store.close();
   }
 });
+
+test("Claude native transcripts deduplicate UUIDs and enable transfer only at a complete checkpoint", () => {
+  const store = new ControlStore(":memory:");
+  try {
+    const mac = enroll(store, "mac");
+    const pi = enroll(store, "pi");
+    store.reportWorker(mac.id, {
+      ...report,
+      portableProviders: ["demo", "claude"],
+    });
+    store.reportWorker(pi.id, {
+      ...report,
+      portableProviders: ["demo", "claude"],
+    });
+    const work = task(store, "portable-claude", 0, "claude");
+    const first = store.claimForWorker(mac.id);
+    assert.ok(first);
+    const { id, generation } = first.claim.turn;
+    const key = {
+      projectKey: `meta-harness-${work.sessionId}`,
+      sessionId: "native-claude",
+    };
+    const entries = [
+      { type: "user", uuid: "entry-1", message: "remember a fact" },
+    ];
+    store.appendNative(mac.id, id, generation, "batch-1", key, entries);
+    store.appendNative(mac.id, id, generation, "batch-1", key, entries);
+    store.appendNative(mac.id, id, generation, "batch-2", key, entries);
+    assert.deepEqual(store.loadNative(mac.id, id, generation, key), entries);
+    assert.throws(
+      () => store.loadNative(pi.id, id, generation, key),
+      /another worker/,
+    );
+    assert.throws(
+      () =>
+        store.appendNative(mac.id, id, generation, "batch-3", key, [
+          { ...entries[0], message: "changed" },
+        ]),
+      /UUID reused/,
+    );
+    store.appendNative(
+      mac.id,
+      id,
+      generation,
+      "subagent",
+      { ...key, subpath: "subagents/agent-1" },
+      [{ type: "assistant", uuid: "sub-1" }],
+    );
+    assert.deepEqual(store.nativeSubkeys(mac.id, id, generation, key), [
+      "subagents/agent-1",
+    ]);
+    store.saveCheckpoint(mac.id, id, generation, "native-checkpoint", {
+      version: 1,
+      files: [],
+    });
+    store.completeWorkerTurn(mac.id, id, generation, "completed");
+    store.createTurn("native-follow-up", work.sessionId, "Continue elsewhere.");
+    store.enqueue("native-follow-up");
+    const second = store.claimForWorker(pi.id);
+    assert.equal(second?.claim.turn.id, "native-follow-up");
+    assert.ok(second);
+    assert.deepEqual(
+      store.loadNative(
+        pi.id,
+        second.claim.turn.id,
+        second.claim.turn.generation,
+        key,
+      ),
+      entries,
+    );
+    assert.throws(
+      () =>
+        store.loadNative(
+          pi.id,
+          second.claim.turn.id,
+          second.claim.turn.generation,
+          { ...key, projectKey: "another-project" },
+        ),
+      /outside/,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("a newer transcript invalidates a file checkpoint and blocks native relocation", () => {
+  const store = new ControlStore(":memory:");
+  try {
+    const mac = enroll(store, "mac");
+    const pi = enroll(store, "pi");
+    store.reportWorker(pi.id, { ...report, portableProviders: ["claude"] });
+    const work = task(store, "partial-native", 0, "claude");
+    const first = store.claimForWorker(mac.id);
+    assert.ok(first);
+    const { id, generation } = first.claim.turn;
+    const key = {
+      projectKey: `meta-harness-${work.sessionId}`,
+      sessionId: "partial-claude",
+    };
+    store.appendNative(mac.id, id, generation, "first", key, [
+      { type: "user", uuid: "one" },
+    ]);
+    store.saveCheckpoint(mac.id, id, generation, "before-late-write", {
+      version: 1,
+      files: [],
+    });
+    store.appendNative(mac.id, id, generation, "second", key, [
+      { type: "assistant", uuid: "two" },
+    ]);
+    assert.throws(
+      () => store.completeWorkerTurn(mac.id, id, generation, "completed"),
+      /advanced/,
+    );
+    store.completeWorkerTurn(
+      mac.id,
+      id,
+      generation,
+      "failed",
+      "Needs reconciliation",
+    );
+    store.createTurn("reconcile", work.sessionId, "Inspect and reconcile.");
+    store.enqueue("reconcile");
+    assert.equal(store.claimForWorker(pi.id), null);
+    assert.equal(store.claimForWorker(mac.id)?.claim.turn.id, "reconcile");
+  } finally {
+    store.close();
+  }
+});
+
+test("provider cooldowns hold affected queued work while other providers continue", () => {
+  const store = new ControlStore(":memory:");
+  try {
+    const worker = enroll(store);
+    task(store, "limited", 0, "claude");
+    const active = store.claimForWorker(worker.id);
+    assert.ok(active);
+    store.coolDownProvider(
+      worker.id,
+      active.claim.turn.id,
+      active.claim.turn.generation,
+      Date.now() + 60_000,
+      "Usage limit",
+    );
+    store.completeWorkerTurn(
+      worker.id,
+      active.claim.turn.id,
+      active.claim.turn.generation,
+      "failed",
+      "Usage limit",
+    );
+    const held = task(store, "queued-claude", 10, "claude");
+    const available = task(store, "available-demo");
+    assert.equal(
+      store.claimForWorker(worker.id)?.claim.session.id,
+      available.sessionId,
+    );
+    assert.match(
+      store.listTasks().find((item) => item.id === held.id)?.waitingReason ??
+        "",
+      /provider reset/,
+    );
+  } finally {
+    store.close();
+  }
+});

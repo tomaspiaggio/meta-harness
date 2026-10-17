@@ -1,9 +1,10 @@
-import { accessSync, constants, mkdirSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
 import { availableParallelism, freemem, hostname, loadavg } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { captureSnapshot, restoreSnapshot } from "@harness/checkpoints";
 import { executeTurn, type Provider, type RuntimeEvent } from "@harness/core";
+import type { NativeSessionStore } from "@harness/core/native-store";
 import type { WorkerReport } from "@harness/core/scheduling";
 import { createRuntime } from "@harness/runtimes";
 import type { WorkerAssignment } from "@harness/storage/control";
@@ -67,6 +68,10 @@ function report(): WorkerReport {
   return {
     hostname: hostname(),
     providers,
+    portableProviders:
+      process.env.HARNESS_CLAUDE_RUNTIME === "sdk"
+        ? ["demo", "claude"]
+        : ["demo"],
     labels: (process.env.HARNESS_WORKER_LABELS ?? process.arch).split(","),
     maxAgents: concurrency,
     memoryBudgetMiB: setting("HARNESS_MEMORY_BUDGET_MIB", 2048, 1),
@@ -117,8 +122,34 @@ async function run(assignment: WorkerAssignment): Promise<void> {
     });
   };
   const directory = join(cache, "sessions", claim.session.id);
+  const useNativeStore =
+    claim.session.provider === "claude" &&
+    process.env.HARNESS_CLAUDE_RUNTIME === "sdk";
+  let nativeQueue: Promise<unknown> = Promise.resolve();
+  const sessionStore: NativeSessionStore = {
+    append(key, entries) {
+      const id = crypto.randomUUID();
+      const operation = nativeQueue
+        .catch(() => {})
+        .then(() =>
+          client.post("native-append", {
+            turnId,
+            generation,
+            id,
+            key,
+            entries,
+          }),
+        );
+      nativeQueue = operation;
+      return operation.then(() => {});
+    },
+    load: (key) => client.post("native-load", { turnId, generation, key }),
+    listSubkeys: (key) =>
+      client.post("native-subkeys", { turnId, generation, key }),
+  };
   const saveCheckpoint = async () => {
-    if (claim.session.provider !== "demo") return;
+    if (claim.session.provider !== "demo" && !useNativeStore) return;
+    await nativeQueue;
     const snapshot = await captureSnapshot(directory);
     await client.post("checkpoint", {
       turnId,
@@ -135,12 +166,26 @@ async function run(assignment: WorkerAssignment): Promise<void> {
         directory,
         checkpoint?.snapshot ?? { version: 1, files: [] },
       );
+    else if (
+      useNativeStore &&
+      checkpoint &&
+      (claim.session.ownerWorkerId !== identity.id || !existsSync(directory))
+    )
+      await restoreSnapshot(directory, checkpoint.snapshot);
     else mkdirSync(directory, { recursive: true, mode: 0o700 });
     console.log(
       `Running ${turnId} (${claim.session.provider}); generation ${generation}`,
     );
     await executeTurn(
       {
+        async providerUnavailable(_provider, retryAt, reason) {
+          await client.post("cooldown", {
+            turnId,
+            generation,
+            retryAt,
+            reason,
+          });
+        },
         async appendOutput(_id, _generation, text) {
           for (let start = 0; start < text.length; ) {
             let end = Math.min(start + 4096, text.length);
@@ -168,6 +213,7 @@ async function run(assignment: WorkerAssignment): Promise<void> {
       directory,
       controller.signal,
       saveCheckpoint,
+      useNativeStore ? sessionStore : undefined,
     );
   } catch (error) {
     console.error(

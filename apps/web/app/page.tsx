@@ -217,7 +217,7 @@ export default function Home() {
           ))}
         </nav>
         <div className="local-status">
-          <span className="dot" /> Local development
+          <span className="dot" /> Personal workspaces
         </div>
       </aside>
       <section className="content">
@@ -257,7 +257,7 @@ export default function Home() {
                 <p className="muted">
                   {turn.status === "running"
                     ? "Working…"
-                    : "Waiting for the local worker…"}
+                    : "Waiting for an eligible worker…"}
                 </p>
               )}
               {turn.error && <p className="error">{turn.error}</p>}
@@ -352,7 +352,7 @@ export default function Home() {
           <p className="composer-note">
             {provider === "demo" && !sessionId
               ? "Try the full local flow without calling a model."
-              : "Your work and conversation stay on this machine."}
+              : "Your conversation stays with this workspace."}
           </p>
         </div>
       </section>

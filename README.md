@@ -244,3 +244,36 @@ as the worker's OS user. Worker secrets are omitted from provider subprocess
 environment variables, but same-user filesystem access is not an isolation
 boundary. Keep enrollment files outside execution directories, and isolate
 provider processes before exposing untrusted workloads.
+
+## Experimental native Claude continuity
+
+Set `HARNESS_CLAUDE_RUNTIME=sdk` on participating workers to use the pinned Claude
+Agent SDK with an external native-transcript store. The default stays on Claude
+CLI while this compatibility gate is open. The SDK is loaded only for active
+Claude turns. `HARNESS_CLAUDE_MODEL`, `HARNESS_CLAUDE_MAX_BUDGET_USD`, and
+`HARNESS_CLAUDE_TOOLS=none` are optional per-worker settings.
+
+Native entries are opaque, ordered, deduplicated by UUID, and scoped to the
+assigned harness session. The adapter maps provider project keys to a stable
+harness namespace while leaving the worker's auth directory unchanged. After a
+successful turn, transcript revision and execution-file checkpoint must agree
+before another SDK-capable worker may continue. A failed mirror or newer partial
+transcript prevents relocation. Mid-turn native interruptions still require
+reconciliation; they do not automatically replay.
+
+```sh
+pnpm build
+pnpm bench:claude
+```
+
+This explicit opt-in bench attempts two small real Claude turns, disables tools,
+and sets a $0.10 SDK budget per turn. It checks native ID continuity, recalled
+context, and an execution file across two worker directories. Unlike `pnpm bench`,
+it requires provider authentication and available quota. The live attempt on
+2026-10-17 was blocked by the account's session limit, so actual native transfer
+remains **unverified**. Unit tests cover the adapter and isolation/revision rules.
+
+Structured Claude usage-limit events also place that worker/provider into a
+cooldown until its reported reset (five minutes if no reset was supplied).
+Queued tasks for other providers can continue. A turn that already encountered
+the limit remains failed for explicit follow-up; it is not silently rerun.

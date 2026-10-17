@@ -8,6 +8,7 @@ export interface SessionCheckpoint {
   sessionId: string;
   turnId: string;
   nativeId: string | null;
+  nativeRevision?: number;
   snapshot: FileSnapshot;
   createdAt: number;
 }

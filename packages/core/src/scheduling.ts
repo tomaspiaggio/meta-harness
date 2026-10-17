@@ -23,6 +23,7 @@ export interface Task {
 export interface WorkerReport {
   hostname: string;
   providers: Provider[];
+  portableProviders?: Provider[];
   labels: string[];
   maxAgents: number;
   memoryBudgetMiB: number;
@@ -156,6 +157,16 @@ export function parseWorkerReport(value: unknown): WorkerReport {
   return {
     hostname: row.hostname,
     providers: [...new Set(row.providers)] as Provider[],
+    ...(Array.isArray(row.portableProviders)
+      ? {
+          portableProviders: row.portableProviders.filter(
+            (provider): provider is Provider =>
+              provider === "demo" ||
+              provider === "claude" ||
+              provider === "codex",
+          ),
+        }
+      : {}),
     labels: row.labels as string[],
     maxAgents: count("maxAgents", 1, 100),
     memoryBudgetMiB: count("memoryBudgetMiB", 1),

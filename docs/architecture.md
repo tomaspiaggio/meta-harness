@@ -138,3 +138,28 @@ native-state transfer is a separate compatibility gate.
 The disposable bench uses two actual HTTP worker processes and separate execution
 caches, but both run on the developer machine. It establishes protocol behavior,
 not hardware, provider authentication, Pi compatibility, or Sandbox networking.
+
+## Experimental Claude session store
+
+The optional SDK adapter implements the native SessionStore contract behind the
+engine-independent `NativeSessionStore` port. SQLite preserves entries in append
+order, deduplicates UUID-bearing entries, and keeps subagent subkeys separate.
+Writes and reads require current worker ownership. Batch IDs make HTTP retries
+idempotent; SDK-level retries also deduplicate stable UUIDs.
+
+Provider project keys are normalized at this port to a harness-session namespace.
+The adapter does not override `CLAUDE_CONFIG_DIR`; doing so changed Keychain auth
+behavior in the compatibility spike. Resume materialization and path behavior
+still require a successful live cross-directory test with available provider
+quota. The default CLI adapter remains available while this gate is open.
+
+A file checkpoint captures the native revision at publication. Transfer requires
+that revision to match the latest transcript, the checkpoint's turn to have
+completed, and the destination to advertise Claude portability. Any newer partial
+transcript invalidates transfer until the original worker reconciles it and
+publishes another complete checkpoint. There is no automatic native turn retry.
+
+The live spike exposed an existing Claude session-limit condition. Structured
+provider limits create per-worker/provider cooldowns so new queued work can use
+other providers without repeatedly launching a known-exhausted provider. An
+in-flight native turn still fails visibly; its possible effects are not replayed.

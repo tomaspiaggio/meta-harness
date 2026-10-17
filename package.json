@@ -20,7 +20,8 @@
     "bench": "node --import tsx scripts/bench.mjs",
     "worker": "node scripts/worker.mjs",
     "worker:enroll": "node --import tsx scripts/enroll-worker.mjs",
-    "start:control": "node scripts/dev.mjs --production --control-only"
+    "start:control": "node scripts/dev.mjs --production --control-only",
+    "bench:claude": "node --import tsx scripts/claude-bench.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

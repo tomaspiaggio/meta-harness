@@ -1,5 +1,9 @@
 import { validateSnapshot } from "@harness/checkpoints";
 import { HarnessError, type RuntimeEvent, requiredText } from "@harness/core";
+import type {
+  NativeSessionEntry,
+  NativeSessionKey,
+} from "@harness/core/native-store";
 import { parseWorkerReport } from "@harness/core/scheduling";
 import { failure, readJson } from "../../../../server/http";
 import { sameOrigin } from "../../../../server/security";
@@ -20,7 +24,11 @@ export async function POST(
     const { action } = await context.params;
     const body = await readJson(
       request,
-      action === "checkpoint" ? 6 * 1024 * 1024 : 64 * 1024,
+      action === "checkpoint"
+        ? 6 * 1024 * 1024
+        : action === "native-append"
+          ? 2 * 1024 * 1024
+          : 64 * 1024,
     );
     if (action === "report") {
       store.reportWorker(workerId, parseWorkerReport(body.report));
@@ -42,7 +50,65 @@ export async function POST(
       generation < 1
     )
       throw new HarnessError("Invalid ownership generation.");
-    if (action === "heartbeat")
+    if (
+      action === "native-append" ||
+      action === "native-load" ||
+      action === "native-subkeys"
+    ) {
+      if (!body.key || typeof body.key !== "object" || Array.isArray(body.key))
+        throw new HarnessError("Invalid native key.");
+      const key = body.key as NativeSessionKey;
+      if (
+        typeof key.projectKey !== "string" ||
+        typeof key.sessionId !== "string"
+      )
+        throw new HarnessError("Invalid native key.");
+      if (action === "native-load")
+        return Response.json(
+          store.loadNative(workerId, turnId, generation, key),
+        );
+      if (action === "native-subkeys")
+        return Response.json(
+          store.nativeSubkeys(workerId, turnId, generation, key),
+        );
+      if (
+        !Array.isArray(body.entries) ||
+        body.entries.length > 1000 ||
+        body.entries.some(
+          (entry) =>
+            !entry ||
+            typeof entry !== "object" ||
+            typeof entry.type !== "string" ||
+            (entry.uuid !== undefined && typeof entry.uuid !== "string"),
+        )
+      )
+        throw new HarnessError("Invalid native entries.");
+      store.appendNative(
+        workerId,
+        turnId,
+        generation,
+        requiredText(body.id, "Native write ID", 100),
+        key,
+        body.entries as NativeSessionEntry[],
+      );
+      return Response.json({ ok: true });
+    }
+    if (action === "cooldown") {
+      if (
+        typeof body.retryAt !== "number" ||
+        !Number.isFinite(body.retryAt) ||
+        body.retryAt < Date.now() ||
+        body.retryAt > Date.now() + 7 * 24 * 60 * 60_000
+      )
+        throw new HarnessError("Invalid provider reset time.");
+      store.coolDownProvider(
+        workerId,
+        turnId,
+        generation,
+        body.retryAt,
+        requiredText(body.reason, "Provider reason", 1000),
+      );
+    } else if (action === "heartbeat")
       store.heartbeatWorkerTurn(workerId, turnId, generation);
     else if (action === "event") {
       if (

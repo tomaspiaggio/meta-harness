@@ -2,11 +2,12 @@ import { spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type {
-  AgentRuntime,
-  Provider,
-  RuntimeEvent,
-  RuntimeInput,
+import {
+  type AgentRuntime,
+  type Provider,
+  ProviderUnavailableError,
+  type RuntimeEvent,
+  type RuntimeInput,
 } from "@harness/core";
 
 type JsonRecord = Record<string, unknown>;
@@ -45,6 +46,32 @@ export function decodeEvent(
       );
     }
   } else {
+    const limits = record(event.rate_limit_info);
+    if (
+      event.type === "rate_limit_event" &&
+      limits.status === "rejected" &&
+      limits.overageStatus !== "allowed" &&
+      limits.overageStatus !== "allowed_warning"
+    ) {
+      const reset =
+        typeof limits.resetsAt === "number"
+          ? limits.resetsAt * (limits.resetsAt < 1e12 ? 1000 : 1)
+          : Date.now() + 5 * 60_000;
+      throw new ProviderUnavailableError(
+        "claude",
+        Math.max(
+          Date.now() + 1000,
+          Math.min(reset, Date.now() + 7 * 24 * 60 * 60_000),
+        ),
+        "Claude provider usage limit reached.",
+      );
+    }
+    if (event.type === "assistant" && event.error === "rate_limit")
+      throw new ProviderUnavailableError(
+        "claude",
+        Date.now() + 5 * 60_000,
+        "Claude provider usage limit reached; reset time was not supplied.",
+      );
     if (typeof event.session_id === "string")
       events.push({ type: "native-session", id: event.session_id });
     if (event.type === "assistant") {
@@ -261,5 +288,13 @@ export function createRuntime(provider: Provider): AgentRuntime {
       },
     };
   }
-  return { run: (input) => runCli(provider, input) };
+  return {
+    async run(input) {
+      if (provider === "claude" && input.sessionStore) {
+        const { runClaudeSdk } = await import("./claude-sdk");
+        return runClaudeSdk(input);
+      }
+      return runCli(provider, input);
+    },
+  };
 }

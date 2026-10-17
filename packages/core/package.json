@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./scheduling": "./src/scheduling.ts",
-    "./checkpoint": "./src/checkpoint.ts"
+    "./checkpoint": "./src/checkpoint.ts",
+    "./native-store": "./src/native-store.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

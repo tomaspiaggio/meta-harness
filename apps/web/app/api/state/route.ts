@@ -7,6 +7,7 @@ export function GET(request: Request) {
   try {
     localRequest(request);
     const store = getStore();
+    store.recoverExpired(Date.now());
     const query = new URL(request.url).searchParams;
     const workspaceId = query.get("workspace") ?? "business";
     store.getWorkspace(workspaceId);

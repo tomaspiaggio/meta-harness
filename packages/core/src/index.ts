@@ -1,3 +1,5 @@
+import type { NativeSessionStore } from "./native-store";
+
 /** Engine-independent, JSON-serializable contracts. Keep Node and SDKs out. */
 export const providers = ["demo", "codex", "claude"] as const;
 export type Provider = (typeof providers)[number];
@@ -21,6 +23,7 @@ export interface Session {
   title: string;
   provider: Provider;
   nativeId: string | null;
+  ownerWorkerId?: string | null;
   createdAt: number;
 }
 
@@ -46,6 +49,7 @@ export interface ClaimedTurn {
 
 export interface RuntimeInput {
   turnId?: string;
+  sessionStore?: NativeSessionStore;
   session: Session;
   prompt: string;
   instructions: string;
@@ -62,6 +66,27 @@ export type RuntimeEvent =
 export interface AgentRuntime {
   run(input: RuntimeInput): Promise<void>;
 }
+
+export class ProviderUnavailableError extends Error {
+  constructor(
+    public readonly provider: Provider,
+    public readonly retryAt: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export type ExecutionSink = Pick<
+  TurnStore,
+  "appendOutput" | "saveNativeId" | "finish"
+> & {
+  providerUnavailable?(
+    provider: Provider,
+    retryAt: number,
+    reason: string,
+  ): Promise<void> | void;
+};
 
 /** Activities/steps call this port; they do not own persistence or execution. */
 export interface TurnStore {
@@ -113,17 +138,19 @@ export function readTurnOutcome(store: TurnStore, turnId: string) {
 
 /** No retry here: the runtime may already have produced external effects. */
 export async function executeTurn(
-  store: Pick<TurnStore, "appendOutput" | "saveNativeId" | "finish">,
+  store: ExecutionSink,
   claim: ClaimedTurn,
   runtime: AgentRuntime,
   directory: string,
   signal: AbortSignal,
   checkpoint?: () => Promise<void>,
+  sessionStore?: NativeSessionStore,
 ): Promise<void> {
   const { turn, session, workspace } = claim;
   try {
     await runtime.run({
       turnId: turn.id,
+      sessionStore,
       session,
       prompt: turn.prompt,
       instructions: workspace.instructions,
@@ -141,6 +168,12 @@ export async function executeTurn(
     });
     await store.finish(turn.id, turn.generation, "completed");
   } catch (error) {
+    if (error instanceof ProviderUnavailableError)
+      await store.providerUnavailable?.(
+        error.provider,
+        error.retryAt,
+        error.message,
+      );
     await store.finish(
       turn.id,
       turn.generation,

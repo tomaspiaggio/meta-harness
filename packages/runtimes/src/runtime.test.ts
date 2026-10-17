@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { RuntimeEvent, RuntimeInput } from "@harness/core";
+import { ProviderUnavailableError } from "@harness/core";
 import { commandFor, createRuntime, decodeEvent } from "./index";
 
 test("Codex and Claude events normalize text and preserve native identity", () => {
@@ -62,6 +63,31 @@ test("continuation uses an explicit native ID and never bypasses permissions", (
     assert.ok(!command.args.some((arg) => arg.includes("dangerously")));
     assert.ok(!command.args.includes("--last"));
   }
+});
+
+test("structured provider limits become a cooldown rather than successful assistant output", () => {
+  const resetsAt = Math.floor(Date.now() / 1000) + 300;
+  assert.throws(
+    () =>
+      decodeEvent("claude", {
+        type: "rate_limit_event",
+        rate_limit_info: { status: "rejected", resetsAt },
+      }),
+    (error) =>
+      error instanceof ProviderUnavailableError &&
+      error.retryAt === resetsAt * 1000,
+  );
+  assert.throws(
+    () => decodeEvent("claude", { type: "assistant", error: "rate_limit" }),
+    ProviderUnavailableError,
+  );
+  assert.deepEqual(
+    decodeEvent("claude", {
+      type: "rate_limit_event",
+      rate_limit_info: { status: "allowed_warning" },
+    }),
+    [],
+  );
 });
 
 function input(
