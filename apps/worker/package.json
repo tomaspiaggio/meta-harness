@@ -1,0 +1,14 @@
+{
+  "name": "@harness/worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@harness/core": "workspace:*",
+    "@harness/storage": "workspace:*",
+    "@harness/runtimes": "workspace:*"
+  }
+}

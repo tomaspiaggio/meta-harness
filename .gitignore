@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.turbo/
+.data/
+.workflow-data/
+.env*
+!.env.example
+*.tsbuildinfo
+apps/web/app/.well-known/workflow/
+.DS_Store

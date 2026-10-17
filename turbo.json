@@ -1,0 +1,25 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**", "app/.well-known/workflow/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "outputs": []
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    }
+  },
+  "globalPassThroughEnv": [
+    "HARNESS_*",
+    "WORKFLOW_*",
+    "CODEX_BIN",
+    "CLAUDE_BIN",
+    "PORT",
+    "NEXT_TELEMETRY_DISABLED"
+  ]
+}
