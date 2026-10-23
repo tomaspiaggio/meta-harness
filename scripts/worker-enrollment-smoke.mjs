@@ -119,8 +119,8 @@ try {
     "Guide contains the new worker credential",
   );
   assert.equal(guide.credential.serverUrl, base);
-  assert.match(guide.markdown, /chrome:\/\/extensions/);
-  assert.match(guide.markdown, /pnpm browser:pair/);
+  assert.match(guide.markdown, /HARNESS_BROWSER_BACKEND=managed/);
+  assert.match(guide.markdown, /pnpm browser:install/);
   const response = await fetch(`${base}/api/worker?action=report`, {
     method: "POST",
     headers: {

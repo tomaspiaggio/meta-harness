@@ -2,19 +2,22 @@
 import type { BrowserIdentity } from "@harness/core/browser";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ErrorNote, StatusBadge } from "./shell";
+import { ErrorNote } from "./shell";
 
-type BrowserView = Omit<BrowserIdentity, "stateCipher" | "userPublicKey">;
-const decode = (text: string): Uint8Array<ArrayBuffer> =>
-  Uint8Array.from(atob(text), (character) => character.charCodeAt(0));
-function encode(bytes: Uint8Array): string {
+type View = Omit<BrowserIdentity, "stateCipher" | "userPublicKey">;
+type Step = { id: string; label: string; status: string; image?: string };
+const decode = (s: string): Uint8Array<ArrayBuffer> =>
+  Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const encode = (bytes: Uint8Array) => {
   let text = "";
   for (let i = 0; i < bytes.length; i += 16384)
     text += String.fromCharCode(...bytes.subarray(i, i + 16384));
   return btoa(text);
-}
+};
+
 export function BrowserPanel({
   workspaceId,
   sessionId,
@@ -30,174 +33,89 @@ export function BrowserPanel({
   onOpenChange: (open: boolean) => void;
   needsLogin?: boolean;
 }) {
-  const [browser, setBrowser] = useState<BrowserView | null>(null);
-  const [backend, setBackend] = useState("managed");
-  const [hostName, setHostName] = useState<string | null>(null);
+  const [browser, setBrowser] = useState<View | null>(null);
+  const [host, setHost] = useState("");
+  const [steps, setSteps] = useState<Step[]>([]);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [frame, setFrame] = useState<string | null>(null);
-  const [text, setText] = useState("");
+  const [phase, setPhase] = useState("Connecting");
+  const [hasFrame, setHasFrame] = useState(false);
+  const [latency, setLatency] = useState<number | null>(null);
   const [url, setUrl] = useState("");
-  const keys = useRef<CryptoKeyPair | null>(null);
-  const transport = useRef<CryptoKey | null>(null);
-  const currentImage = useRef<string | null>(null);
-  const sending = useRef(false);
-  const inputQueue = useRef<Promise<void>>(Promise.resolve());
+  const [busy, setBusy] = useState(false);
+  const [controlling, setControlling] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const socket = useRef<WebSocket | null>(null);
+  const key = useRef<CryptoKey | null>(null);
+  const queue = useRef(Promise.resolve());
+  const sequence = useRef(0);
+  const pending = useRef(
+    new Map<string, { at: number; resolve: () => void; done: Promise<void> }>(),
+  );
+  const mounted = useRef(true);
+  const generation = useRef(0);
+  const held = useRef(new Set<string>());
+  const wheelHandler = useRef<(event: WheelEvent) => void>(() => {});
+  const visible = open || (needsLogin && !dismissed);
+  useEffect(() => {
+    if (!needsLogin) setDismissed(false);
+  }, [needsLogin]);
+
   async function request(body: Record<string, unknown>) {
     const response = await fetch("/api/browser", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...body, workspaceId, sessionId }),
     });
-    const result = await response.json();
-    if (!response.ok)
-      throw new Error(result.error ?? "Browser request failed.");
-    if (result.browser) setBrowser(result.browser);
-    return result;
-  }
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      if (document.hidden) return;
-      try {
-        const response = await fetch(
-          `/api/browser?workspace=${encodeURIComponent(workspaceId)}`,
-        );
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error);
-        if (!cancelled) {
-          setBrowser(result.browser);
-          setBackend(result.backend ?? "managed");
-          setHostName(result.host?.name ?? result.host?.hostname ?? null);
-        }
-      } catch (error) {
-        if (!cancelled)
-          setError(
-            error instanceof Error
-              ? error.message
-              : "Cannot reach browser service.",
-          );
-      }
-    };
-    void load();
-    const timer = setInterval(() => void load(), open ? 3000 : 15000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [workspaceId, open]);
-  useEffect(
-    () => () => {
-      if (currentImage.current) URL.revokeObjectURL(currentImage.current);
-      keys.current = null;
-      transport.current = null;
-    },
-    [],
-  );
-  const showFrame = async (value: {
-    publicKey: string;
-    iv: string;
-    ciphertext: string;
-  }) => {
-    if (!keys.current) return;
-    const peer = await crypto.subtle.importKey(
-      "raw",
-      decode(value.publicKey),
-      { name: "ECDH", namedCurve: "P-256" },
-      false,
-      [],
-    );
-    const key = await crypto.subtle.deriveKey(
-      { name: "ECDH", public: peer },
-      keys.current.privateKey,
-      { name: "AES-GCM", length: 256 },
-      false,
-      ["encrypt", "decrypt"],
-    );
-    const bytes = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: decode(value.iv) },
-      key,
-      decode(value.ciphertext),
-    );
-    transport.current = key;
-    const image = URL.createObjectURL(
-      new Blob([bytes], { type: "image/jpeg" }),
-    );
-    if (currentImage.current) URL.revokeObjectURL(currentImage.current);
-    currentImage.current = image;
-    setFrame(image);
-  };
-  const executeManual = async (input?: Record<string, unknown>) => {
-    if (!keys.current) return;
-    sending.current = true;
-    try {
-      let encrypted: { iv: string; ciphertext: string } | undefined;
-      if (input) {
-        if (!transport.current)
-          throw new Error("Wait for the encrypted browser view to connect.");
-        const iv = crypto.getRandomValues(new Uint8Array(12));
-        const bytes = new TextEncoder().encode(JSON.stringify(input));
-        encrypted = {
-          iv: encode(iv),
-          ciphertext: encode(
-            new Uint8Array(
-              await crypto.subtle.encrypt(
-                { name: "AES-GCM", iv },
-                transport.current,
-                bytes,
-              ),
-            ),
-          ),
-        };
-      }
-      const result = await request({
-        action: "manual",
-        id: crypto.randomUUID(),
-        ...(encrypted ? { input: encrypted } : {}),
-      });
-      if (result.frame) await showFrame(result.frame);
-    } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : "Browser input has no confirmed outcome. Check the page before repeating it.",
-      );
-    } finally {
-      sending.current = false;
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Browser request failed.");
+    if (data.browser) {
+      setBrowser(data.browser);
+      generation.current = data.browser.generation;
     }
-  };
-  const manual = (input?: Record<string, unknown>): Promise<void> => {
-    if (!input && sending.current) return Promise.resolve();
-    const operation = inputQueue.current.then(() => executeManual(input));
-    inputQueue.current = operation.catch(() => {});
-    return operation;
-  };
-  const manualRef = useRef(manual);
-  manualRef.current = manual;
+    return data;
+  }
+  async function load() {
+    const response = await fetch(
+      `/api/browser?workspace=${encodeURIComponent(workspaceId)}&session=${encodeURIComponent(sessionId)}`,
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+    if (!mounted.current) return;
+    setBrowser(data.browser);
+    setHost(data.host?.name ?? "");
+    setSteps(data.steps ?? []);
+  }
+  const loadRef = useRef(load);
+  loadRef.current = load;
   useEffect(() => {
-    if (!open || browser?.mode !== "human" || !keys.current) return;
-    const timer = setInterval(() => {
-      if (!document.hidden) void manualRef.current();
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [open, browser?.mode]);
-  async function perform(action: () => Promise<void>) {
+    mounted.current = true;
+    void loadRef.current().catch(() => {});
+    const timer = setInterval(
+      () => {
+        if (!document.hidden) void loadRef.current().catch(() => {});
+      },
+      visible ? 2000 : 5000,
+    );
+    return () => {
+      mounted.current = false;
+      clearInterval(timer);
+      socket.current?.close();
+    };
+  }, [visible]);
+
+  async function connect(takeControl = false) {
     setBusy(true);
     setError("");
+    setPhase("Connecting");
+    socket.current?.close();
+    pending.current.clear();
+    key.current = null;
+    sequence.current = 0;
+    setHasFrame(false);
     try {
-      await action();
-    } catch (error) {
-      setError(
-        error instanceof Error ? error.message : "Browser action failed.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-  const takeover = () =>
-    void perform(async () => {
       if (!crypto.subtle)
-        throw new Error("Browser takeover requires HTTPS (or localhost).");
+        throw new Error("Live browser access needs HTTPS or localhost.");
       const pair = await crypto.subtle.generateKey(
         { name: "ECDH", namedCurve: "P-256" },
         false,
@@ -206,264 +124,480 @@ export function BrowserPanel({
       const publicKey = encode(
         new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey)),
       );
-      await request({
-        action: "takeover",
-        publicKey,
-        force: browser?.mode === "human" && !keys.current,
-      });
-      keys.current = pair;
-      transport.current = null;
+      const data = await request(
+        takeControl
+          ? { action: "takeover", publicKey, force: true }
+          : { action: "enable" },
+      );
+      const target = new URL("/api/browser-stream", location.origin);
+      target.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      target.searchParams.set("browser", data.browser.id);
+      target.searchParams.set("key", publicKey);
+      const ws = new WebSocket(target);
+      socket.current = ws;
+      setControlling(takeControl);
+      held.current.clear();
+      let streamKey: CryptoKey | null = null;
+      ws.onmessage = async (event) => {
+        if (socket.current !== ws) return;
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === "error") {
+            setError(message.error);
+            return;
+          }
+          if (message.type === "ack") {
+            const receipt = pending.current.get(message.id);
+            if (receipt) {
+              setLatency(Date.now() - receipt.at);
+              receipt.resolve();
+              pending.current.delete(message.id);
+            }
+            return;
+          }
+          if (message.type !== "frame" || message.sequence <= sequence.current)
+            return;
+          const current = message.sequence;
+          sequence.current = current;
+          if (!streamKey) {
+            const peer = await crypto.subtle.importKey(
+              "raw",
+              decode(message.frame.publicKey),
+              { name: "ECDH", namedCurve: "P-256" },
+              false,
+              [],
+            );
+            streamKey = await crypto.subtle.deriveKey(
+              { name: "ECDH", public: peer },
+              pair.privateKey,
+              { name: "AES-GCM", length: 256 },
+              false,
+              ["encrypt", "decrypt"],
+            );
+          }
+          if (socket.current !== ws) return;
+          key.current = streamKey;
+          const bytes = await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: decode(message.frame.iv) },
+            streamKey,
+            decode(message.frame.ciphertext),
+          );
+          const image = await createImageBitmap(
+            new Blob([bytes], { type: "image/jpeg" }),
+          );
+          if (socket.current === ws && current === sequence.current) {
+            if (canvas.current)
+              canvas.current.dataset.frameSequence = String(current);
+            canvas.current?.getContext("2d")?.drawImage(image, 0, 0, 1280, 800);
+            setHasFrame(true);
+            setPhase("Live");
+            setError("");
+            if (
+              document.activeElement?.getAttribute("aria-label") !==
+              "Browser address"
+            )
+              setUrl(message.url === "about:blank" ? "" : message.url);
+          }
+          image.close();
+        } catch {
+          setError(
+            "Could not decode the live view. Reconnect to create a fresh encrypted stream.",
+          );
+        }
+      };
+      ws.onclose = () => {
+        if (socket.current === ws) {
+          setPhase("Disconnected");
+          setControlling(false);
+        }
+      };
+      ws.onerror = () => {
+        if (socket.current === ws)
+          setError(
+            "Live stream could not connect. Check that the browser worker is online and updated.",
+          );
+      };
       onOpenChange(true);
-      await manualRef.current();
-    });
-  const returnControl = () =>
-    void perform(async () => {
-      onOpenChange(false);
-      await inputQueue.current;
-      await request({ action: "return", generation: browser?.generation });
-      keys.current = null;
-      transport.current = null;
-      setText("");
-      setFrame(null);
-      if (currentImage.current) {
-        URL.revokeObjectURL(currentImage.current);
-        currentImage.current = null;
-      }
-      onResume();
-    });
-  let agentFrame: string | undefined;
-  if (browser?.mode === "agent" && browser.frame) {
-    try {
-      agentFrame = (JSON.parse(browser.frame) as { image?: string }).image;
-    } catch {
-      /* Ignore a transient expired frame. */
+    } catch (failure) {
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : "Browser connection failed.",
+      );
+      setPhase("Disconnected");
+    } finally {
+      setBusy(false);
     }
   }
-  const attention =
-    needsLogin || browser?.mode === "human" || browser?.mode === "paused";
-  const showing = open || attention;
-  if (!showing) return null;
-  return (
-    <section
-      aria-label="Workspace browser"
-      className="my-4 rounded-xl border bg-card p-3"
+  const connectRef = useRef(connect);
+  connectRef.current = connect;
+  useEffect(() => {
+    if (visible) void connectRef.current(false);
+    else socket.current?.close();
+    return () => {
+      socket.current?.close();
+    };
+  }, [visible]);
+
+  function input(value: Record<string, unknown>) {
+    const ws = socket.current;
+    if (!controlling || phase !== "Live" || !key.current || !ws) return;
+    const activeKey = key.current;
+    queue.current = queue.current
+      .then(async () => {
+        if (socket.current !== ws || ws.readyState !== WebSocket.OPEN) return;
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const bytes = await crypto.subtle.encrypt(
+          { name: "AES-GCM", iv },
+          activeKey,
+          new TextEncoder().encode(JSON.stringify(value)),
+        );
+        const id = crypto.randomUUID();
+        let resolve = () => {};
+        const done = new Promise<void>((r) => {
+          resolve = r;
+        });
+        pending.current.set(id, { at: Date.now(), resolve, done });
+        ws.send(
+          JSON.stringify({
+            type: "input",
+            id,
+            input: {
+              iv: encode(iv),
+              ciphertext: encode(new Uint8Array(bytes)),
+            },
+          }),
+        );
+      })
+      .catch(() =>
+        setError("Input was not sent. Reconnect before trying again."),
+      );
+  }
+  async function release(resume = false) {
+    setBusy(true);
+    try {
+      await queue.current;
+      if (pending.current.size)
+        await Promise.race([
+          Promise.all(
+            [...pending.current.values()].map((receipt) => receipt.done),
+          ),
+          new Promise((_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "Some input is unconfirmed. Inspect the page before releasing control.",
+                  ),
+                ),
+              2500,
+            ),
+          ),
+        ]);
+      socket.current?.close();
+      await request({
+        action: "return",
+        generation: generation.current,
+        resume,
+      });
+      setControlling(false);
+      onResume();
+      await connect(false);
+    } catch (failure) {
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : "Could not release control.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  function pointer(
+    event:
+      | React.PointerEvent<HTMLCanvasElement>
+      | React.WheelEvent<HTMLCanvasElement>,
+    type: string,
+  ) {
+    if (!controlling) return;
+    event.preventDefault();
+    canvas.current?.focus({ preventScroll: true });
+    const rect = event.currentTarget.getBoundingClientRect();
+    const scale = Math.min(rect.width / 1280, rect.height / 800);
+    const offsetX = (rect.width - 1280 * scale) / 2;
+    const offsetY = (rect.height - 800 * scale) / 2;
+    input({
+      type: "pointer",
+      event: type,
+      x: Math.min(
+        1279,
+        Math.max(0, (event.clientX - rect.left - offsetX) / scale),
+      ),
+      y: Math.min(
+        799,
+        Math.max(0, (event.clientY - rect.top - offsetY) / scale),
+      ),
+      button:
+        "button" in event ? ["left", "middle", "right"][event.button] : "none",
+      ...("deltaY" in event ? { dy: event.deltaY, dx: event.deltaX } : {}),
+    });
+  }
+  wheelHandler.current = (event) => {
+    if (!controlling || !canvas.current) return;
+    event.preventDefault();
+    const rect = canvas.current.getBoundingClientRect();
+    const scale = Math.min(rect.width / 1280, rect.height / 800);
+    input({
+      type: "pointer",
+      event: "mouseWheel",
+      button: "none",
+      x: Math.max(
+        0,
+        Math.min(
+          1279,
+          (event.clientX - rect.left - (rect.width - 1280 * scale) / 2) / scale,
+        ),
+      ),
+      y: Math.max(
+        0,
+        Math.min(
+          799,
+          (event.clientY - rect.top - (rect.height - 800 * scale) / 2) / scale,
+        ),
+      ),
+      dx: event.deltaX,
+      dy: event.deltaY,
+    });
+  };
+  useEffect(() => {
+    if (!visible) return;
+    const target = canvas.current;
+    const wheel = (event: WheelEvent) => wheelHandler.current(event);
+    target?.addEventListener("wheel", wheel, { passive: false });
+    return () => target?.removeEventListener("wheel", wheel);
+  }, [visible]);
+  const activity = steps.length > 0 && (
+    <details
+      className="my-3 rounded-xl border bg-card px-4 py-3"
+      open={visible}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-medium">
-          {["personal-chrome", "extension"].includes(backend)
-            ? "Your Chrome"
-            : attention
-              ? "Browser sign-in"
-              : "Browser"}
-        </h3>
-        {hostName && (
-          <span className="text-xs text-muted-foreground">{hostName}</span>
-        )}
-        {browser && (
-          <StatusBadge
-            status={
-              needsLogin && browser.mode !== "human"
-                ? ["personal-chrome", "extension"].includes(backend)
-                  ? "Needs your input"
-                  : "Sign-in required"
-                : browser.mode === "human"
-                  ? "Manual control"
-                  : browser.mode === "paused"
-                    ? "Needs input"
-                    : browser.status
-            }
-          />
-        )}
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-          {browser?.lastUrl ??
-            (["personal-chrome", "extension"].includes(backend)
-              ? "Your Chrome · existing signed-in accounts"
-              : "Managed browser · screenshots and manual takeover")}
-        </span>
-        {!attention && (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => onOpenChange(false)}
-          >
-            Close browser view
-          </Button>
-        )}
-        {browser?.mode !== "agent" && browser && (
-          <Button size="sm" disabled={busy} onClick={returnControl}>
-            Return to agent
-          </Button>
-        )}
-      </div>
-      {error && <ErrorNote>{error}</ErrorNote>}
-      {!!showing && (
-        <div className="mt-3 grid gap-3">
-          {attention && !frame && (
-            <p className="text-sm text-muted-foreground">
-              {["personal-chrome", "extension"].includes(backend)
-                ? "This browser runs on the host shown above. Sign in here if this host needs authentication; its accounts may differ from your other machines. Extension setup is available in Settings if it is disconnected."
-                : "Sign in to the workspace browser below."}{" "}
-              Return control when finished.
-            </p>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant={attention ? "default" : "outline"}
-              disabled={busy}
-              onClick={takeover}
+      <summary className="cursor-pointer text-sm">
+        Browser activity · {steps.length} recent steps
+      </summary>
+      <ol className="mt-3 grid gap-3 sm:grid-cols-2">
+        {steps.map((step) => (
+          <li key={step.id} className="rounded-lg border p-2 text-xs">
+            <div className="mb-2 flex justify-between gap-2">
+              <span>{step.label}</span>
+              <span className="text-muted-foreground">{step.status}</span>
+            </div>
+            {step.image && (
+              <Image
+                src={`data:image/jpeg;base64,${step.image}`}
+                alt={step.label}
+                width={320}
+                height={200}
+                unoptimized
+                className="w-full rounded"
+              />
+            )}
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+  if (!visible || typeof document === "undefined") return activity;
+  return (
+    <>
+      {createPortal(
+        <section
+          aria-label="Workspace browser"
+          className="fixed bottom-4 right-4 top-20 z-50 flex w-[calc(100vw-2rem)] max-w-6xl flex-col overflow-hidden rounded-xl border bg-card shadow-2xl lg:left-[18rem] lg:w-auto"
+        >
+          <div className="flex flex-wrap items-center gap-2 border-b p-3">
+            <strong className="text-sm" title={browser?.name}>
+              Browser
+            </strong>
+            <span className="text-xs text-muted-foreground">{host}</span>
+            <span
+              role="status"
+              data-testid="browser-stream-status"
+              className="text-xs"
             >
-              {browser?.mode === "human" && !keys.current
-                ? "Continue sign-in in this tab"
-                : ["personal-chrome", "extension"].includes(backend)
-                  ? attention
-                    ? "Sign in"
-                    : "Take control"
-                  : attention
-                    ? "Sign in"
-                    : "Take control"}
-            </Button>
-            {browser?.mode === "agent" && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() =>
-                  void perform(async () => {
-                    const result = await request({ action: "screenshot" });
-                    if (result.image)
-                      setBrowser((previous) =>
-                        previous
-                          ? {
-                              ...previous,
-                              frame: JSON.stringify({
-                                image: result.image,
-                              }),
-                            }
-                          : previous,
-                      );
-                  })
-                }
-              >
-                Refresh screenshot
+              {phase} · {controlling ? "You have control" : "Watching"}
+              {latency !== null && controlling ? ` · ${latency} ms` : ""}
+            </span>
+            <div className="ml-auto flex gap-2">
+              {phase === "Disconnected" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void connect(false)}
+                >
+                  Reconnect
+                </Button>
+              )}
+              {controlling ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void release()}
+                >
+                  Release control · Esc
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void connect(true)}
+                >
+                  {needsLogin ? "Sign in" : "Take control"}
+                </Button>
+              )}
+              {needsLogin && (
+                <Button
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void release(true)}
+                >
+                  Continue task
+                </Button>
+              )}
+              {
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    if (controlling)
+                      void release().then(() => {
+                        setDismissed(true);
+                        onOpenChange(false);
+                      });
+                    else {
+                      setDismissed(true);
+                      onOpenChange(false);
+                    }
+                  }}
+                >
+                  Close browser view
+                </Button>
+              }
+            </div>
+          </div>
+          <form
+            className="flex items-center gap-2 border-b px-3 py-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              input({
+                type: "navigate",
+                url: /^https?:/.test(url) ? url : `https://${url}`,
+              });
+            }}
+          >
+            <Input
+              aria-label="Browser address"
+              placeholder="Address"
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              disabled={!controlling}
+              className="h-8 border-0 bg-transparent text-xs"
+            />
+            {controlling && (
+              <Button size="sm" variant="ghost" type="submit">
+                Go
               </Button>
             )}
-          </div>
-          {browser?.mode === "human" && (
-            <p className="text-xs text-warning">
-              Agent input and model capture are paused. This view and your input
-              are encrypted for this tab. Return control when login is complete;
-              disconnected views stay paused.
-            </p>
+          </form>
+          {error && (
+            <div className="p-3">
+              <ErrorNote>{error}</ErrorNote>
+            </div>
           )}
-          {(browser?.mode === "human" ? frame : agentFrame) && (
-            <button
-              type="button"
-              aria-label="Click in remote browser"
-              className="block w-full overflow-hidden rounded border bg-black"
-              disabled={browser?.mode !== "human"}
-              onClick={(event) => {
-                const box = event.currentTarget.getBoundingClientRect();
-                void manual({
-                  type: "click",
-                  x:
-                    event.detail === 0
-                      ? 640
-                      : Math.floor(
-                          ((event.clientX - box.left) / box.width) * 1280,
-                        ),
-                  y:
-                    event.detail === 0
-                      ? 400
-                      : Math.floor(
-                          ((event.clientY - box.top) / box.height) * 800,
-                        ),
-                });
-              }}
-            >
-              <Image
-                unoptimized
-                src={
-                  browser?.mode === "human"
-                    ? (frame ?? "")
-                    : `data:image/jpeg;base64,${agentFrame}`
+          <div
+            className="relative min-h-0 flex-1 bg-neutral-950"
+            aria-busy={!hasFrame}
+          >
+            <canvas
+              ref={canvas}
+              width={1280}
+              height={800}
+              tabIndex={0}
+              aria-label="Remote browser"
+              data-ready={hasFrame}
+              className="block h-full w-full touch-none object-contain outline-none focus:ring-2 focus:ring-primary"
+              onPointerDown={(event) => {
+                if (controlling) {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  pointer(event, "mousePressed");
                 }
-                width={1280}
-                height={800}
-                alt="Current browser page"
-                className="h-auto w-full"
-              />
-            </button>
-          )}
-          {browser?.mode === "human" && keys.current && (
-            <>
-              <form
-                className="flex gap-2"
-                onSubmit={(event) => {
+              }}
+              onPointerUp={(event) => pointer(event, "mouseReleased")}
+              onPointerMove={(event) => {
+                if (event.buttons) pointer(event, "mouseMoved");
+              }}
+              onContextMenu={(event) => event.preventDefault()}
+              onKeyDown={(event) => {
+                if (!controlling) return;
+                event.preventDefault();
+                event.stopPropagation();
+                if (event.key === "Escape") {
+                  void release();
+                  return;
+                }
+                if (
+                  event.key.length === 1 &&
+                  !event.ctrlKey &&
+                  !event.metaKey &&
+                  !event.altKey
+                )
+                  input({ type: "text", text: event.key });
+                else {
+                  held.current.add(event.key);
+                  input({
+                    type: "key",
+                    event: "down",
+                    key: event.key === " " ? "Space" : event.key,
+                  });
+                }
+              }}
+              onKeyUp={(event) => {
+                if (held.current.delete(event.key))
+                  input({ type: "key", event: "up", key: event.key });
+              }}
+              onBlur={() => {
+                for (const key of held.current)
+                  input({ type: "key", event: "up", key });
+                held.current.clear();
+              }}
+              onPaste={(event) => {
+                if (controlling) {
                   event.preventDefault();
-                  void manual({ type: "navigate", url });
-                }}
-              >
-                <Input
-                  type="url"
-                  aria-label="Browser address"
-                  placeholder="https://…"
-                  value={url}
-                  onChange={(event) => setUrl(event.target.value)}
-                />
-                <Button size="sm">Go</Button>
-              </form>
-              <form
-                className="flex gap-2"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const value = text;
-                  setText("");
-                  void manual({ type: "text", text: value });
-                }}
-              >
-                <Input
-                  type="password"
-                  autoComplete="off"
-                  aria-label="Type into the focused browser field"
-                  placeholder="Click a field above, then type here…"
-                  value={text}
-                  onChange={(event) => setText(event.target.value)}
-                  maxLength={4000}
-                />
-                <Button size="sm">Type</Button>
-              </form>
-              <div className="flex flex-wrap gap-2">
-                {["Tab", "Enter", "Backspace", "Escape"].map((key) => (
-                  <Button
-                    key={key}
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void manual({ type: "key", key })}
-                  >
-                    {key}
-                  </Button>
-                ))}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void manual({ type: "scroll", dy: -600 })}
-                >
-                  Scroll up
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void manual({ type: "scroll", dy: 600 })}
-                >
-                  Scroll down
-                </Button>
+                  input({
+                    type: "text",
+                    text: event.clipboardData.getData("text/plain"),
+                  });
+                }
+              }}
+            />
+            {!hasFrame && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-white">
+                {phase === "Disconnected"
+                  ? "Stream disconnected. Reconnect to view the browser."
+                  : "Connecting to the browser…"}
               </div>
-            </>
-          )}
-        </div>
+            )}
+          </div>
+          <p className="px-3 py-2 text-xs text-muted-foreground">
+            {controlling
+              ? "Click and type directly. Paste works here. Esc releases control without sending a message."
+              : "Live, read-only view. Watching and closing this view do not send a message."}
+          </p>
+        </section>,
+        document.body,
       )}
-    </section>
+      {activity}
+    </>
   );
 }

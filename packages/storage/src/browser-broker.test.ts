@@ -77,7 +77,7 @@ test("browser host loss prefers the task worker, fences old commands and keeps l
       maxLoadPerCpu: 2,
       draining: false,
       browserHost: true,
-      browserBackend: "extension" as const,
+      browserBackend: "managed" as const,
       browserExtensionReady: true,
     };
     await store.reportWorker(mac.id, report);
@@ -125,6 +125,7 @@ test("browser host loss prefers the task worker, fences old commands and keeps l
     const oldGeneration = identity.generation;
     await store.reportWorker(mac.id, {
       ...report,
+      browserBackend: "extension",
       browserExtensionReady: false,
     });
     // The old lease is still fresh, but the extension is disconnected.
@@ -257,11 +258,32 @@ test("browser broker fences host ownership, excludes model capture during takeov
       /workspace/i,
     );
     const previousGeneration = browser.generation;
-    await broker.returnControl(browser.id, previousGeneration, session.id);
-    await broker.returnControl(browser.id, previousGeneration, session.id);
+    await broker.returnControl(
+      browser.id,
+      previousGeneration,
+      session.id,
+      true,
+    );
+    await broker.returnControl(
+      browser.id,
+      previousGeneration,
+      session.id,
+      true,
+    );
     assert.equal((await store.listTurns(session.id)).length, 1);
     assert.equal((await broker.get(browser.id)).mode, "agent");
     assert.equal((await broker.get(browser.id)).frame, null);
+    const inspecting = await broker.takeover(
+      browser.id,
+      user.getPublicKey().toString("base64"),
+    );
+    await broker.returnControl(browser.id, inspecting.generation, session.id);
+    await broker.returnControl(browser.id, inspecting.generation, session.id);
+    assert.equal(
+      (await store.listTurns(session.id)).length,
+      1,
+      "releasing control does not send a message",
+    );
   } finally {
     delete process.env.HARNESS_ENCRYPTION_KEY;
     await store.close();

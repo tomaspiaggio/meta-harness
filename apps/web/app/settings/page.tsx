@@ -293,50 +293,38 @@ function Settings() {
               placeholder="America/Los_Angeles"
             />
           </label>
-          <p className="text-xs text-muted-foreground">
-            Browser tools are available in every workspace. For your signed-in
-            Chrome, install and pair the Meta Harness Browser extension once. It
-            works in background tabs without remote-debugging approval dialogs.
-            Other capable workers can host managed browsers.
-          </p>
           <div className="grid gap-2 rounded border p-3 text-sm">
-            <strong>Connect your signed-in browser once</strong>
+            <strong>Managed browser on each worker</strong>
             <p>
-              Patchright is the Playwright-compatible driver that runs browser
-              actions. The extension connects it to your existing signed-in
-              Chrome profile without repeated remote-debugging approval dialogs.
-              A separate managed browser also uses Patchright, but has its own
-              logins and does not inherit your everyday Chrome sessions.
+              Patchright runs a dedicated persistent browser profile. It does
+              not use your everyday Chrome, an extension, or another machine's
+              logins.
             </p>
             <ol className="list-decimal space-y-1 pl-5">
               <li>
-                On the browser host, run <code>pnpm install</code> and{" "}
-                <code>pnpm --filter @harness/browser-extension build</code>.
+                On the browser host run <code>pnpm browser:install</code>. On a
+                Pi with compatible system Chromium, set{" "}
+                <code>HARNESS_BROWSER_EXECUTABLE=/usr/bin/chromium</code>.
               </li>
               <li>
-                Open <code>chrome://extensions</code>, turn on Developer mode,
-                choose Load unpacked, and select{" "}
-                <code>apps/browser-extension/dist</code>.
+                Use <code>HARNESS_BROWSER_BACKEND=managed</code> and restart
+                that worker. No extension pairing or remote-debugging approval
+                is needed.
               </li>
               <li>
-                Start that worker. Run <code>pnpm browser:pair</code> in the
-                same checkout and worker environment. For an enrolled worker,
-                use the same credential file:
-                <pre className="mt-2 overflow-x-auto rounded bg-muted p-3 text-xs">
-                  {
-                    "HARNESS_WORKER_TOKEN_FILE=~/.config/meta-harness/worker.json pnpm browser:pair"
-                  }
-                </pre>
+                Open the browser from a conversation to watch live. Click Take
+                control or Sign in, then click and type directly in the browser
+                view.
               </li>
               <li>
-                Click the Meta Harness Browser extension icon, paste the pairing
-                code there and choose Connect. Keep the code out of chat.
+                Press Esc to release control without sending a message. Continue
+                task explicitly resumes an agent waiting for login.
               </li>
             </ol>
             <p>
-              Pairing survives worker/browser reconnects. Your account sessions
-              remain in that browser. You can disconnect it from the extension
-              at any time.
+              Each host retains its own sessions. If a new host needs
+              authentication, sign in there through the encrypted view. Never
+              paste passwords into chat.
             </p>
           </div>
           <label className="grid gap-1 text-sm">

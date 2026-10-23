@@ -20,6 +20,7 @@ export interface Task {
 export interface WorkerReport {
   agentIsolation?: boolean;
   browserHost?: boolean;
+  browserStreaming?: boolean;
   browserBackend?: "managed" | "personal-chrome" | "extension";
   browserExtensionReady?: boolean;
   browserSlotsUsed?: number;
@@ -168,6 +169,9 @@ export function parseWorkerReport(value: unknown): WorkerReport {
     ...(row.agentIsolation === undefined
       ? {}
       : { agentIsolation: row.agentIsolation === true }),
+    ...(row.browserStreaming === undefined
+      ? {}
+      : { browserStreaming: row.browserStreaming === true }),
     ...(row.browserHost === undefined
       ? {}
       : { browserHost: row.browserHost === true }),

@@ -22,6 +22,13 @@ import {
 
 export { browserBackend } from "./personal-chrome";
 
+export function managedBrowserExecutable(): string | undefined {
+  if (process.env.HARNESS_BROWSER_EXECUTABLE)
+    return process.env.HARNESS_BROWSER_EXECUTABLE;
+  if (process.platform === "linux")
+    return ["/usr/bin/chromium", "/usr/bin/chromium-browser"].find(existsSync);
+}
+
 type Context = {
   attached: boolean;
   context: BrowserContext;
@@ -127,8 +134,8 @@ export class BrowserHost {
   static async available(): Promise<boolean> {
     if (["personal-chrome", "extension"].includes(browserBackend()))
       return true;
-    if (process.env.HARNESS_BROWSER_EXECUTABLE)
-      return existsSync(process.env.HARNESS_BROWSER_EXECUTABLE);
+    const executable = managedBrowserExecutable();
+    if (executable) return existsSync(executable);
     const cache = process.env.PLAYWRIGHT_BROWSERS_PATH;
     if (!cache || !["darwin", "linux"].includes(process.platform)) return false;
     // Read the pinned binary manifest without loading the browser driver at idle.
@@ -340,7 +347,7 @@ export class BrowserHost {
     const context = await chromium.launchPersistentContext(path, {
       channel: "chromium",
       headless: this.options.headless ?? true,
-      executablePath: process.env.HARNESS_BROWSER_EXECUTABLE,
+      executablePath: managedBrowserExecutable(),
       viewport: { width: 1280, height: 800 },
       deviceScaleFactor: 1,
       acceptDownloads: false,
@@ -379,6 +386,26 @@ export class BrowserHost {
     };
     this.contexts.set(identity.id, result);
     return result;
+  }
+  async liveNavigate(page: Page, url: string) {
+    await page.goto(
+      await validateBrowserUrl(url, this.options.allowTestLoopback),
+      { waitUntil: "domcontentloaded", timeout: 20000 },
+    );
+  }
+  async livePage(assignment: BrowserAssignment) {
+    if (this.backend !== "managed")
+      throw new Error(
+        "Live view requires the managed Patchright browser. Upgrade this worker and select managed mode.",
+      );
+    const context = await this.get(assignment);
+    context.lastUsed = Date.now();
+    return {
+      page: context.page,
+      touch: () => {
+        context.lastUsed = Date.now();
+      },
+    };
   }
   async execute(
     assignment: BrowserAssignment,

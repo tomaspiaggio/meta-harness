@@ -150,7 +150,7 @@ In **Settings → Workers**, enter only a device name and a reachable HTTPS cont
 URL, then click **Enroll worker**. Enrollment copies a private setup prompt and shows
 **Paste to agent**. Paste it into a coding agent on the new device. The prompt
 contains that worker's scoped credential; a Markdown download is also available. It handles the terminal setup and walks you through any
-interactive provider login or browser-extension pairing. The guide covers cloning
+interactive provider and website login. The guide covers cloning
 this repository's `main` branch, Node/pnpm, credential storage, model-free
 connectivity checks, provider authentication, optional browser capability, startup
 and Online verification. Headless Pi workers can run agents without an extension.
@@ -438,31 +438,26 @@ Run `pnpm test:security` after a build to exercise the authenticated network gat
 See [private deployment preparation](deploy/README.md) for Linux service templates
 and the remaining real-hardware acceptance gates.
 
-### Signed-in Chrome without repeated approval
+### Managed browser and live view
 
-Mac workers with Chrome installed default to the Meta Harness Browser extension.
-The extension reuses existing site logins in background tabs, driven by Patchright.
-It reconnects to the paired local worker without Chrome remote-debugging prompts.
-Chrome can still display its debugging indicator on controlled tabs.
+Workers use a dedicated persistent Patchright profile by default, independent of
+personal Chrome. Run `pnpm browser:install` on supported hosts, or configure a
+compatible system Chromium with `HARNESS_BROWSER_EXECUTABLE` (for example,
+`/usr/bin/chromium` on the tested Pi). Use `HARNESS_BROWSER_BACKEND=managed` when
+upgrading a worker previously configured for the extension. No extension pairing
+or remote-debugging permission dialog is part of this flow.
 
-One-time setup on the browser host:
+Open a conversation's browser to watch without taking control. The existing
+launcher relays an encrypted CDP screencast over a persistent WebSocket; frames
+and interactive input do not go through the database command queue. Click Take
+control or Sign in, then click/type/paste directly in the live page. Esc releases
+control without submitting a message. Continue task explicitly resumes a login
+wait. Closing a read-only view also sends no message.
 
-1. Run `pnpm --filter @harness/browser-extension build`.
-2. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**,
-   and select `apps/browser-extension/dist` from this checkout.
-3. Start the worker, then run `pnpm browser:pair` in the same checkout/environment.
-4. Click the Meta Harness Browser extension icon. Paste the pairing code there
-   and choose **Connect**. Keep the code out of chat and git.
-
-The relay is local to the browser host. Other agent workers use it through the
-harness browser gateway. For a paired browser on another supported platform, set
-`HARNESS_BROWSER_BACKEND=extension` on that worker. For a separate managed headless
-browser, use `HARNESS_BROWSER_BACKEND=managed` and `pnpm browser:install`.
-
-No personal cookies/profile databases are exported by the extension backend.
-Cleanup closes owned tabs and leaves the user's Chrome running. Connection status
-and installation steps appear in Settings. The legacy `personal-chrome` backend
-is an explicit diagnostic option; it uses Chrome's per-connection approval path.
+Each host keeps its own browser login state. A different host may need manual
+login/MFA through takeover; personal Chrome credentials are not copied. Agent
+browser actions retain bounded step summaries and screenshots, excluding manual
+login input and frames. Browser processes start on demand and close after idle.
 
 Browser reads now include accessibility information with form values omitted.
 For Sheets CRM work, `browser_action` supports `sheet_read` with a `gid` and bounded
@@ -471,6 +466,5 @@ not evidence that its cells were read.
 
 The agreed next step is a host-independent browser-resource model: compatible
 workers on the Mac, Pi or Sandbox may host browsers independently of agent
-execution. Extension-backed existing profiles and managed browsers use Patchright
-behind the same gateway. Explicit resource bindings and placement are planned;
+execution. Dedicated managed browsers use Patchright behind the same gateway. Explicit resource bindings and placement are planned;
 see [Browser resources across workers](docs/browser-connection-options.md).

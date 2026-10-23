@@ -46,11 +46,9 @@ export class BrowserBroker {
       const workers = await this.store.listWorkers();
       const online = (worker: (typeof workers)[number]) =>
         !!worker.report?.browserHost &&
-        (worker.seenAt ?? 0) >= now - 30000 &&
-        !(
-          worker.report.browserBackend === "extension" &&
-          worker.report.browserExtensionReady === false
-        );
+        worker.report.browserBackend !== "extension" &&
+        worker.report.browserBackend !== "personal-chrome" &&
+        (worker.seenAt ?? 0) >= now - 30000;
       const owner = workers.find((worker) => worker.id === browser.workerId);
       const preferred = workers.find(
         (worker) => worker.id === preferredWorkerId,
@@ -514,6 +512,7 @@ export class BrowserBroker {
     id: string,
     generation: number,
     sessionId: string,
+    resume = false,
   ): Promise<BrowserIdentity> {
     return this.db.transaction(async () => {
       const browser = await this.get(id);
@@ -527,7 +526,13 @@ export class BrowserBroker {
         .prepare("SELECT id FROM turns WHERE id = ?")
         .get(continuationId);
       if (existing) return browser;
-      if (browser.generation !== generation || browser.mode === "agent")
+      if (
+        !resume &&
+        browser.mode === "agent" &&
+        browser.generation === generation + 1
+      )
+        return browser;
+      if (browser.generation !== generation)
         throw new HarnessError(
           "Browser control changed. Refresh before returning it.",
           409,
@@ -547,16 +552,18 @@ export class BrowserBroker {
           "UPDATE browser_identities SET mode = 'agent', generation = generation + 1, userPublicKey = NULL, expiresAt = NULL, frame = NULL, updatedAt = ? WHERE id = ?",
         )
         .run(Date.now(), id);
-      await this.db
-        .prepare(
-          "UPDATE input_requests SET status = 'answered', response = 'Browser control returned', resolvedAt = ? WHERE id LIKE ? AND kind = 'browser-login' AND status = 'pending'",
-        )
-        .run(Date.now(), `${id}:%`);
-      await this.store.submitMessage(
-        continuationId,
-        sessionId,
-        "I returned browser control. Refresh the page/account state and continue the browser task. Reconcile any unfinished external operation before repeating it.",
-      );
+      if (resume)
+        await this.db
+          .prepare(
+            "UPDATE input_requests SET status = 'answered', response = 'Browser control returned', resolvedAt = ? WHERE id LIKE ? AND kind = 'browser-login' AND status = 'pending'",
+          )
+          .run(Date.now(), `${id}:%`);
+      if (resume)
+        await this.store.submitMessage(
+          continuationId,
+          sessionId,
+          "I returned browser control. Refresh the page/account state and continue the browser task. Reconcile any unfinished external operation before repeating it.",
+        );
       return this.get(id);
     });
   }
@@ -572,7 +579,7 @@ export class BrowserBroker {
       .prepare(
         "UPDATE browser_commands SET result = NULL WHERE action != 'manual' AND result IS NOT NULL AND completedAt < ?",
       )
-      .run(now - 60000);
+      .run(now - 24 * 60 * 60000);
     await this.db
       .prepare(
         "DELETE FROM browser_commands WHERE action = 'manual' AND completedAt < ?",

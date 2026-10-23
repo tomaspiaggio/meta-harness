@@ -19,11 +19,9 @@ test("worker handoff carries one usable scoped credential and agent-led setup wi
   );
   assert.match(markdown, /https:\/\/harness.example.test\/settings/);
   assert.match(markdown, /HARNESS_PROVIDERS=demo HARNESS_BROWSER_ENABLED=0/);
-  assert.match(
-    markdown,
-    /HARNESS_WORKER_TOKEN_FILE=~\/\.config\/meta-harness\/worker.json pnpm browser:pair/,
-  );
-  assert.match(markdown, /chrome:\/\/extensions/);
+  assert.match(markdown, /HARNESS_BROWSER_BACKEND=managed/);
+  assert.match(markdown, /pnpm browser:install/);
+  assert.doesNotMatch(markdown, /pnpm browser:pair|chrome:\/\/extensions/);
   assert.match(markdown, /headless Pi/);
   assert.doesNotMatch(markdown, /HARNESS_ADMIN_TOKEN|HARNESS_ENCRYPTION_KEY/);
 });

@@ -78,6 +78,9 @@ export async function createBrowserHost(
   const host = new BrowserHost(root, {
     headless: process.env.HARNESS_BROWSER_HEADLESS !== "0",
     idleMs: Number(process.env.HARNESS_BROWSER_IDLE_MS ?? 120000),
+    allowTestLoopback:
+      process.env.HARNESS_TEST_BROWSER_LOOPBACK === "1" &&
+      /fixture/.test(process.env.HARNESS_DATA_DIR ?? ""),
   });
   await host.initialize();
   return host;

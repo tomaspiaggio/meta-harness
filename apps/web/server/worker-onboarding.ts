@@ -116,37 +116,20 @@ A worker can run agents without hosting a browser; authorized browser tools may
 use a browser host elsewhere. Do not require the user to install an extension on
 a headless Pi just to run agents.
 
-### Reuse an existing signed-in Chrome on this device
+### Dedicated managed browser (default)
 
-Patchright is the Playwright-compatible driver. The extension connects it to the
-existing Chrome profile so background agent tabs use that profile's logins without
-repeated remote-debugging approval dialogs.
+Use HARNESS_BROWSER_BACKEND=managed. Patchright starts its own persistent profile,
+headlessly, on demand. No Chrome extension or pairing is required, and another
+machine's saved credentials are not copied. Run pnpm browser:install on a compatible
+host. On a Pi with supported system Chromium, use
+HARNESS_BROWSER_EXECUTABLE=/usr/bin/chromium instead. Validate that binary on the
+actual host; do not assume the architecture alone establishes compatibility.
 
-1. Run pnpm --filter @harness/browser-extension build in the checkout.
-2. Tell the user to open chrome://extensions in the Chrome profile they want to
-   share, turn on Developer mode, click Load unpacked, and select the absolute
-   apps/browser-extension/dist folder from this checkout. Give the actual path.
-3. Start the real worker with HARNESS_BROWSER_BACKEND=extension (see below).
-4. In a second terminal in the checkout, run:
-
-\`\`\`sh
-HARNESS_WORKER_TOKEN_FILE=~/.config/meta-harness/worker.json pnpm browser:pair
-\`\`\`
-
-5. Tell the user to click the Meta Harness Browser extension icon, paste the long
-   pairing code printed in that terminal into its pairing field, and click Connect.
-   Keep pairing codes private. Pairing survives worker/browser reconnects.
-6. Confirm browserExtensionReady in the worker report. Do not ask the user to
-   enable Chrome remote debugging, approve a connection dialog every time, or
-   log in to every site again. Do not navigate or close their personal tabs.
-
-### Separate managed browser on a compatible host
-
-Check Patchright/Chromium support for the actual OS/architecture before enabling
-it. Run pnpm browser:install, then use HARNESS_BROWSER_BACKEND=managed. This browser
-has its own persistent logins; it does not automatically inherit another Chrome
-profile's accounts. Guide any needed login through the harness's browser takeover
-UI. If unsupported or unnecessary, leave this device agent-only.
+The conversation UI provides a live read-only view. Take control or Sign in allows
+normal click/type/paste; Esc releases control without submitting a new message.
+Continue task is the explicit action to resume an agent waiting for login. Reuse
+valid host-local sessions. Guide password/MFA entry through encrypted takeover,
+never chat. If this device cannot host a browser, leave it agent-only.
 
 ## 7. Start the real worker
 
@@ -157,9 +140,8 @@ HARNESS_PROVIDERS=claude,codex HARNESS_CONCURRENCY=1 pnpm worker --credential ~/
 \`\`\`
 
 Use only claude or codex if that is the sole authenticated provider. Add
-HARNESS_BROWSER_BACKEND=extension for paired Chrome, or managed for a validated
-managed host. For an agent-only worker, add HARNESS_BROWSER_ENABLED=0. Keep any
-custom data-directory/browser configuration consistent with the pairing command.
+HARNESS_BROWSER_BACKEND=managed for a validated browser host. For an agent-only worker, add HARNESS_BROWSER_ENABLED=0. Keep any
+custom data-directory/browser configuration consistent across restarts.
 Do not leave a second worker process using this same credential.
 
 The worker runs in the foreground; closing its terminal stops it. If the user
@@ -168,9 +150,8 @@ the same command, environment and credential. Do not launch another control plan
 
 ## 8. Finish with verification
 
-Confirm Online, expected provider capabilities and capacity on /tasks. For an
-extension browser, verify it reconnects after restarting only this worker without
-another Chrome connection prompt. Use a harmless read-only browser test when
+Confirm Online, expected provider capabilities and capacity on /tasks. For a
+managed browser, verify live frames, direct input and retained login after a restart. Use a harmless read-only browser test when
 browser capability is enabled; do not edit CRM data or send messages as a test.
 Use Demo for connectivity first. If provider verification needs a live model
 request, intentionally select one minimal prompt and report that quota was used.

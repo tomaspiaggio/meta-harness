@@ -2,6 +2,7 @@ import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
 import { availableParallelism, hostname, loadavg } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { browserStreamWorker } from "@harness/browser/live";
 import { captureSnapshot, restoreSnapshot } from "@harness/checkpoints";
 import {
   executeTurn,
@@ -109,6 +110,7 @@ function report(): WorkerReport {
     hostname: hostname(),
     agentIsolation: isolatedAgents(),
     browserHost: !!browserHost,
+    browserStreaming: browserHost?.backend === "managed",
     browserBackend: browserHost?.backend,
     browserExtensionReady: browserHost?.extensionConnected(),
     browserSlotsUsed: browserHost?.active().length ?? 0,
@@ -447,7 +449,10 @@ try {
   await Promise.all([
     ...Array.from({ length: concurrency }, lane),
     ...(browserHost
-      ? [browserWorker(client, cache, shutdown.signal, browserHost)]
+      ? [
+          browserWorker(client, cache, shutdown.signal, browserHost),
+          browserStreamWorker(identity, browserHost, shutdown.signal),
+        ]
       : []),
   ]);
 } finally {

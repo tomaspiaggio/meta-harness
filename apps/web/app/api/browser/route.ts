@@ -28,8 +28,52 @@ export async function GET(request: Request) {
     const host = (await store.listWorkers()).find(
       (worker) => worker.id === browser?.workerId,
     );
+    const sessionId = new URL(request.url).searchParams.get("session");
+    if (
+      sessionId &&
+      (await store.getSession(sessionId)).workspaceId !== workspaceId
+    )
+      throw new HarnessError("Session is outside this workspace.", 403);
+    const rows =
+      browser && sessionId
+        ? await store
+            .databaseConnection()
+            .prepare(
+              "SELECT browser_commands.id, action, arguments, browser_commands.status, result FROM browser_commands JOIN turns ON turns.id = browser_commands.turnId WHERE browserId = ? AND turns.sessionId = ? AND action != 'manual' ORDER BY browser_commands.createdAt DESC LIMIT 12",
+            )
+            .all(browser.id, sessionId)
+        : [];
+    const steps = rows.reverse().map((row) => {
+      let args: Record<string, unknown> = {},
+        result: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(String(row.arguments));
+        result = JSON.parse(String(row.result ?? "{}")) ?? {};
+      } catch {}
+      let label = String(row.action);
+      if (row.action === "navigate") {
+        try {
+          const url = new URL(String(args.url));
+          label = `Opened ${url.origin}${url.pathname}`;
+        } catch {
+          label = "Opened page";
+        }
+      }
+      if (row.action === "click")
+        label = `Clicked ${String(args.selector ?? "element").slice(0, 100)}`;
+      if (row.action === "fill")
+        label = `Typed into ${String(args.selector ?? "field").slice(0, 100)}`;
+      if (row.action === "read") label = "Read page";
+      return {
+        id: row.id,
+        status: row.status,
+        label,
+        ...(typeof result.image === "string" ? { image: result.image } : {}),
+      };
+    });
     return Response.json(
       {
+        steps,
         policy: await store.resourcePolicy(workspaceId),
         backend: host?.report?.browserBackend ?? "managed",
         host: host
@@ -74,6 +118,7 @@ export async function POST(request: Request) {
         identity.id,
         body.generation,
         requiredText(body.sessionId, "Session ID", 100),
+        body.resume === true,
       );
       await flushDispatch();
       return Response.json({ browser: visible(browser) });

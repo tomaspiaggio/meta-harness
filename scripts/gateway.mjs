@@ -1,4 +1,5 @@
 import { createServer, request as forward } from "node:http";
+import { browserStreamRelay } from "./browser-stream-relay.mjs";
 /** Public surface is explicit; local Workflow control routes never pass through. */
 export function publicPath(raw) {
   try {
@@ -24,7 +25,7 @@ export function publicPath(raw) {
       /^\/api\/auth\/(status|login|callback|logout|sign-in\/social|callback\/google|get-session|sign-out)$/.test(
         path,
       ) ||
-      /^\/api\/(state|tasks|turns|sessions|workspaces|login|decisions|schedules|attachments|inputs|browser|resources|notifications|maintenance|tools|telegram|workers|diagnostics|preferences|worker)$/.test(
+      /^\/api\/(state|tasks|turns|sessions|workspaces|login|decisions|schedules|attachments|inputs|browser|resources|notifications|maintenance|tools|telegram|workers|diagnostics|preferences|worker|browser-stream)$/.test(
         path,
       ) ||
       /^\/api\/worker\/[a-z-]+$/.test(path)
@@ -87,9 +88,11 @@ export function createGateway(privatePort) {
     response.on("close", () => upstream.destroy());
     request.pipe(upstream);
   });
-  // The production UI uses ordinary HTTP. Never proxy arbitrary upgrades.
-  server.on("upgrade", (_request, socket) => {
-    socket.end("HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\n\r\n");
-  });
+  const streams = browserStreamRelay(server, privatePort);
+  const close = server.close.bind(server);
+  server.close = (...args) => {
+    for (const client of streams.clients) client.terminate();
+    return close(...args);
+  };
   return server;
 }
