@@ -1,8 +1,14 @@
 # Meta Harness
 
 A local workspace UI and worker, with Vercel Workflow coordinating durable turns.
-Built with pnpm, Turborepo, Next.js, and TypeScript. No Docker, Postgres, Redis,
-or always-running agent processes are needed for this first slice.
+Built with pnpm, Turborepo, Next.js, and TypeScript. The lightweight local default
+needs no Docker, PostgreSQL, Redis or idle agent processes. Optional Prisma/Postgres,
+hosted authentication, schedules, attachments, managed browser takeover, Telegram
+topics and cold Sandbox capacity are implemented behind explicit configuration.
+
+See [operations and validation](docs/operations.md) and the
+[implementation checklist](docs/implementation-checklist.md) for setup and remaining
+real-host/deployment gates.
 
 ## Run locally
 
@@ -10,15 +16,19 @@ Requires Node **24+** and pnpm **10.10.0**. SQLite uses Node's built-in `node:sq
 (Node currently prints an experimental-feature notice).
 
 ```sh
-pnpm install
+git clone --branch main https://github.com/tomaspiaggio/meta-harness.git
+cd meta-harness
+pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Open **http://127.0.0.1:3000**. Start with **Demo** to exercise the real Workflow →
-SQLite queue → worker → saved output path without an account or model calls.
+Open **http://127.0.0.1:3000** and start a Claude or Codex session.
 Business, Tech, and Fundraising are seeded; create additional workspaces in the UI.
 Each workspace can contain independent sessions. Open **/tasks** for the durable
 backlog, worker capacity, pause controls, worker targeting, and draining.
+**/schedules** reviews and manages persistent-session schedules. **/settings**
+configures resources, timezone, workers and Telegram. Paste/drop files in the
+composer; use its Browser panel for screenshots and manual login takeover.
 
 For everyday use with less memory than the development compiler:
 
@@ -37,7 +47,7 @@ Install and sign into Codex CLI or Claude Code separately, then select that
 provider when creating a session. This version uses their noninteractive CLI
 interfaces. Credentials stay in the provider's local authentication store; the
 application saves a native session ID and resumes that ID on subsequent turns.
-No API key is needed for Demo. Actual provider access depends on your CLI login
+Actual provider access depends on your CLI login
 and account entitlement.
 
 - Codex: `codex exec --json`, then `codex exec resume <native-id> --json`.
@@ -46,16 +56,19 @@ and account entitlement.
   harness turn. Auth still uses the CLI's existing credential store.
 - Claude: `claude --print --output-format stream-json`, then `--resume <native-id>`.
   Permission mode is `dontAsk`; operations that need a permission prompt may be
-  denied. No permission bypass. Global MCP configurations are excluded.
+  denied. The shared-decision publication file has a narrow Edit allow rule.
+  No permission bypass. Global MCP configurations are excluded.
 - Both start on demand and exit after each turn. Each session gets its own
   working directory under `.data/worker-cache/<worker-id>/sessions/<session-id>`.
 - Output appears as provider messages arrive; this is message streaming, not
   token-by-token rendering. Provider errors and partial output remain visible.
 
-CLI event parsing and subprocess behavior are covered with fixtures. Live model
-calls, provider login, and real native-session continuation still need validation
-against your selected CLI versions/accounts. Interactive approvals, app-server,
-and the Claude Agent SDK are subsequent runtime adapters, not implemented here.
+CLI event parsing and subprocess behavior are covered with fixtures. The shared
+knowledge bench also passed with live Claude and Codex calls, same-machine native
+continuation, and a control/worker restart on the tested installation. Other
+versions/accounts and cross-host native portability still need validation.
+Interactive approvals and app-server are not implemented. The optional Claude
+Agent SDK adapter remains experimental; see its compatibility gate below.
 
 ## Memory and concurrency
 
@@ -85,8 +98,10 @@ apps/web                  Next.js UI, HTTP transport, Workflow composition
   server/                 local persistence wiring and dispatch outbox
 apps/worker               polling, leases, shutdown, runtime construction
 packages/core             plain functions, contracts, execution policy
-packages/storage          SQLite implementation
-packages/runtimes         Demo, Codex CLI, Claude CLI adapters
+packages/storage          async SQLite / Prisma-Postgres and object adapters
+packages/runtimes         Demo, Codex CLI, Claude CLI / optional SDK adapters
+packages/browser          on-demand Patchright and encrypted takeover transport
+packages/checkpoints      portable file manifests and encrypted payload transport
 ```
 
 `core` imports neither Workflow nor infrastructure. SDK directives live in the
@@ -96,17 +111,78 @@ would be rewritten. Existing Workflow histories would not migrate automatically.
 `pnpm check` enforces the package boundaries.
 
 See [architecture](docs/architecture.md) for the Eve references and tradeoffs.
+The [implementation checklist](docs/implementation-checklist.md) tracks the agreed
+hosted architecture, Prisma/Postgres migration, schedules, attachments, browser
+takeover, and Telegram topics. Unchecked items include external deployment and
+compatibility gates; implemented code is distinguished from real-host validation.
+
+## Conversation controls
+
+You can send messages while a turn runs: **Send next** queues a new turn in that
+session; **Interrupt and send** records a stop request and queues your correction
+atomically. Only one turn executes per session, in submission order. There is a
+100-message waiting limit per session. Separate sessions can execute concurrently
+subject to the worker's capacity policy.
+
+**Stop** cancels a waiting turn immediately. For running turns it shows
+**Stopping** until the worker terminates its provider process and acknowledges the
+interruption (normally within the five-second heartbeat interval, plus termination
+time). Partial output remains visible. This does not undo external actions or
+automatically replay the interrupted turn. Stop requests survive control restarts.
+Restart existing workers when updating to this release so they consume stop commands.
+The task board also offers **Stop turn**; pausing a task still only blocks new claims.
+
+Session results and failures create durable unread updates, including when the tab
+is closed. Unread sessions sort first and collapsed workspaces show their unread
+count. Viewing the session at the bottom acknowledges the displayed result cursor,
+without clearing updates that arrive later. Old pre-upgrade history starts read.
+Use the pencil beside a sidebar session to rename it; manual names also update the
+task board and are protected from automatic title generation. Optional utility
+model naming and the local fallback are described in the operations guide.
+The offline fallback extracts short topic words rather than repeating the opening
+sentence. During native work, the agent can suggest a better title through its
+scoped `session_title` tool, without another model request; manual titles win.
+Decisions can be edited or deleted in their tab. Delete records a withdrawal;
+use **Show withdrawn decisions → Restore** to bring one back. Earlier revisions
+remain stored, and stale edits are rejected.
+
+Settings includes a step-by-step worker installation guide, from cloning this
+repository through provider login, credential transfer and checking Online status.
+When enrolling another machine, set its reachable HTTPS control URL: localhost
+points to that worker, not your Mac.
+The guide defaults to this repository's `main` branch at
+[tomaspiaggio/meta-harness](https://github.com/tomaspiaggio/meta-harness), so you can
+copy the commands to a Pi or hand the guide to its coding agent. Enroll the Pi in
+Settings and securely transfer its downloaded credential before starting
+`pnpm worker --credential ~/.config/meta-harness/worker.json`; worker machines do
+not run `pnpm dev` or need direct database access.
+
+Choose the default agent and its model in **Settings → Default agent and model**.
+Each agent remembers its own default model. New conversations inherit these
+settings; existing conversations keep their selection. The composer lets you
+choose a different model and change it during a session. Changes apply to newly
+submitted messages; queued/running messages retain their accepted model. Native
+conversation identity is preserved. Changing Claude/Codex requires a new session.
+Use **Custom model…** for an exact ID supported by your account, or **Provider
+default** to use the worker/provider configuration.
+
+Attach PDFs and other files with the paperclip, drag/drop, or paste. The picker
+retains its selection until submission and can select the same file again. Images
+become native image input; PDFs and other documents are delivered as tool-readable
+files. File delivery does not guarantee that every model/runtime can extract a
+particular PDF. Limits are eight files, 10 MiB per file and 5 MiB per image.
 
 ## Persistence and recovery
 
-The launcher puts application state in `.data/harness.sqlite` and Workflow state
+Without `DATABASE_URL`, the launcher puts application state in `.data/harness.sqlite` and Workflow state
 in `.data/workflow`. Set `HARNESS_DATA_DIR` to an absolute directory to relocate
 both. Provider-native transcripts remain in their normal CLI-managed stores;
 copying `.data` alone is **not** a portable provider checkpoint.
 
 - Turn submission uses a stable client-generated ID; conflicting reuse is rejected.
 - A pending turn is the dispatch outbox. The web process retries undispatched
-  records every five seconds, including after restart. Dispatch is at least once;
+  records every five seconds locally, or through hosted request/cron reconciliation.
+  Completion uses durable per-run hooks rather than workflow polling. Dispatch is at least once;
   enqueue and worker claims are idempotent, so duplicate orchestration runs cannot
   execute the same turn twice.
 - At most one active turn can mutate a session. Multiple workers sharing this
@@ -117,15 +193,59 @@ copying `.data` alone is **not** a portable provider checkpoint.
 - A graceful shutdown terminates the current provider process and records an
   interruption. A hard kill is detected after lease expiry when a worker runs again.
 
-The control plane owns SQLite. Workers communicate through authenticated HTTP
+The control plane owns application persistence (local SQLite or Prisma/PostgreSQL).
+Workers communicate through authenticated HTTP
 and can run on separate machines without sharing database files. The default
 launcher binds to loopback. A local filesystem still is not Vercel-hosted
 persistence.
 The local Workflow world is a development backend; production durability requires
 the hosted world or another supported persistent backend. Browser takeover,
-cross-workspace memory, published artifacts, native provider checkpoint transfer,
-and Vercel deployment are not implemented yet. Demo checkpoints and remote worker
-enrollment are implemented; real Pi/Sandbox execution still needs validation.
+attachments, schedules, Telegram and optional cold capacity now have implementations.
+Selective memory audiences, a publication/artifact service and Codex native
+cross-host export remain future work; Claude SDK transfer stays behind its
+compatibility gate. Actual Pi/Sandbox/public deployment still needs validation.
+
+## Shared decisions
+
+Every turn, including a resumed Claude/Codex conversation, receives the latest
+shared decisions in its prompt automatically. The agent should answer relevant
+questions from these records without a reminder to search. Open **/knowledge**
+or **Shared decisions** in the sidebar to see canonical content, revisions, and
+source conversations. A successful publication also appears below the agent's
+response; the agent's prose alone is not proof that knowledge was published.
+
+Try: tell Tech **“Business pilot price is $173”**, then ask a new Business session
+**“what was the pilot price”**. Change it to $219 in Tech and ask that same Business
+session again. It should use the latest record and cite its key/revision.
+
+The worker materializes `SHARED_DECISIONS.md` and supplies the same snapshot in
+the prompt. Agents publish structured updates through `DECISION_UPDATES.json`;
+they receive these instructions automatically. A private `DECISIONS.md` remains
+session-local. Updates commit atomically with successful turn completion, require
+the consumed expected revision and current ownership, and keep revision history
+and workspace/session/turn provenance. Conflicts fail visibly for review rather
+than overwriting another session's update. Invalid/failed updates stay local and
+are preserved before the next turn resets the publication file.
+
+This first collection is explicitly shared across all workspaces belonging to
+this personal harness. Selective audiences, git-backed canonical sources, search,
+and invalidation during an already-running turn are not implemented. Freshness
+is enforced at turn start, not at every native tool call. The snapshot is bounded
+to 100 records / 32 KiB and publication fails rather than silently omitting records.
+Keep secrets in provider/credential stores, outside shared decisions.
+
+```sh
+# No model calls; real HTTP workers and subprocess fixtures for both flavors:
+pnpm bench:knowledge
+pnpm bench:knowledge --provider=claude
+# Explicit opt-in: five real provider turns in a disposable database:
+pnpm bench:knowledge --live
+pnpm bench:knowledge --live --provider=claude
+```
+
+The bench verifies publication, cross-workspace proactive recall, updates in an
+existing conversation, and control/worker restart. It does not change your actual
+decision collection or existing sessions.
 
 ## Verify
 
@@ -150,7 +270,7 @@ pnpm workflow web
 
 Runtime failures can be reproduced through `createRuntime().run()` and
 `executeTurn()` without a Workflow build. The CLI fixtures in `packages/runtimes`
-demonstrate this. Application output/errors are in SQLite; orchestration events
+demonstrate this. Application output/errors are in application storage; orchestration events
 are in the Workflow inspector. Worker logs include the stable application turn ID.
 
 The launcher explicitly selects the local world: the pinned Next.js integration
@@ -185,11 +305,25 @@ not OS-enforced limits. A task can use more than its estimate. Free memory is a
 conservative OS measurement (cache reclaim and memory pressure vary by OS).
 All settings apply to this harness worker; unrelated processes are unaffected.
 
+Chat conversations also appear on the task board after their first instruction;
+existing conversations are added automatically without changing their turns.
+Queued messages show the actual admission reason in chat, including offline
+workers, provider cooldowns, occupied slots, and measured memory headroom.
+
+Host memory admission uses Linux `MemAvailable`. On macOS it estimates available
+memory from free and inactive pages while memory pressure is normal or warning;
+warning alone does not block work. Critical pressure blocks new native agents.
+Failed OS probes fall back to
+free memory. Samples are cached for five seconds. Demo starts no agent process
+and ignores host pressure/load flags, but still obeys reservations and headroom.
+These measurements remain estimates, not a guarantee of future allocation success.
+
 The Demo runtime checkpoints between three deterministic steps. Its files and
 output checkpoint together at the control plane. If a worker disappears, the
 30-second lease expires and another eligible worker restores that checkpoint.
 Demo is explicitly safe to replay. Native Claude/Codex turns remain interrupted
-after worker loss and their native sessions stay pinned to the original worker.
+after worker loss. Default CLI sessions stay pinned to the original worker;
+completed Claude SDK checkpoints have the separate compatibility gate below.
 They do not have the same recovery guarantees as Demo.
 
 ```sh
@@ -284,3 +418,40 @@ the limit remains failed for explicit follow-up; it is not silently rerun.
 Run `pnpm test:security` after a build to exercise the authenticated network gateway.
 See [private deployment preparation](deploy/README.md) for Linux service templates
 and the remaining real-hardware acceptance gates.
+
+### Signed-in Chrome without repeated approval
+
+Mac workers with Chrome installed default to the Meta Harness Browser extension.
+The extension reuses existing site logins in background tabs, driven by Patchright.
+It reconnects to the paired local worker without Chrome remote-debugging prompts.
+Chrome can still display its debugging indicator on controlled tabs.
+
+One-time setup on the browser host:
+
+1. Run `pnpm --filter @harness/browser-extension build`.
+2. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**,
+   and select `apps/browser-extension/dist` from this checkout.
+3. Start the worker, then run `pnpm browser:pair` in the same checkout/environment.
+4. Click the Meta Harness Browser extension icon. Paste the pairing code there
+   and choose **Connect**. Keep the code out of chat and git.
+
+The relay is local to the browser host. Other agent workers use it through the
+harness browser gateway. For a paired browser on another supported platform, set
+`HARNESS_BROWSER_BACKEND=extension` on that worker. For a separate managed headless
+browser, use `HARNESS_BROWSER_BACKEND=managed` and `pnpm browser:install`.
+
+No personal cookies/profile databases are exported by the extension backend.
+Cleanup closes owned tabs and leaves the user's Chrome running. Connection status
+and installation steps appear in Settings. The legacy `personal-chrome` backend
+is an explicit diagnostic option; it uses Chrome's per-connection approval path.
+
+Browser reads now include accessibility information with form values omitted.
+For Sheets CRM work, `browser_action` supports `sheet_read` with a `gid` and bounded
+rows/columns, using the signed-in document's HTML view. Opening an editor alone is
+not evidence that its cells were read.
+
+The agreed next step is a host-independent browser-resource model: compatible
+workers on the Mac, Pi or Sandbox may host browsers independently of agent
+execution. Extension-backed existing profiles and managed browsers use Patchright
+behind the same gateway. Explicit resource bindings and placement are planned;
+see [Browser resources across workers](docs/browser-connection-options.md).

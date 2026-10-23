@@ -4,16 +4,18 @@ async function files(path) {
   const entries = await readdir(path, { withFileTypes: true });
   return (
     await Promise.all(
-      entries
-        .filter(
-          (entry) =>
-            !entry.name.startsWith(".") && entry.name !== "node_modules",
-        )
-        .map((entry) =>
-          entry.isDirectory()
-            ? files(`${path}/${entry.name}`)
-            : [`${path}/${entry.name}`],
-        ),
+      await Promise.all(
+        entries
+          .filter(
+            (entry) =>
+              !entry.name.startsWith(".") && entry.name !== "node_modules",
+          )
+          .map(async (entry) =>
+            entry.isDirectory()
+              ? await files(`${path}/${entry.name}`)
+              : [`${path}/${entry.name}`],
+          ),
+      ),
     )
   ).flat();
 }

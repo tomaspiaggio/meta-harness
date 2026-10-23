@@ -5,12 +5,26 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./control": "./src/control.ts"
+    "./control": "./src/control.ts",
+    "./application": "./src/application.ts",
+    "./database": "./src/database.ts",
+    "./objects": "./src/objects.ts"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "generate": "prisma generate",
+    "migrate": "prisma migrate deploy"
   },
   "dependencies": {
-    "@harness/core": "workspace:*"
+    "@aws-sdk/client-s3": "3.1075.0",
+    "@aws-sdk/s3-request-presigner": "3.1075.0",
+    "@harness/core": "workspace:*",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "@types/pg": "8.15.6",
+    "prisma": "7.10.1"
   }
 }

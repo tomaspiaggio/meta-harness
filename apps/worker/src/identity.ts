@@ -1,7 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { WorkerIdentity } from "./client";
-
 export async function workerIdentity(): Promise<WorkerIdentity> {
   const serverUrl =
     process.env.HARNESS_CONTROL_URL ??
@@ -21,7 +20,6 @@ export async function workerIdentity(): Promise<WorkerIdentity> {
     throw new Error(
       "Set HARNESS_WORKER_TOKEN_FILE when connecting to a control plane.",
     );
-  const { ControlStore } = await import("@harness/storage/control");
   const directory = resolve(process.env.HARNESS_DATA_DIR ?? "../../.data");
   const path = join(directory, "local-worker.json");
   try {
@@ -38,12 +36,18 @@ export async function workerIdentity(): Promise<WorkerIdentity> {
       throw error;
   }
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const store = new ControlStore(join(directory, "harness.sqlite"));
+  const { openControlStore } = await import("@harness/storage/control");
+  const store = await openControlStore(
+    process.env.DATABASE_URL ? undefined : join(directory, "harness.sqlite"),
+  );
   try {
-    const identity = { ...store.createWorker("Local worker"), serverUrl };
+    const identity = {
+      ...(await store.createWorker("Local worker")),
+      serverUrl,
+    };
     writeFileSync(path, JSON.stringify(identity), { flag: "wx", mode: 0o600 });
     return identity;
   } finally {
-    store.close();
+    await store.close();
   }
 }

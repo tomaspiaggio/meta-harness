@@ -1,0 +1,615 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Workspaces {
+  id                              String              @id
+  name                            String
+  instructions                    String
+  sessions_workspaceId            Sessions[]          @relation("sessions_workspaceId")
+  tasks_workspaceId               Tasks[]             @relation("tasks_workspaceId")
+  browser_identities_workspaceId  BrowserIdentities[] @relation("browser_identities_workspaceId")
+  workspace_resources_workspaceId WorkspaceResources? @relation("workspace_resources_workspaceId")
+
+  @@map("workspaces")
+}
+
+model Sessions {
+  model String?
+  id                            String               @id
+  workspaceId                   String
+  title                         String
+  provider                      String
+  nativeId                      String?
+  createdAt                     BigInt
+  titleSource                   String               @default("prompt")
+  readThroughSequence           BigInt               @default(0)
+  ownerWorkerId                 String?
+  checkpointId                  String?
+  nativeRevision                Int                  @default(0)
+  related_workspaceId           Workspaces           @relation("sessions_workspaceId", fields: [workspaceId], references: [id], onDelete: Restrict)
+  turns_sessionId               Turns[]              @relation("turns_sessionId")
+  session_attention_sessionId   SessionAttention[]   @relation("session_attention_sessionId")
+  tasks_sessionId               Tasks?               @relation("tasks_sessionId")
+  checkpoints_sessionId         Checkpoints[]        @relation("checkpoints_sessionId")
+  native_entries_sessionId      NativeEntries[]      @relation("native_entries_sessionId")
+  native_writes_sessionId       NativeWrites[]       @relation("native_writes_sessionId")
+  decision_history_sessionId    DecisionHistory[]    @relation("decision_history_sessionId")
+  schedules_sessionId           Schedules[]          @relation("schedules_sessionId")
+  attachments_sessionId         Attachments[]        @relation("attachments_sessionId")
+  channel_bindings_sessionId    ChannelBindings?     @relation("channel_bindings_sessionId")
+  notification_outbox_sessionId NotificationOutbox[] @relation("notification_outbox_sessionId")
+  input_requests_sessionId      InputRequests[]      @relation("input_requests_sessionId")
+  title_jobs_sessionId          TitleJobs?           @relation("title_jobs_sessionId")
+  telegram_updates_sessionId    TelegramUpdates[]    @relation("telegram_updates_sessionId")
+
+  @@map("sessions")
+}
+
+model Turns {
+  model String?
+  worker_grants               WorkerGrants[]        @relation("worker_grants_turn")
+  workflow_waiters            WorkflowWaiters[]     @relation("workflow_waiters_turn")
+  id                          String                @id
+  sessionId                   String
+  prompt                      String
+  status                      String                @default("pending")
+  runId                       String?
+  workerId                    String?
+  generation                  Int                   @default(0)
+  leaseUntil                  BigInt?
+  output                      String                @default("")
+  error                       String?
+  createdAt                   BigInt
+  stopRequestedAt             BigInt?
+  interruptsTurnId            String?
+  rowid                       BigInt                @unique @default(autoincrement())
+  related_sessionId           Sessions              @relation("turns_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+  session_attention_turnId    SessionAttention?     @relation("session_attention_turnId")
+  worker_events_turnId        WorkerEvents[]        @relation("worker_events_turnId")
+  checkpoints_turnId          Checkpoints[]         @relation("checkpoints_turnId")
+  decision_history_turnId     DecisionHistory[]     @relation("decision_history_turnId")
+  turn_knowledge_turnId       TurnKnowledge[]       @relation("turn_knowledge_turnId")
+  schedule_occurrences_turnId ScheduleOccurrences[] @relation("schedule_occurrences_turnId")
+  turn_attachments_turnId     TurnAttachments[]     @relation("turn_attachments_turnId")
+  browser_commands_turnId     BrowserCommands[]     @relation("browser_commands_turnId")
+  input_requests_turnId       InputRequests[]       @relation("input_requests_turnId")
+  sandbox_jobs_turnId         SandboxJobs[]         @relation("sandbox_jobs_turnId")
+  operation_ledger_turnId     OperationLedger[]     @relation("operation_ledger_turnId")
+  workflow_wakeups_turnId     WorkflowWakeups?      @relation("workflow_wakeups_turnId")
+
+  @@index([status, createdAt, rowid], map: "turns_queue")
+  @@index([sessionId, createdAt, rowid], map: "turns_session")
+  @@map("turns")
+}
+
+model SessionAttention {
+  sequence          BigInt   @id @default(autoincrement())
+  sessionId         String
+  turnId            String   @unique
+  createdAt         BigInt
+  related_turnId    Turns    @relation("session_attention_turnId", fields: [turnId], references: [id], onDelete: Restrict)
+  related_sessionId Sessions @relation("session_attention_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@index([sessionId, sequence], map: "session_attention_session")
+  @@map("session_attention")
+}
+
+model Workers {
+  cleanups WorkerCleanup[]
+  worker_grant                WorkerGrants?       @relation("worker_grants_worker")
+  browser_polls               BrowserPolls[]      @relation("browser_polls_worker")
+  id                          String              @id
+  name                        String
+  tokenHash                   String
+  report                      String?
+  seenAt                      BigInt?
+  draining                    Int                 @default(0)
+  worker_claims_workerId      WorkerClaims[]      @relation("worker_claims_workerId")
+  provider_cooldowns_workerId ProviderCooldowns[] @relation("provider_cooldowns_workerId")
+
+  @@map("workers")
+}
+
+model Tasks {
+  id                  String     @id
+  workspaceId         String
+  sessionId           String     @unique
+  title               String
+  objective           String
+  profile             String
+  priority            Int
+  paused              Int        @default(0)
+  targetWorkerId      String?
+  createdAt           BigInt
+  rowid               BigInt     @unique @default(autoincrement())
+  related_sessionId   Sessions   @relation("tasks_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+  related_workspaceId Workspaces @relation("tasks_workspaceId", fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@map("tasks")
+}
+
+model WorkerEvents {
+  turnId         String
+  generation     Int
+  sequence       BigInt
+  hash           String
+  related_turnId Turns  @relation("worker_events_turnId", fields: [turnId], references: [id], onDelete: Restrict)
+
+  @@id([turnId, generation, sequence])
+  @@map("worker_events")
+}
+
+model Checkpoints {
+  id                String   @id
+  sessionId         String
+  turnId            String
+  nativeId          String?
+  snapshot          String
+  output            String
+  createdAt         BigInt
+  nativeRevision    Int      @default(0)
+  rowid             BigInt   @unique @default(autoincrement())
+  related_turnId    Turns    @relation("checkpoints_turnId", fields: [turnId], references: [id], onDelete: Restrict)
+  related_sessionId Sessions @relation("checkpoints_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@index([sessionId, createdAt], map: "checkpoints_session")
+  @@map("checkpoints")
+}
+
+model WorkerClaims {
+  workerId         String
+  requestId        String
+  turnId           String?
+  generation       Int?
+  createdAt        BigInt
+  rowid            BigInt  @unique @default(autoincrement())
+  related_workerId Workers @relation("worker_claims_workerId", fields: [workerId], references: [id], onDelete: Restrict)
+
+  @@id([workerId, requestId])
+  @@map("worker_claims")
+}
+
+model NativeEntries {
+  sequence          BigInt   @id @default(autoincrement())
+  sessionId         String
+  subpath           String
+  uuid              String?
+  data              String
+  related_sessionId Sessions @relation("native_entries_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@unique([sessionId, subpath, uuid])
+  @@map("native_entries")
+}
+
+model NativeWrites {
+  sessionId         String
+  id                String
+  hash              String
+  related_sessionId Sessions @relation("native_writes_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@id([sessionId, id])
+  @@map("native_writes")
+}
+
+model ProviderCooldowns {
+  workerId         String
+  provider         String
+  retryAt          BigInt
+  reason           String
+  related_workerId Workers @relation("provider_cooldowns_workerId", fields: [workerId], references: [id], onDelete: Restrict)
+
+  @@id([workerId, provider])
+  @@map("provider_cooldowns")
+}
+
+model DecisionHistory {
+  sequence            BigInt     @id @default(autoincrement())
+  key                 String
+  content             String?
+  revision            Int
+  workspaceId         String
+  sessionId           String?
+  turnId              String?
+  updatedAt           BigInt
+  related_turnId      Turns?     @relation("decision_history_turnId", fields: [turnId], references: [id], onDelete: Restrict)
+  related_sessionId   Sessions?  @relation("decision_history_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@unique([key, revision])
+  @@map("decision_history")
+}
+
+model TurnKnowledge {
+  turnId         String
+  generation     Int
+  snapshot       String
+  related_turnId Turns  @relation("turn_knowledge_turnId", fields: [turnId], references: [id], onDelete: Restrict)
+
+  @@id([turnId, generation])
+  @@map("turn_knowledge")
+}
+
+model Schedules {
+  id                              String                @id
+  sessionId                       String
+  name                            String
+  prompt                          String
+  kind                            String
+  trigger                         String
+  maxLatenessMs                   Int
+  revision                        Int
+  status                          String
+  nextAt                          BigInt?
+  createdAt                       BigInt
+  updatedAt                       BigInt
+  related_sessionId               Sessions              @relation("schedules_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+  schedule_occurrences_scheduleId ScheduleOccurrences[] @relation("schedule_occurrences_scheduleId")
+  schedule_wakes_scheduleId       ScheduleWakes[]       @relation("schedule_wakes_scheduleId")
+
+  @@index([status, nextAt], map: "schedules_due")
+  @@map("schedules")
+}
+
+model ScheduleOccurrences {
+  id                 String    @id
+  scheduleId         String
+  revision           Int
+  plannedAt          BigInt
+  firedAt            BigInt
+  turnId             String?
+  outcome            String
+  related_turnId     Turns?    @relation("schedule_occurrences_turnId", fields: [turnId], references: [id], onDelete: Restrict)
+  related_scheduleId Schedules @relation("schedule_occurrences_scheduleId", fields: [scheduleId], references: [id], onDelete: Restrict)
+
+  @@map("schedule_occurrences")
+}
+
+model Attachments {
+  id                            String            @id
+  sessionId                     String
+  name                          String
+  mediaType                     String
+  size                          Int
+  hash                          String
+  objectKey                     String
+  createdAt                     BigInt
+  related_sessionId             Sessions          @relation("attachments_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+  turn_attachments_attachmentId TurnAttachments[] @relation("turn_attachments_attachmentId")
+  status                        String            @default("pending")
+
+  @@map("attachments")
+}
+
+model TurnAttachments {
+  turnId               String
+  attachmentId         String
+  related_attachmentId Attachments @relation("turn_attachments_attachmentId", fields: [attachmentId], references: [id], onDelete: Restrict)
+  related_turnId       Turns       @relation("turn_attachments_turnId", fields: [turnId], references: [id], onDelete: Restrict)
+
+  @@id([turnId, attachmentId])
+  @@map("turn_attachments")
+}
+
+model ChannelBindings {
+  sessionId         String   @id
+  platform          String
+  chatId            String
+  topicId           String?
+  title             String
+  revision          Int      @default(1)
+  related_sessionId Sessions @relation("channel_bindings_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@unique([platform, chatId, topicId])
+  @@map("channel_bindings")
+}
+
+model NotificationOutbox {
+  id                String   @id
+  sessionId         String
+  kind              String
+  referenceId       String
+  status            String   @default("pending")
+  attempts          Int      @default(0)
+  nextAt            BigInt
+  leaseUntil        BigInt?
+  receipt           String?
+  error             String?
+  createdAt         BigInt
+  related_sessionId Sessions @relation("notification_outbox_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAt], map: "notifications_due")
+  @@map("notification_outbox")
+}
+
+model BrowserIdentities {
+  stateCipher                String?
+  id                         String            @id
+  workspaceId                String
+  name                       String
+  workerId                   String?
+  status                     String            @default("idle")
+  mode                       String            @default("agent")
+  generation                 Int               @default(0)
+  leaseUntil                 BigInt?
+  userPublicKey              String?
+  expiresAt                  BigInt?
+  lastUrl                    String?
+  frame                      String?
+  frameAt                    BigInt?
+  error                      String?
+  updatedAt                  BigInt
+  related_workspaceId        Workspaces        @relation("browser_identities_workspaceId", fields: [workspaceId], references: [id], onDelete: Restrict)
+  browser_commands_browserId BrowserCommands[] @relation("browser_commands_browserId")
+
+  @@map("browser_identities")
+}
+
+model BrowserCommands {
+  id                String            @id
+  browserId         String
+  turnId            String?
+  turnGeneration    Int?
+  browserGeneration Int
+  action            String
+  arguments         String
+  status            String            @default("pending")
+  result            String?
+  error             String?
+  createdAt         BigInt
+  completedAt       BigInt?
+  related_turnId    Turns?            @relation("browser_commands_turnId", fields: [turnId], references: [id], onDelete: Restrict)
+  related_browserId BrowserIdentities @relation("browser_commands_browserId", fields: [browserId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt], map: "browser_commands_queue")
+  @@map("browser_commands")
+}
+
+model OwnerSessions {
+  id        String @id
+  ownerId   String
+  expiresAt BigInt
+  createdAt BigInt
+
+  @@map("owner_sessions")
+}
+
+model OidcStates {
+  id        String @id
+  verifier  String
+  nonce     String
+  expiresAt BigInt
+
+  @@map("oidc_states")
+}
+
+model InputRequests {
+  id                String   @id
+  sessionId         String
+  turnId            String?
+  kind              String
+  message           String
+  status            String
+  response          String?
+  createdAt         BigInt
+  resolvedAt        BigInt?
+  related_turnId    Turns?   @relation("input_requests_turnId", fields: [turnId], references: [id], onDelete: Restrict)
+  related_sessionId Sessions @relation("input_requests_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@map("input_requests")
+}
+
+model WorkspaceResources {
+  workspaceId         String     @id
+  policy              String
+  updatedAt           BigInt
+  related_workspaceId Workspaces @relation("workspace_resources_workspaceId", fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@map("workspace_resources")
+}
+
+model SandboxJobs {
+  id             String  @id
+  turnId         String
+  workerId       String?
+  sandboxId      String?
+  status         String
+  expiresAt      BigInt
+  error          String?
+  createdAt      BigInt
+  related_turnId Turns   @relation("sandbox_jobs_turnId", fields: [turnId], references: [id], onDelete: Restrict)
+
+  @@map("sandbox_jobs")
+}
+
+model OperationLedger {
+  id             String  @id
+  turnId         String
+  hash           String
+  state          String
+  receipt        String?
+  error          String?
+  updatedAt      BigInt
+  related_turnId Turns   @relation("operation_ledger_turnId", fields: [turnId], references: [id], onDelete: Restrict)
+
+  @@map("operation_ledger")
+}
+
+model TitleJobs {
+  sessionId         String   @id
+  status            String   @default("pending")
+  attempts          Int      @default(0)
+  leaseUntil        BigInt?
+  error             String?
+  createdAt         BigInt
+  related_sessionId Sessions @relation("title_jobs_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@map("title_jobs")
+}
+
+model TelegramUpdates {
+  id                String    @id
+  sessionId         String?
+  result            String?
+  createdAt         BigInt
+  related_sessionId Sessions? @relation("telegram_updates_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@map("telegram_updates")
+}
+
+model ScheduleWakes {
+  id                 String    @id
+  scheduleId         String
+  revision           Int
+  dueAt              BigInt
+  runId              String?
+  leaseUntil         BigInt?
+  createdAt          BigInt
+  related_scheduleId Schedules @relation("schedule_wakes_scheduleId", fields: [scheduleId], references: [id], onDelete: Restrict)
+
+  @@map("schedule_wakes")
+}
+
+model WorkflowWakeups {
+  turnId         String  @id
+  createdAt      BigInt
+  deliveredAt    BigInt?
+  related_turnId Turns   @relation("workflow_wakeups_turnId", fields: [turnId], references: [id], onDelete: Restrict)
+
+  @@map("workflow_wakeups")
+}
+
+model WorkerGrants {
+  related_worker Workers @relation("worker_grants_worker", fields: [workerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  related_turn   Turns   @relation("worker_grants_turn", fields: [turnId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  workerId       String  @id
+  turnId         String
+  expiresAt      BigInt
+
+  @@map("worker_grants")
+}
+
+model BrowserPolls {
+  related_worker Workers @relation("browser_polls_worker", fields: [workerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id             String  @id
+  workerId       String
+  commands       String
+  createdAt      BigInt
+
+  @@map("browser_polls")
+}
+
+model WorkflowWaiters {
+  related_turn Turns   @relation("workflow_waiters_turn", fields: [turnId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  runId        String  @id
+  turnId       String
+  createdAt    BigInt
+  deliveredAt  BigInt?
+
+  @@index([turnId, deliveredAt], map: "workflow_waiters_turn")
+  @@map("workflow_waiters")
+}
+
+model TelegramInbox {
+  id         String  @id
+  payload    String
+  status     String  @default("pending")
+  attempts   Int     @default(0)
+  leaseUntil BigInt?
+  error      String?
+  createdAt  BigInt
+
+  @@index([status, leaseUntil], map: "telegram_inbox_pending")
+  @@map("telegram_inbox")
+}
+
+model ChatStateSubscriptions {
+  key_prefix String
+  thread_id  String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([key_prefix, thread_id])
+  @@map("chat_state_subscriptions")
+}
+
+model ChatStateLocks {
+  key_prefix String
+  thread_id  String
+  token      String
+  expires_at DateTime @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([key_prefix, thread_id])
+  @@index([expires_at], map: "chat_state_locks_expires_idx")
+  @@map("chat_state_locks")
+}
+
+model ChatStateCache {
+  key_prefix String
+  cache_key  String
+  value      String
+  expires_at DateTime? @db.Timestamptz(6)
+  updated_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@id([key_prefix, cache_key])
+  @@index([expires_at], map: "chat_state_cache_expires_idx")
+  @@map("chat_state_cache")
+}
+
+model ChatStateLists {
+  key_prefix String
+  list_key   String
+  seq        BigInt    @default(autoincrement())
+  value      String
+  expires_at DateTime? @db.Timestamptz(6)
+
+  @@id([key_prefix, list_key, seq])
+  @@index([expires_at], map: "chat_state_lists_expires_idx")
+  @@map("chat_state_lists")
+}
+
+model ChatStateQueues {
+  key_prefix String
+  thread_id  String
+  seq        BigInt   @default(autoincrement())
+  value      String
+  expires_at DateTime @db.Timestamptz(6)
+
+  @@id([key_prefix, thread_id, seq])
+  @@index([expires_at], map: "chat_state_queues_expires_idx")
+  @@map("chat_state_queues")
+}
+
+model HarnessSettings {
+  key String @id
+  value String
+  @@map("harness_settings")
+}
+model DeletedResources {
+  kind String
+  id String
+  createdAt BigInt
+  @@id([kind,id])
+  @@map("deleted_resources")
+}
+model WorkerCleanup {
+  workerId String
+  kind String
+  resourceId String
+  worker Workers @relation(fields:[workerId],references:[id],onDelete:Restrict)
+  @@id([workerId,kind,resourceId])
+  @@map("worker_cleanup")
+}
+model CleanupJobs {
+  id String @id
+  kind String
+  payload String
+  nextAt BigInt
+  leaseUntil BigInt?
+  error String?
+  @@map("cleanup_jobs")
+}

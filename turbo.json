@@ -3,7 +3,12 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".next/**", "!.next/cache/**", "app/.well-known/workflow/**"]
+      "outputs": [
+        ".next/**",
+        "!.next/cache/**",
+        "app/.well-known/workflow/**",
+        "dist/**"
+      ]
     },
     "typecheck": {
       "dependsOn": ["^typecheck"],
@@ -20,6 +25,14 @@
     "CODEX_BIN",
     "CLAUDE_BIN",
     "PORT",
-    "NEXT_TELEMETRY_DISABLED"
+    "NEXT_TELEMETRY_DISABLED",
+    "DATABASE_URL",
+    "DIRECT_URL",
+    "VERCEL_*",
+    "TELEGRAM_*",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "AI_GATEWAY_API_KEY",
+    "AGENT_BROWSER_EXECUTABLE_PATH"
   ]
 }

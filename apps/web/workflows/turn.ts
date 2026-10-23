@@ -1,14 +1,18 @@
-import { sleep } from "workflow";
+import { createHook, getWorkflowMetadata } from "workflow";
 import { dispatchTurnStep, readTurnStep } from "./steps";
-
-/** One workflow per turn; application sessions outlive any orchestration run. */
+/** Duplicate dispatch can create runs, but never duplicates an application turn. */
 export async function turnWorkflow(turnId: string) {
   "use workflow";
-  await dispatchTurnStep(turnId);
-  while (true) {
+  const { workflowRunId: runId } = getWorkflowMetadata();
+  const completion = createHook({ token: `turn:${turnId}:${runId}:finished` });
+  try {
+    if (!(await dispatchTurnStep(turnId, runId)))
+      return { id: turnId, status: "interrupted", terminal: true };
     const outcome = await readTurnStep(turnId);
     if (outcome.terminal) return outcome;
-    // Local bridge uses durable polling; a hosted adapter can use hooks to wake it.
-    await sleep("5s");
+    await completion;
+    return readTurnStep(turnId);
+  } finally {
+    completion.dispose();
   }
 }

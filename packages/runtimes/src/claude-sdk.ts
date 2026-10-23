@@ -1,13 +1,21 @@
-import { type Options, query } from "@anthropic-ai/claude-agent-sdk";
+import { spawn } from "node:child_process";
+import {
+  type Options,
+  query,
+  type SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { RuntimeInput } from "@harness/core";
+import { runtimeEnvironment } from "./environment";
 import { decodeEvent } from "./index";
+import { claudeUserMessage, inputPrompt } from "./input";
 
 /** Loaded only for active Claude turns with an external native-session store. */
 type QueryFactory = (input: {
-  prompt: string;
+  prompt: string | AsyncIterable<SDKUserMessage>;
   options: Options;
-}) => AsyncIterable<unknown> & { close(): void };
-
+}) => AsyncIterable<unknown> & {
+  close(): void;
+};
 export async function runClaudeSdk(
   input: RuntimeInput,
   startQuery: QueryFactory = query,
@@ -20,11 +28,18 @@ export async function runClaudeSdk(
   const abort = () => controller.abort(input.signal.reason);
   input.signal.addEventListener("abort", abort, { once: true });
   if (input.signal.aborted) abort();
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key]) => !key.startsWith("HARNESS_") && !key.startsWith("WORKFLOW_"),
+  const env = {
+    ...Object.fromEntries(
+      Object.keys(process.env).map((key) => [key, undefined]),
     ),
-  );
+    ...runtimeEnvironment("claude", process.env, input.environment),
+    ...(input.identity
+      ? {
+          HOME: input.identity.home,
+          CLAUDE_CONFIG_DIR: `${input.identity.home}/.claude`,
+        }
+      : {}),
+  };
   const budget =
     process.env.HARNESS_CLAUDE_MAX_BUDGET_USD === undefined
       ? undefined
@@ -32,12 +47,32 @@ export async function runClaudeSdk(
   if (budget !== undefined && (!Number.isFinite(budget) || budget <= 0))
     throw new Error("Invalid Claude turn budget.");
   const response = startQuery({
-    prompt: `Current execution directory: ${input.directory}\nUse paths relative to this directory; paths from a previous machine may differ.\n\nWorkspace instructions:\n${input.instructions}\n\nUser instruction:\n${input.prompt}`,
+    prompt: input.attachments?.length
+      ? (async function* () {
+          yield await claudeUserMessage(input);
+        })()
+      : `Current execution directory: ${input.directory}\nUse paths relative to this directory; paths from a previous machine may differ.\n\n${inputPrompt(input)}`,
     options: {
       cwd: input.directory,
+      ...(input.identity
+        ? {
+            spawnClaudeCodeProcess: (
+              options: import("@anthropic-ai/claude-agent-sdk").SpawnOptions,
+            ) =>
+              spawn(options.command, options.args, {
+                cwd: options.cwd,
+                env: options.env,
+                stdio: ["pipe", "pipe", "pipe"],
+                uid: input.identity?.uid,
+                gid: input.identity?.gid,
+                signal: options.signal,
+              }),
+          }
+        : {}),
       abortController: controller,
       // Namespace by harness session, while the SDK can materialize a different cwd.
-      // Do not force CLAUDE_CONFIG_DIR: that can change macOS Keychain identity.
+      // Ordinary host auth preserves its config directory/Keychain identity;
+      // the opt-in Linux UID path instead uses a private API-auth home.
       sessionStore: {
         append: (key, entries) =>
           sessionStore.append(
@@ -58,10 +93,22 @@ export async function runClaudeSdk(
       sessionStoreFlush: "eager",
       resume: input.session.nativeId ?? undefined,
       permissionMode: "dontAsk",
+      allowedTools: [
+        "Edit(./DECISION_UPDATES.json)",
+        ...(input.tools ? ["mcp__harness__*"] : []),
+      ],
       settingSources: [],
-      mcpServers: {},
+      mcpServers: input.tools
+        ? {
+            harness: {
+              type: "http",
+              url: input.tools.url,
+              headers: { Authorization: `Bearer ${input.tools.token}` },
+            },
+          }
+        : {},
       strictMcpConfig: true,
-      model: process.env.HARNESS_CLAUDE_MODEL,
+      model: input.session.model ?? process.env.HARNESS_CLAUDE_MODEL,
       maxBudgetUsd: budget,
       tools: process.env.HARNESS_CLAUDE_TOOLS === "none" ? [] : undefined,
       env,

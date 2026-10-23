@@ -40,8 +40,8 @@ const env = {
   NEXT_TELEMETRY_DISABLED: "1",
 };
 const store = new ControlStore(join(directory, "harness.sqlite"));
-const mac = store.createWorker("Claude bench Mac");
-const pi = store.createWorker("Claude bench Pi");
+const mac = await store.createWorker("Claude bench Mac");
+const pi = await store.createWorker("Claude bench Pi");
 const children = [];
 let logs = "";
 function launch(cwd, args, extra = {}) {
@@ -113,7 +113,7 @@ try {
     "--hostname",
     "127.0.0.1",
   ]);
-  await until(() => request("state"), "control startup", 15000);
+  await until(async () => await request("state"), "control startup", 15000);
   const nonce = `ORBIT-${crypto.randomUUID().slice(0, 8)}`;
   const task = await request("tasks", {
     id: crypto.randomUUID(),
@@ -135,8 +135,8 @@ try {
     });
   worker(mac, "mac-cache");
   const first = await terminal(task.sessionId);
-  const nativeId = store.getSession(task.sessionId).nativeId;
-  assert.ok(store.getCheckpoint(task.sessionId));
+  const nativeId = (await store.getSession(task.sessionId)).nativeId;
+  assert.ok(await store.getCheckpoint(task.sessionId));
   await request(
     "tasks",
     { kind: "worker", id: mac.id, draining: true },
@@ -152,7 +152,7 @@ try {
   const second = await terminal(task.sessionId);
   assert.equal(first.workerId, mac.id);
   assert.equal(second.workerId, pi.id);
-  assert.equal(store.getSession(task.sessionId).nativeId, nativeId);
+  assert.equal((await store.getSession(task.sessionId)).nativeId, nativeId);
   assert.ok(
     second.output.includes(nonce),
     "Native history did not preserve the remembered token.",
@@ -182,6 +182,6 @@ try {
     await closed;
     clearTimeout(timer);
   }
-  store.close();
+  await store.close();
   await rm(directory, { recursive: true, force: true });
 }

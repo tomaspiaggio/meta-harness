@@ -1,12 +1,10 @@
 import { HarnessError, type Provider } from "./index";
-
 export const profiles = {
   standard: { memoryMiB: 512, cpuSlots: 1 },
   build: { memoryMiB: 2048, cpuSlots: 2 },
   browser: { memoryMiB: 1024, cpuSlots: 1 },
 } as const;
 export type ResourceProfile = keyof typeof profiles;
-
 export interface Task {
   id: string;
   workspaceId: string;
@@ -19,8 +17,13 @@ export interface Task {
   targetWorkerId: string | null;
   createdAt: number;
 }
-
 export interface WorkerReport {
+  agentIsolation?: boolean;
+  browserHost?: boolean;
+  browserBackend?: "managed" | "personal-chrome" | "extension";
+  browserExtensionReady?: boolean;
+  browserSlotsUsed?: number;
+  browserMemoryMiB?: number;
   hostname: string;
   providers: Provider[];
   portableProviders?: Provider[];
@@ -31,12 +34,12 @@ export interface WorkerReport {
   maxBuilds: number;
   maxBrowsers: number;
   availableMemoryMiB: number;
+  memoryPressure?: "normal" | "warning" | "critical";
   reserveMemoryMiB: number;
   loadPerCpu: number;
   maxLoadPerCpu: number;
   draining: boolean;
 }
-
 export interface WorkerRecord {
   id: string;
   name: string;
@@ -44,19 +47,16 @@ export interface WorkerRecord {
   seenAt: number | null;
   draining: number;
 }
-
 export interface Allocation {
   profile: ResourceProfile;
   provider: Provider;
 }
-
 export function requirements(profile: ResourceProfile, provider: Provider) {
   // Demo models orchestration without reserving a real agent's full footprint.
   return provider === "demo" && profile === "standard"
     ? { memoryMiB: 64, cpuSlots: 1 }
     : profiles[profile];
 }
-
 /** Admission policy only: it never changes or kills processes on the host. */
 export function admissionReason(
   report: WorkerReport,
@@ -69,7 +69,9 @@ export function admissionReason(
     return `${provider} is unavailable on this worker`;
   if (allocations.length >= report.maxAgents)
     return "All agent slots are occupied";
-  if (report.loadPerCpu > report.maxLoadPerCpu)
+  if (provider !== "demo" && report.memoryPressure === "critical")
+    return "Host memory pressure is critical; waiting for it to ease";
+  if (provider !== "demo" && report.loadPerCpu > report.maxLoadPerCpu)
     return "Host CPU load is above the configured threshold";
   const needs = requirements(profile, provider);
   const used = allocations.reduce(
@@ -82,10 +84,13 @@ export function admissionReason(
     },
     { memoryMiB: 0, cpuSlots: 0 },
   );
-  if (used.memoryMiB + needs.memoryMiB > report.memoryBudgetMiB)
+  if (
+    used.memoryMiB + needs.memoryMiB + (report.browserMemoryMiB ?? 0) >
+    report.memoryBudgetMiB
+  )
     return "Harness memory reservations are full";
   if (needs.memoryMiB > report.availableMemoryMiB - report.reserveMemoryMiB)
-    return "Preserving host memory headroom";
+    return `Preserving host memory headroom: ${report.availableMemoryMiB} MiB available; ${needs.memoryMiB + report.reserveMemoryMiB} MiB needed (${needs.memoryMiB} MiB for this turn + ${report.reserveMemoryMiB} MiB reserve)`;
   if (used.cpuSlots + needs.cpuSlots > report.cpuSlots)
     return "Harness CPU reservations are full";
   if (
@@ -102,18 +107,16 @@ export function admissionReason(
     return "All browser slots are occupied";
   return null;
 }
-
 export function parseProfile(value: unknown): ResourceProfile {
   if (value === undefined || value === "standard") return "standard";
   if (value === "build" || value === "browser") return value;
   throw new HarnessError("Choose standard, build, or browser.");
 }
-
 export function parseWorkerReport(value: unknown): WorkerReport {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new HarnessError("Invalid worker report.");
   const row = value as Record<string, unknown>;
-  const count = (key: string, minimum = 0, maximum = 16_777_216): number => {
+  const count = (key: string, minimum = 0, maximum = 16777216): number => {
     const value = row[key];
     if (
       typeof value !== "number" ||
@@ -151,10 +154,37 @@ export function parseWorkerReport(value: unknown): WorkerReport {
       typeof row[key] !== "number" ||
       !Number.isFinite(row[key]) ||
       row[key] < 0 ||
-      row[key] > 10_000
+      row[key] > 10000
     )
       throw new HarnessError(`Invalid worker ${key}.`);
+  if (
+    row.memoryPressure !== undefined &&
+    row.memoryPressure !== "normal" &&
+    row.memoryPressure !== "warning" &&
+    row.memoryPressure !== "critical"
+  )
+    throw new HarnessError("Invalid worker memoryPressure.");
   return {
+    ...(row.agentIsolation === undefined
+      ? {}
+      : { agentIsolation: row.agentIsolation === true }),
+    ...(row.browserHost === undefined
+      ? {}
+      : { browserHost: row.browserHost === true }),
+    ...(row.browserBackend === "managed" ||
+    row.browserBackend === "personal-chrome" ||
+    row.browserBackend === "extension"
+      ? { browserBackend: row.browserBackend }
+      : {}),
+    ...(row.browserExtensionReady === undefined
+      ? {}
+      : { browserExtensionReady: row.browserExtensionReady === true }),
+    ...(row.browserSlotsUsed === undefined
+      ? {}
+      : { browserSlotsUsed: count("browserSlotsUsed", 0, 64) }),
+    ...(row.browserMemoryMiB === undefined
+      ? {}
+      : { browserMemoryMiB: count("browserMemoryMiB") }),
     hostname: row.hostname,
     providers: [...new Set(row.providers)] as Provider[],
     ...(Array.isArray(row.portableProviders)
@@ -174,6 +204,11 @@ export function parseWorkerReport(value: unknown): WorkerReport {
     maxBuilds: count("maxBuilds", 0, 100),
     maxBrowsers: count("maxBrowsers", 0, 100),
     availableMemoryMiB: count("availableMemoryMiB"),
+    ...(row.memoryPressure === undefined
+      ? {}
+      : {
+          memoryPressure: row.memoryPressure as WorkerReport["memoryPressure"],
+        }),
     reserveMemoryMiB: count("reserveMemoryMiB"),
     loadPerCpu: row.loadPerCpu as number,
     maxLoadPerCpu: row.maxLoadPerCpu as number,

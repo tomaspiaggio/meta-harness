@@ -1,17 +1,19 @@
 import { HarnessError } from "@harness/core";
+import { hosted, publicOrigin } from "./hosted-auth";
 import { authorizeAdmin } from "./security";
-
-export function localRequest(request: Request): void {
+export async function localRequest(request: Request): Promise<void> {
   const url = new URL(request.url);
   const origin = request.headers.get("origin");
   const host = request.headers.get("host");
   if (
     !host ||
-    (["localhost", "127.0.0.1", "::1"].includes(
-      process.env.HARNESS_BIND_HOST ?? "127.0.0.1",
-    ) &&
+    (!hosted() &&
+      ["localhost", "127.0.0.1", "::1"].includes(
+        process.env.HARNESS_BIND_HOST ?? "127.0.0.1",
+      ) &&
       !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) ||
-    (origin && new URL(origin).host !== host) ||
+    (origin &&
+      (hosted() ? origin !== publicOrigin() : new URL(origin).host !== host)) ||
     request.headers.get("sec-fetch-site") === "cross-site"
   ) {
     throw new HarnessError(
@@ -19,19 +21,17 @@ export function localRequest(request: Request): void {
       403,
     );
   }
-  authorizeAdmin(request);
+  await authorizeAdmin(request);
 }
-
 export async function jsonBody(
   request: Request,
 ): Promise<Record<string, unknown>> {
-  localRequest(request);
-  return readJson(request);
+  await localRequest(request);
+  return await readJson(request);
 }
-
 export async function readJson(
   request: Request,
-  maxBytes = 32_768,
+  maxBytes = 32768,
 ): Promise<Record<string, unknown>> {
   if (Number(request.headers.get("content-length") ?? 0) > maxBytes)
     throw new HarnessError("Request too large.", 413);
@@ -60,7 +60,6 @@ export async function readJson(
     throw new HarnessError("Expected a JSON object.");
   return value as Record<string, unknown>;
 }
-
 export function failure(error: unknown): Response {
   if (error instanceof HarnessError)
     return Response.json({ error: error.message }, { status: error.status });

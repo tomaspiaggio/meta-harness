@@ -9,6 +9,10 @@ import {
   type RuntimeEvent,
   type RuntimeInput,
 } from "@harness/core";
+import { imageTypes } from "@harness/core/attachments";
+import { parseModel } from "@harness/core/models";
+import { runtimeEnvironment } from "./environment";
+import { claudeUserMessage, inputPrompt } from "./input";
 
 type JsonRecord = Record<string, unknown>;
 function record(value: unknown): JsonRecord {
@@ -16,7 +20,6 @@ function record(value: unknown): JsonRecord {
     ? (value as JsonRecord)
     : {};
 }
-
 /** Parse only display text and native IDs; never persist raw credential-bearing events. */
 export function decodeEvent(
   provider: "codex" | "claude",
@@ -56,12 +59,12 @@ export function decodeEvent(
       const reset =
         typeof limits.resetsAt === "number"
           ? limits.resetsAt * (limits.resetsAt < 1e12 ? 1000 : 1)
-          : Date.now() + 5 * 60_000;
+          : Date.now() + 5 * 60000;
       throw new ProviderUnavailableError(
         "claude",
         Math.max(
           Date.now() + 1000,
-          Math.min(reset, Date.now() + 7 * 24 * 60 * 60_000),
+          Math.min(reset, Date.now() + 7 * 24 * 60 * 60000),
         ),
         "Claude provider usage limit reached.",
       );
@@ -69,7 +72,7 @@ export function decodeEvent(
     if (event.type === "assistant" && event.error === "rate_limit")
       throw new ProviderUnavailableError(
         "claude",
-        Date.now() + 5 * 60_000,
+        Date.now() + 5 * 60000,
         "Claude provider usage limit reached; reset time was not supplied.",
       );
     if (typeof event.session_id === "string")
@@ -93,11 +96,13 @@ export function decodeEvent(
   }
   return events;
 }
-
 export function commandFor(
   provider: "codex" | "claude",
   nativeId: string | null,
+  tools?: RuntimeInput["tools"],
+  model?: string | null,
 ) {
+  const selectedModel = parseModel(provider, model);
   if (provider === "codex") {
     return {
       bin: process.env.CODEX_BIN ?? "codex",
@@ -105,12 +110,23 @@ export function commandFor(
         "exec",
         ...(nativeId ? ["resume", nativeId] : []),
         "--json",
+        ...(selectedModel ? ["--model", selectedModel] : []),
         "--skip-git-repo-check",
         "--ignore-user-config",
         "-c",
         'approval_policy="never"',
         "-c",
         'sandbox_mode="workspace-write"',
+        ...(tools
+          ? [
+              "-c",
+              `mcp_servers.harness.url=${JSON.stringify(tools.url)}`,
+              "-c",
+              'mcp_servers.harness.bearer_token_env_var="HARNESS_TOOL_TOKEN"',
+              "-c",
+              'mcp_servers.harness.default_tools_approval_mode="approve"',
+            ]
+          : []),
         "-",
       ],
     };
@@ -119,37 +135,80 @@ export function commandFor(
     bin: process.env.CLAUDE_BIN ?? "claude",
     args: [
       "--print",
+      ...(selectedModel ? ["--model", selectedModel] : []),
+      ...(process.env.HARNESS_CLAUDE_BARE === "1"
+        ? ["--bare"]
+        : ["--setting-sources", "", "--disable-slash-commands"]),
       "--verbose",
       "--output-format",
       "stream-json",
       "--permission-mode",
       "dontAsk",
+      "--allowedTools",
+      "Edit(./DECISION_UPDATES.json)",
+      ...(tools ? ["mcp__harness__*"] : []),
       "--strict-mcp-config",
       "--mcp-config",
-      '{"mcpServers":{}}',
+      JSON.stringify({
+        mcpServers: tools
+          ? {
+              harness: {
+                type: "http",
+                url: tools.url,
+                headers: {
+                  Authorization: "Bearer " + "$" + "{HARNESS_TOOL_TOKEN}",
+                },
+              },
+            }
+          : {},
+      }),
       ...(nativeId ? ["--resume", nativeId] : []),
     ],
   };
 }
-
 async function runCli(
   provider: "codex" | "claude",
   input: RuntimeInput,
 ): Promise<void> {
   input.signal.throwIfAborted();
-  const command = commandFor(provider, input.session.nativeId);
+  const command = commandFor(
+    provider,
+    input.session.nativeId,
+    input.tools,
+    input.session.model ??
+      (provider === "claude"
+        ? process.env.HARNESS_CLAUDE_MODEL
+        : process.env.HARNESS_CODEX_MODEL),
+  );
+  if (provider === "claude" && process.env.HARNESS_CLAUDE_CHROME === "1")
+    command.args.push("--chrome");
+  const images = (input.attachments ?? []).filter((file) =>
+    imageTypes.has(file.mediaType),
+  );
+  if (provider === "codex")
+    for (const image of images)
+      command.args.splice(command.args.length - 1, 0, "--image", image.path);
+  if (provider === "claude" && images.length)
+    command.args.push("--input-format", "stream-json");
   const child = spawn(command.bin, command.args, {
     cwd: input.directory,
     stdio: ["pipe", "pipe", "pipe"],
     detached: process.platform !== "win32",
+    ...(input.identity
+      ? { uid: input.identity.uid, gid: input.identity.gid }
+      : {}),
     env: {
-      ...Object.fromEntries(
-        Object.entries(process.env).filter(
-          ([key]) =>
-            !key.startsWith("HARNESS_") && !key.startsWith("WORKFLOW_"),
-        ),
-      ),
-      NO_COLOR: "1",
+      ...runtimeEnvironment(provider, process.env, input.environment),
+      ...(input.identity
+        ? {
+            HOME: input.identity.home,
+            XDG_CONFIG_HOME: join(input.identity.home, ".config"),
+            XDG_DATA_HOME: join(input.identity.home, ".local/share"),
+            CODEX_HOME: join(input.identity.home, ".codex"),
+            CLAUDE_CONFIG_DIR: join(input.identity.home, ".claude"),
+          }
+        : {}),
+      ...(input.tools ? { HARNESS_TOOL_TOKEN: input.tools.token } : {}),
     },
   });
   let stderr = "";
@@ -184,7 +243,9 @@ async function runCli(
   input.signal.addEventListener("abort", stop, { once: true });
   if (input.signal.aborted) stop();
   child.stdin.end(
-    `Workspace instructions:\n${input.instructions}\n\nUser instruction:\n${input.prompt}`,
+    provider === "claude" && images.length
+      ? `${JSON.stringify(await claudeUserMessage(input))}\n`
+      : inputPrompt(input),
   );
   let buffer = "";
   let completed = false;
@@ -239,7 +300,6 @@ async function runCli(
     if (killTimer) clearTimeout(killTimer);
   }
 }
-
 export function createRuntime(provider: Provider): AgentRuntime {
   if (provider === "demo") {
     return {
@@ -273,7 +333,7 @@ export function createRuntime(provider: Provider): AgentRuntime {
             throw error;
         }
         const delayMs = Number(process.env.HARNESS_DEMO_DELAY_MS ?? 150);
-        if (!Number.isSafeInteger(delayMs) || delayMs < 0 || delayMs > 60_000)
+        if (!Number.isSafeInteger(delayMs) || delayMs < 0 || delayMs > 60000)
           throw new Error("Invalid Demo delay.");
         for (let index = next; index < messages.length; index++) {
           await delay(delayMs, undefined, { signal: input.signal });
@@ -294,7 +354,7 @@ export function createRuntime(provider: Provider): AgentRuntime {
         const { runClaudeSdk } = await import("./claude-sdk");
         return runClaudeSdk(input);
       }
-      return runCli(provider, input);
+      return await runCli(provider, input);
     },
   };
 }

@@ -51,6 +51,61 @@ try {
     await delay(200);
   }
   assert.ok(ready, `Network gateway did not become ready. ${logs}`);
+  for (const path of [
+    "schedules",
+    "preferences",
+    "attachments?id=unknown",
+    "browser?workspace=tech",
+    "resources?workspace=tech",
+    "notifications",
+    "workers",
+    "diagnostics?turn=unknown",
+  ])
+    assert.equal(
+      (await fetch(`${base}/api/${path}`)).status,
+      401,
+      `unauthenticated ${path}`,
+    );
+  for (const path of ["sessions", "workspaces"]) {
+    const response = await fetch(`${base}/api/${path}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "missing-fixture", confirm: true }),
+    });
+    assert.equal(response.status, 401, `unauthenticated delete ${path}`);
+  }
+  assert.equal(
+    (
+      await fetch(`${base}/api/preferences`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "claude",
+          models: { claude: "opus", codex: null },
+        }),
+      })
+    ).status,
+    401,
+    "unauthenticated preference update",
+  );
+  for (const method of ["PATCH", "DELETE"]) {
+    assert.equal(
+      (
+        await fetch(`${base}/api/decisions`, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            key: "fixture",
+            content: "x",
+            expectedRevision: 1,
+            confirm: true,
+          }),
+        })
+      ).status,
+      401,
+      `unauthenticated decision ${method}`,
+    );
+  }
   const token = (await readFile(join(directory, "admin-token"), "utf8")).trim();
   const authorization = `Bearer ${token}`;
   assert.equal(
@@ -107,7 +162,7 @@ try {
   );
   assert.equal(
     (
-      await fetch(`${base}/api/worker/report`, {
+      await fetch(`${base}/api/worker?action=report`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",

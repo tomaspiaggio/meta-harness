@@ -1,9 +1,15 @@
-import { ControlStore } from "@harness/storage/control";
+import {
+  type HarnessStore,
+  openHarnessStore,
+} from "@harness/storage/application";
 
 const shared = globalThis as typeof globalThis & {
-  harnessStore?: ControlStore;
+  harnessStore?: Promise<HarnessStore>;
 };
-export function getStore(): ControlStore {
-  shared.harnessStore ??= new ControlStore();
+export async function getStore(): Promise<HarnessStore> {
+  shared.harnessStore ??= openHarnessStore().catch((error) => {
+    shared.harnessStore = undefined;
+    throw error;
+  });
   return shared.harnessStore;
 }

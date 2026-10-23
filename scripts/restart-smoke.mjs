@@ -97,7 +97,7 @@ async function request(path, body) {
 }
 try {
   const firstWeb = web();
-  await until(() => request("state"), "first startup");
+  await until(async () => await request("state"), "first startup");
   const session = await request("sessions", {
     workspaceId: "tech",
     title: "Restart gate",
@@ -117,7 +117,7 @@ try {
   // Stop after the workflow dispatched, before any agent process executed.
   await stop(firstWeb);
   const secondWeb = web();
-  await until(() => request("state"), "restart");
+  await until(async () => await request("state"), "restart");
   launch(join(root, "apps/worker"), ["--import", "tsx", "src/index.ts"]);
   await until(async () => {
     const state = await request(`state?workspace=tech&session=${session.id}`);

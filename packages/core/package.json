@@ -4,13 +4,23 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./titles": "./src/titles.ts",
     ".": "./src/index.ts",
     "./scheduling": "./src/scheduling.ts",
     "./checkpoint": "./src/checkpoint.ts",
-    "./native-store": "./src/native-store.ts"
+    "./native-store": "./src/native-store.ts",
+    "./knowledge": "./src/knowledge.ts",
+    "./automations": "./src/automations.ts",
+    "./attachments": "./src/attachments.ts",
+    "./browser": "./src/browser.ts",
+    "./resources": "./src/resources.ts",
+    "./idempotency": "./src/idempotency.ts",
+    "./models": "./src/models.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
   },
-  "dependencies": {}
+  "dependencies": {
+    "cron-parser": "5.10.2"
+  }
 }

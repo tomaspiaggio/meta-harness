@@ -10,7 +10,9 @@
       "!**/.workflow-data",
       "!**/app/.well-known",
       "!**/next-env.d.ts",
-      "!**/pnpm-lock.yaml"
+      "!**/pnpm-lock.yaml",
+      "!**/generated",
+      "!apps/browser-extension/dist"
     ]
   },
   "formatter": {
@@ -29,5 +31,30 @@
         "organizeImports": "on"
       }
     }
-  }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["apps/web/components/ui/**", "apps/web/hooks/**"],
+      "linter": {
+        "enabled": false
+      }
+    },
+    {
+      "includes": ["packages/browser/src/vendor/**"],
+      "linter": {
+        "enabled": false
+      },
+      "formatter": {
+        "enabled": false
+      },
+      "assist": {
+        "enabled": false
+      }
+    }
+  ]
 }

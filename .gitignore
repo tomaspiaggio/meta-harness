@@ -8,3 +8,7 @@ node_modules/
 *.tsbuildinfo
 apps/web/app/.well-known/workflow/
 .DS_Store
+
+packages/storage/generated/
+
+apps/browser-extension/dist/

@@ -14,6 +14,7 @@ test("Claude SDK normalizes transcript keys across directories without changing 
       title: "Disposable",
       provider: "claude",
       nativeId: null,
+      model: "opus",
       createdAt: 0,
     },
     directory: "/mac/session",
@@ -38,11 +39,13 @@ test("Claude SDK normalizes transcript keys across directories without changing 
   let closed = 0;
   await runClaudeSdk(input, ({ options }) => ({
     async *[Symbol.asyncIterator]() {
+      assert.equal(options.model, "opus");
       assert.equal(
         options.env?.CLAUDE_CONFIG_DIR,
         process.env.CLAUDE_CONFIG_DIR,
       );
       assert.equal(options.env?.HARNESS_WORKER_TOKEN_FILE, undefined);
+      assert.deepEqual(options.allowedTools, ["Edit(./DECISION_UPDATES.json)"]);
       if (!options.sessionStore) throw new Error("Missing store");
       await options.sessionStore.append(
         { projectKey: "-mac-session", sessionId: "native-id" },
@@ -67,11 +70,12 @@ test("Claude SDK normalizes transcript keys across directories without changing 
     {
       ...input,
       directory: "/pi/session",
-      session: { ...input.session, nativeId: "native-id" },
+      session: { ...input.session, nativeId: "native-id", model: "haiku" },
     },
     ({ options }) => ({
       async *[Symbol.asyncIterator]() {
         assert.equal(options.resume, "native-id");
+        assert.equal(options.model, "haiku");
         if (!options.sessionStore) throw new Error("Missing store");
         assert.deepEqual(
           await options.sessionStore.load({
@@ -94,7 +98,6 @@ test("Claude SDK normalizes transcript keys across directories without changing 
     ),
   );
 });
-
 test("a failed mirror cannot be reported as a portable successful turn", async () => {
   let closed = false;
   await assert.rejects(

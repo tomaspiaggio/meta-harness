@@ -7,9 +7,13 @@ test("gateway admits only the public UI/API surface, regardless of encoded inter
   for (const path of [
     "/",
     "/tasks",
+    "/knowledge",
+    "/api/decisions",
     "/login",
     "/api/worker/native-append",
+    "/api/worker?action=claim",
     "/api/tasks",
+    "/api/preferences",
     "/_next/static/app.js",
   ])
     assert.equal(publicPath(path), true, path);
@@ -26,7 +30,6 @@ test("gateway admits only the public UI/API surface, regardless of encoded inter
   ])
     assert.equal(publicPath(path), false, path);
 });
-
 test("gateway streams public requests and strips client-supplied proxy identity headers", async () => {
   const upstream = createServer((request, response) => {
     response.setHeader("content-type", "application/json");

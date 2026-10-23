@@ -7,7 +7,7 @@ import type { RuntimeEvent, RuntimeInput } from "@harness/core";
 import { ProviderUnavailableError } from "@harness/core";
 import { commandFor, createRuntime, decodeEvent } from "./index";
 
-test("Codex and Claude events normalize text and preserve native identity", () => {
+test("Codex and Claude events normalize text and preserve native identity", async () => {
   assert.deepEqual(
     decodeEvent("codex", { type: "thread.started", thread_id: "thread-1" }),
     [{ type: "native-session", id: "thread-1" }],
@@ -37,8 +37,8 @@ test("Codex and Claude events normalize text and preserve native identity", () =
       { type: "text", text: "hello\n\n" },
     ],
   );
-  assert.throws(
-    () =>
+  await assert.rejects(
+    async () =>
       decodeEvent("claude", {
         type: "result",
         is_error: true,
@@ -46,8 +46,8 @@ test("Codex and Claude events normalize text and preserve native identity", () =
       }),
     /denied/,
   );
-  assert.throws(
-    () =>
+  await assert.rejects(
+    async () =>
       decodeEvent("codex", {
         type: "turn.failed",
         error: { message: "offline" },
@@ -55,7 +55,6 @@ test("Codex and Claude events normalize text and preserve native identity", () =
     /offline/,
   );
 });
-
 test("continuation uses an explicit native ID and never bypasses permissions", () => {
   for (const provider of ["claude", "codex"] as const) {
     const command = commandFor(provider, "specific-native-session");
@@ -63,12 +62,16 @@ test("continuation uses an explicit native ID and never bypasses permissions", (
     assert.ok(!command.args.some((arg) => arg.includes("dangerously")));
     assert.ok(!command.args.includes("--last"));
   }
+  const claude = commandFor("claude", null);
+  assert.equal(
+    claude.args[claude.args.indexOf("--allowedTools") + 1],
+    "Edit(./DECISION_UPDATES.json)",
+  );
 });
-
-test("structured provider limits become a cooldown rather than successful assistant output", () => {
+test("structured provider limits become a cooldown rather than successful assistant output", async () => {
   const resetsAt = Math.floor(Date.now() / 1000) + 300;
-  assert.throws(
-    () =>
+  await assert.rejects(
+    async () =>
       decodeEvent("claude", {
         type: "rate_limit_event",
         rate_limit_info: { status: "rejected", resetsAt },
@@ -77,8 +80,9 @@ test("structured provider limits become a cooldown rather than successful assist
       error instanceof ProviderUnavailableError &&
       error.retryAt === resetsAt * 1000,
   );
-  assert.throws(
-    () => decodeEvent("claude", { type: "assistant", error: "rate_limit" }),
+  await assert.rejects(
+    async () =>
+      decodeEvent("claude", { type: "assistant", error: "rate_limit" }),
     ProviderUnavailableError,
   );
   assert.deepEqual(
@@ -89,7 +93,6 @@ test("structured provider limits become a cooldown rather than successful assist
     [],
   );
 });
-
 function input(
   directory: string,
   events: RuntimeEvent[],
@@ -113,7 +116,6 @@ function input(
     },
   };
 }
-
 test("CLI adapter consumes JSONL and treats clean exit without completion as interrupted work", async () => {
   const dir = mkdtempSync(join(tmpdir(), "meta-runtime-"));
   const bin = join(dir, "fake codex");
@@ -142,7 +144,6 @@ test("CLI adapter consumes JSONL and treats clean exit without completion as int
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
 test("cancellation terminates a live CLI process", async () => {
   const dir = mkdtempSync(join(tmpdir(), "meta-abort-"));
   const bin = join(dir, "fake-codex");
@@ -172,4 +173,42 @@ test("cancellation terminates a live CLI process", async () => {
     else process.env.CODEX_BIN = original;
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("CLI model overrides preserve provider-native continuation identity", () => {
+  for (const [provider, model] of [
+    ["claude", "opus"],
+    ["codex", "gpt-6.1-sol"],
+  ] as const) {
+    const first = commandFor(provider, null, undefined, model);
+    assert.equal(first.args[first.args.indexOf("--model") + 1], model);
+    const continued = commandFor(
+      provider,
+      "existing-native",
+      undefined,
+      provider === "claude" ? "haiku" : "gpt-6-luna",
+    );
+    assert.ok(continued.args.includes("existing-native"));
+    assert.equal(
+      continued.args[continued.args.indexOf("--model") + 1],
+      provider === "claude" ? "haiku" : "gpt-6-luna",
+    );
+  }
+});
+test("only the attempt-scoped harness MCP server is approved for unattended Codex tool calls", () => {
+  const tools = {
+    url: "https://fixture.invalid/api/tools",
+    token: "fixture-token",
+  };
+  const args = commandFor("codex", "existing-native", tools).args;
+  assert.ok(
+    args.includes('mcp_servers.harness.default_tools_approval_mode="approve"'),
+  );
+  assert.ok(args.includes('approval_policy="never"'));
+  assert.ok(args.includes('sandbox_mode="workspace-write"'));
+  assert.ok(
+    !commandFor("codex", null).args.some((value) =>
+      value.includes("default_tools_approval_mode"),
+    ),
+  );
 });

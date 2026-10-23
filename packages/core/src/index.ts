@@ -1,5 +1,5 @@
+import type { RuntimeAttachment } from "./attachments";
 import type { NativeSessionStore } from "./native-store";
-
 /** Engine-independent, JSON-serializable contracts. Keep Node and SDKs out. */
 export const providers = ["demo", "codex", "claude"] as const;
 export type Provider = (typeof providers)[number];
@@ -10,24 +10,28 @@ export type TurnStatus =
   | "completed"
   | "failed"
   | "interrupted";
-
 export interface Workspace {
   id: string;
   name: string;
   instructions: string;
 }
-
 export interface Session {
+  model?: string | null;
   id: string;
   workspaceId: string;
   title: string;
+  titleSource?: "prompt" | "manual" | "generated";
+  unreadCount?: number;
+  needsInputCount?: number;
+  attentionSequence?: number;
+  lastActivityAt?: number;
   provider: Provider;
   nativeId: string | null;
   ownerWorkerId?: string | null;
   createdAt: number;
 }
-
 export interface Turn {
+  model?: string | null;
   id: string;
   sessionId: string;
   prompt: string;
@@ -38,16 +42,20 @@ export interface Turn {
   leaseUntil: number | null;
   output: string;
   error: string | null;
+  stopRequestedAt?: number | null;
+  interruptsTurnId?: string | null;
   createdAt: number;
 }
-
 export interface ClaimedTurn {
   turn: Turn;
   session: Session;
   workspace: Workspace;
 }
-
 export interface RuntimeInput {
+  attachments?: RuntimeAttachment[];
+  tools?: { url: string; token: string };
+  identity?: { uid: number; gid: number; home: string };
+  environment?: Record<string, string>;
   turnId?: string;
   sessionStore?: NativeSessionStore;
   session: Session;
@@ -57,16 +65,21 @@ export interface RuntimeInput {
   signal: AbortSignal;
   emit: (event: RuntimeEvent) => void | Promise<void>;
 }
-
 export type RuntimeEvent =
-  | { type: "text"; text: string }
-  | { type: "native-session"; id: string }
-  | { type: "checkpoint" };
-
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "native-session";
+      id: string;
+    }
+  | {
+      type: "checkpoint";
+    };
 export interface AgentRuntime {
   run(input: RuntimeInput): Promise<void>;
 }
-
 export class ProviderUnavailableError extends Error {
   constructor(
     public readonly provider: Provider,
@@ -76,7 +89,6 @@ export class ProviderUnavailableError extends Error {
     super(message);
   }
 }
-
 export type ExecutionSink = Pick<
   TurnStore,
   "appendOutput" | "saveNativeId" | "finish"
@@ -87,18 +99,21 @@ export type ExecutionSink = Pick<
     reason: string,
   ): Promise<void> | void;
 };
-
 /** Activities/steps call this port; they do not own persistence or execution. */
 export interface TurnStore {
-  enqueue(turnId: string): void;
-  getTurn(turnId: string): Turn;
-  claim(workerId: string, now: number, leaseMs: number): ClaimedTurn | null;
+  enqueue(turnId: string): void | Promise<void>;
+  getTurn(turnId: string): Turn | Promise<Turn>;
+  claim(
+    workerId: string,
+    now: number,
+    leaseMs: number,
+  ): ClaimedTurn | null | Promise<ClaimedTurn | null>;
   heartbeat(
     turnId: string,
     generation: number,
     now: number,
     leaseMs: number,
-  ): boolean;
+  ): boolean | Promise<boolean>;
   appendOutput(
     turnId: string,
     generation: number,
@@ -116,26 +131,25 @@ export interface TurnStore {
     error?: string,
   ): void | Promise<void>;
 }
-
 export function isTerminal(status: TurnStatus): boolean {
   return (
     status === "completed" || status === "failed" || status === "interrupted"
   );
 }
-
-export function enqueueTurn(store: TurnStore, turnId: string): void {
-  store.enqueue(turnId);
+export async function enqueueTurn(
+  store: TurnStore,
+  turnId: string,
+): Promise<void> {
+  await store.enqueue(turnId);
 }
-
-export function readTurnOutcome(store: TurnStore, turnId: string) {
-  const turn = store.getTurn(turnId);
+export async function readTurnOutcome(store: TurnStore, turnId: string) {
+  const turn = await store.getTurn(turnId);
   return {
     id: turn.id,
     status: turn.status,
     terminal: isTerminal(turn.status),
   };
 }
-
 /** No retry here: the runtime may already have produced external effects. */
 export async function executeTurn(
   store: ExecutionSink,
@@ -145,13 +159,18 @@ export async function executeTurn(
   signal: AbortSignal,
   checkpoint?: () => Promise<void>,
   sessionStore?: NativeSessionStore,
+  context: Pick<
+    RuntimeInput,
+    "attachments" | "environment" | "tools" | "identity"
+  > = {},
 ): Promise<void> {
   const { turn, session, workspace } = claim;
   try {
     await runtime.run({
+      ...context,
       turnId: turn.id,
       sessionStore,
-      session,
+      session: { ...session, model: turn.model ?? null },
       prompt: turn.prompt,
       instructions: workspace.instructions,
       directory,
@@ -166,6 +185,8 @@ export async function executeTurn(
         }
       },
     });
+    // A runtime may return normally while its cooperative stop is being handled.
+    if (signal.aborted) throw signal.reason ?? new Error("Execution stopped.");
     await store.finish(turn.id, turn.generation, "completed");
   } catch (error) {
     if (error instanceof ProviderUnavailableError)
@@ -182,7 +203,6 @@ export async function executeTurn(
     );
   }
 }
-
 export class HarnessError extends Error {
   constructor(
     message: string,
@@ -191,18 +211,16 @@ export class HarnessError extends Error {
     super(message);
   }
 }
-
 export function requiredText(
   value: unknown,
   name: string,
-  max = 20_000,
+  max = 20000,
 ): string {
   if (typeof value !== "string" || !value.trim() || value.length > max) {
     throw new HarnessError(`${name} must contain 1–${max} characters.`);
   }
   return value.trim();
 }
-
 export function parseProvider(value: unknown): Provider {
   if (value === "demo" || value === "codex" || value === "claude") return value;
   throw new HarnessError("Choose demo, codex, or claude.");

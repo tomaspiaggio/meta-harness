@@ -71,11 +71,11 @@ Workflow SDK access over the network.
 - Validate native provider continuation separately, including auth renewal and
   execution-file portability. Demo passing does not establish that guarantee.
 
-## Sandbox is a later execution pool
+## Optional Sandbox execution pool
 
-Sandbox provisioning has not been implemented or exercised. It requires a control
-origin reachable from the sandbox (a private tailnet is not automatically
-reachable), an expiring enrolled identity, a pinned worker release, and a sandbox
-lifetime longer than the assigned turn. Start that pool with Demo and no provider
-credentials, then validate provider auth separately. The control protocol and
-checkpoint manifest are shared with the existing workers.
+Sandbox provisioning is implemented behind deployment/workspace opt-in and remains
+unexercised against a real cloud account. See [operations](../docs/operations.md)
+for snapshot preparation, scoped expiring identities, capacity limits and activation
+gates. Nothing has been provisioned or installed on external machines automatically.
+The same guide covers Prisma/PostgreSQL, hosted owner authentication, private object
+storage, encrypted browser takeover and Telegram setup.

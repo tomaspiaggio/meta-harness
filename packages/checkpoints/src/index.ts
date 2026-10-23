@@ -15,7 +15,6 @@ const MAX_BYTES = 4 * 1024 * 1024;
 const MAX_FILES = 512;
 const hash = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
-
 export function validateSnapshot(value: unknown): FileSnapshot {
   if (
     !value ||
@@ -85,9 +84,25 @@ export function validateSnapshot(value: unknown): FileSnapshot {
       if (seen.has(parts.slice(0, i).join("/")))
         throw new Error("Checkpoint file/directory collision.");
   }
-  return { version: 1, files };
+  let attachments: FileSnapshot["attachments"];
+  if ("attachments" in value && value.attachments !== undefined) {
+    if (!Array.isArray(value.attachments) || value.attachments.length > 1000)
+      throw new Error("Invalid checkpoint attachment references.");
+    attachments = value.attachments.map((entry: unknown) => {
+      const item = entry as { id?: unknown; hash?: unknown };
+      if (
+        !item ||
+        typeof item.id !== "string" ||
+        !/^[a-zA-Z0-9_-]{1,100}$/.test(item.id) ||
+        typeof item.hash !== "string" ||
+        !/^[a-f0-9]{64}$/.test(item.hash)
+      )
+        throw new Error("Invalid checkpoint attachment reference.");
+      return { id: item.id, hash: item.hash };
+    });
+  }
+  return { version: 1, files, ...(attachments ? { attachments } : {}) };
 }
-
 /** Capture only a session execution directory, never the provider's auth home. */
 export async function captureSnapshot(
   directory: string,
@@ -101,7 +116,12 @@ export async function captureSnapshot(
       throw new Error("Checkpoint capture does not follow symlinks.");
     if (stat.isDirectory()) {
       for (const entry of (await readdir(path)).sort()) {
-        if (entry !== ".git" && entry !== "node_modules")
+        if (
+          entry !== ".git" &&
+          entry !== "node_modules" &&
+          entry !== ".harness-attachments" &&
+          entry !== ".harness-home"
+        )
           await walk(relative ? `${relative}/${entry}` : entry);
       }
     } else if (stat.isFile()) {
@@ -122,7 +142,6 @@ export async function captureSnapshot(
   await walk("");
   return validateSnapshot({ version: 1, files });
 }
-
 /** Restore into a fresh sibling directory so partial extraction never becomes live. */
 export async function restoreSnapshot(
   directory: string,

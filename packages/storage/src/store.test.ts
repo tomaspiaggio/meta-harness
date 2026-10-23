@@ -6,126 +6,127 @@ import { test } from "node:test";
 import { executeTurn } from "@harness/core";
 import { SqliteStore } from "./index";
 
-function setup() {
+async function setup() {
   const store = new SqliteStore(":memory:");
-  const session = store.createSession("tech", "Test", "demo");
+  const session = await store.createSession("tech", "Test", "demo");
   return { store, session };
 }
-
-test("submission is idempotent and permits only one active turn per session", () => {
-  const { store, session } = setup();
+test("submission is idempotent and serializes queued messages per session", async () => {
+  const { store, session } = await setup();
   try {
-    const turn = store.createTurn("one", session.id, "hello");
-    assert.deepEqual(store.createTurn("one", session.id, "hello"), turn);
-    store.attachRun("one", "accepted-before-local-queue-restart");
+    const turn = await store.createTurn("one", session.id, "hello");
+    assert.deepEqual(await store.createTurn("one", session.id, "hello"), turn);
+    await store.attachRun("one", "accepted-before-local-queue-restart");
     assert.deepEqual(
-      store.pendingDispatch(),
+      await store.pendingDispatch(),
       ["one"],
       "pending outbox must survive an acknowledged dispatch that never executed",
     );
-    assert.throws(
-      () => store.createTurn("one", session.id, "different"),
+    await assert.rejects(
+      async () => await store.createTurn("one", session.id, "different"),
       /different input/,
     );
-    assert.throws(
-      () => store.createTurn("two", session.id, "next"),
-      /active turn/,
+    assert.equal(
+      (await store.createTurn("two", session.id, "next")).status,
+      "pending",
     );
     assert.equal(
-      store.claim("worker", Date.now(), 30_000),
+      await store.claim("worker", Date.now(), 30000),
       null,
       "pending outbox is not executable",
     );
-    store.enqueue(turn.id);
-    store.enqueue(turn.id);
-    const claim = store.claim("worker", Date.now(), 30_000);
+    await store.enqueue(turn.id);
+    await store.enqueue(turn.id);
+    const claim = await store.claim("worker", Date.now(), 30000);
     assert.ok(claim);
-    assert.equal(store.claim("other", Date.now(), 30_000), null);
-    store.finish(turn.id, claim.turn.generation, "completed");
-    store.enqueue(turn.id);
+    assert.equal(await store.claim("other", Date.now(), 30000), null);
+    await store.finish(turn.id, claim.turn.generation, "completed");
+    await store.enqueue(turn.id);
     assert.equal(
-      store.getTurn(turn.id).status,
+      (await store.getTurn(turn.id)).status,
       "completed",
       "redelivery must not replay completed work",
     );
-    assert.equal(store.createTurn("two", session.id, "next").status, "pending");
+    assert.equal(
+      (await store.createTurn("two", session.id, "next")).status,
+      "pending",
+    );
   } finally {
-    store.close();
+    await store.close();
   }
 });
-
-test("expired ownership rejects old writes and requires explicit continuation", () => {
-  const { store, session } = setup();
+test("expired ownership rejects old writes and requires explicit continuation", async () => {
+  const { store, session } = await setup();
   try {
-    store.createTurn("one", session.id, "hello");
-    store.enqueue("one");
-    const claim = store.claim("worker", Date.now(), 30_000);
+    await store.createTurn("one", session.id, "hello");
+    await store.enqueue("one");
+    const claim = await store.claim("worker", Date.now(), 30000);
     assert.ok(claim);
-    store.appendOutput("one", claim.turn.generation, "partial result");
-    assert.equal(store.recoverExpired(Date.now() + 60_000), 1);
-    assert.equal(store.getTurn("one").status, "interrupted");
-    assert.equal(store.getTurn("one").output, "partial result");
-    assert.throws(
-      () => store.appendOutput("one", claim.turn.generation, "stale"),
+    await store.appendOutput("one", claim.turn.generation, "partial result");
+    assert.equal(await store.recoverExpired(Date.now() + 60000), 1);
+    assert.equal((await store.getTurn("one")).status, "interrupted");
+    assert.equal((await store.getTurn("one")).output, "partial result");
+    await assert.rejects(
+      async () =>
+        await store.appendOutput("one", claim.turn.generation, "stale"),
       /ownership/,
     );
-    assert.throws(
-      () => store.saveNativeId("one", claim.turn.generation, "stale-id"),
+    await assert.rejects(
+      async () =>
+        await store.saveNativeId("one", claim.turn.generation, "stale-id"),
       /ownership/,
     );
-    assert.throws(
-      () => store.finish("one", claim.turn.generation, "completed"),
+    await assert.rejects(
+      async () => await store.finish("one", claim.turn.generation, "completed"),
       /ownership/,
     );
     assert.equal(
-      store.heartbeat("one", claim.turn.generation, Date.now(), 30_000),
+      await store.heartbeat("one", claim.turn.generation, Date.now(), 30000),
       false,
     );
     assert.equal(
-      store.claim("replacement", Date.now(), 30_000),
+      await store.claim("replacement", Date.now(), 30000),
       null,
       "no automatic agent retry",
     );
   } finally {
-    store.close();
+    await store.close();
   }
 });
-
-test("SQLite survives reopening and coordinates independent connections", () => {
+test("SQLite survives reopening and coordinates independent connections", async () => {
   const dir = mkdtempSync(join(tmpdir(), "meta-store-"));
   const path = join(dir, "test.sqlite");
   const first = new SqliteStore(path);
   const second = new SqliteStore(path);
   try {
-    const session = first.createSession("business", "Persisted", "codex");
-    first.createTurn("durable", session.id, "hello");
-    first.enqueue("durable");
-    const claim = second.claim("second", Date.now(), 30_000);
+    const session = await first.createSession("business", "Persisted", "codex");
+    await first.createTurn("durable", session.id, "hello");
+    await first.enqueue("durable");
+    const claim = await second.claim("second", Date.now(), 30000);
     assert.ok(claim);
-    assert.equal(first.claim("first", Date.now(), 30_000), null);
-    second.saveNativeId("durable", claim.turn.generation, "native-123");
-    second.appendOutput("durable", claim.turn.generation, "saved output");
-    second.finish("durable", claim.turn.generation, "completed");
-    assert.equal(first.getSession(session.id).nativeId, "native-123");
+    assert.equal(await first.claim("first", Date.now(), 30000), null);
+    await second.saveNativeId("durable", claim.turn.generation, "native-123");
+    await second.appendOutput("durable", claim.turn.generation, "saved output");
+    await second.finish("durable", claim.turn.generation, "completed");
+    assert.equal((await first.getSession(session.id)).nativeId, "native-123");
     const reopened = new SqliteStore(path);
     try {
-      assert.equal(reopened.getTurn("durable").output, "saved output");
+      assert.equal((await reopened.getTurn("durable")).output, "saved output");
     } finally {
-      reopened.close();
+      await reopened.close();
     }
   } finally {
-    first.close();
-    second.close();
+    await first.close();
+    await second.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
 test("ordinary execution functions save native state and fail without retrying runtime effects", async () => {
-  const { store, session } = setup();
+  const { store, session } = await setup();
   try {
-    store.createTurn("failure", session.id, "hello");
-    store.enqueue("failure");
-    const claim = store.claim("worker", Date.now(), 30_000);
+    await store.createTurn("failure", session.id, "hello");
+    await store.enqueue("failure");
+    const claim = await store.claim("worker", Date.now(), 30000);
     assert.ok(claim);
     let calls = 0;
     await executeTurn(
@@ -143,41 +144,40 @@ test("ordinary execution functions save native state and fail without retrying r
       new AbortController().signal,
     );
     assert.equal(calls, 1);
-    assert.equal(store.getTurn("failure").status, "failed");
-    assert.equal(store.getTurn("failure").output, "partial");
-    assert.equal(store.getSession(session.id).nativeId, "resume-me");
+    assert.equal((await store.getTurn("failure")).status, "failed");
+    assert.equal((await store.getTurn("failure")).output, "partial");
+    assert.equal((await store.getSession(session.id)).nativeId, "resume-me");
   } finally {
-    store.close();
+    await store.close();
   }
 });
-
-test("output persistence has a fixed bound", () => {
-  const { store, session } = setup();
+test("output persistence has a fixed bound", async () => {
+  const { store, session } = await setup();
   try {
-    store.createTurn("bounded", session.id, "hello");
-    store.enqueue("bounded");
-    const claim = store.claim("worker", Date.now(), 30_000);
+    await store.createTurn("bounded", session.id, "hello");
+    await store.enqueue("bounded");
+    const claim = await store.claim("worker", Date.now(), 30000);
     assert.ok(claim);
-    assert.throws(
-      () =>
-        store.appendOutput(
+    await assert.rejects(
+      async () =>
+        await store.appendOutput(
           "bounded",
           claim.turn.generation,
           "x".repeat(262145),
         ),
       /exceeded/,
     );
-    assert.equal(store.getTurn("bounded").output, "");
-    assert.throws(
-      () =>
-        store.appendOutput(
+    assert.equal((await store.getTurn("bounded")).output, "");
+    await assert.rejects(
+      async () =>
+        await store.appendOutput(
           "bounded",
           claim.turn.generation,
-          "🌱".repeat(70_000),
+          "🌱".repeat(70000),
         ),
       /exceeded/,
     );
   } finally {
-    store.close();
+    await store.close();
   }
 });

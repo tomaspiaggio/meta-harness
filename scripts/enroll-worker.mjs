@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ControlStore } from "../packages/storage/src/control.ts";
+import { openControlStore } from "../packages/storage/src/control.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 process.chdir(root);
@@ -11,11 +11,13 @@ const value = (flag) => {
   return index >= 0 ? process.argv[index + 1] : undefined;
 };
 const directory = resolve(process.env.HARNESS_DATA_DIR ?? join(root, ".data"));
-const store = new ControlStore(join(directory, "harness.sqlite"));
+const store = await openControlStore(
+  process.env.DATABASE_URL ? undefined : join(directory, "harness.sqlite"),
+);
 try {
   const revoke = value("--revoke");
   if (revoke) {
-    store.revokeWorker(revoke);
+    await store.revokeWorker(revoke);
     console.log(`Revoked worker ${revoke}.`);
   } else {
     const name = value("--name");
@@ -39,7 +41,7 @@ try {
     if (existsSync(path))
       throw new Error("Credential output already exists. Choose a new file.");
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    const identity = store.createWorker(name);
+    const identity = await store.createWorker(name);
     writeFileSync(
       path,
       JSON.stringify({ ...identity, serverUrl: url.origin }, null, 2),
@@ -50,5 +52,5 @@ try {
     );
   }
 } finally {
-  store.close();
+  await store.close();
 }

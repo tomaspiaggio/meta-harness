@@ -25,16 +25,16 @@ test("execution files restore on another worker with checksums and executable bi
       await readFile(join(target, "nested/result.txt"), "utf8"),
       "checkpoint 🌱",
     );
-    assert.throws(
-      () =>
+    await assert.rejects(
+      async () =>
         validateSnapshot({
           version: 1,
           files: [{ ...snapshot.files[0], path: "../outside" }],
         }),
       /Unsafe/,
     );
-    assert.throws(
-      () =>
+    await assert.rejects(
+      async () =>
         validateSnapshot({
           version: 1,
           files: [{ ...snapshot.files[0], data: "Y29ycnVwdA==" }],

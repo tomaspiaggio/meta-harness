@@ -1,5 +1,4 @@
 import { createServer, request as forward } from "node:http";
-
 /** Public surface is explicit; local Workflow control routes never pass through. */
 export function publicPath(raw) {
   try {
@@ -13,16 +12,25 @@ export function publicPath(raw) {
     )
       return false;
     return (
-      ["/", "/tasks", "/login"].includes(path) ||
+      [
+        "/",
+        "/tasks",
+        "/login",
+        "/knowledge",
+        "/schedules",
+        "/settings",
+      ].includes(path) ||
       path.startsWith("/_next/") ||
-      /^\/api\/(state|tasks|turns|sessions|workspaces|login)$/.test(path) ||
+      /^\/api\/auth\/(status|login|callback|logout)$/.test(path) ||
+      /^\/api\/(state|tasks|turns|sessions|workspaces|login|decisions|schedules|attachments|inputs|browser|resources|notifications|maintenance|tools|telegram|workers|diagnostics|preferences|worker)$/.test(
+        path,
+      ) ||
       /^\/api\/worker\/[a-z-]+$/.test(path)
     );
   } catch {
     return false;
   }
 }
-
 /** Streaming reverse proxy in the launcher process; no extra resident daemon. */
 export function createGateway(privatePort) {
   const server = createServer((request, response) => {
@@ -66,7 +74,7 @@ export function createGateway(privatePort) {
         result.pipe(response);
       },
     );
-    upstream.setTimeout(60_000, () =>
+    upstream.setTimeout(60000, () =>
       upstream.destroy(new Error("Control request timed out.")),
     );
     upstream.on("error", () => {

@@ -1,0 +1,14 @@
+{
+  "name": "@harness/browser-extension",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.1.36",
+    "esbuild": "0.28.2"
+  }
+}

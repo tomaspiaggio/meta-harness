@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Connect Meta Harness</title></head>
+<body><main><h1>Connect this browser</h1>
+<p>On the worker running on this machine, run <code>pnpm browser:pair</code>. Paste its pairing code below. Your website logins stay in this browser.</p>
+<form id="pair"><label>Pairing code <input id="code" type="password" autocomplete="off" required size="70"></label><button type="submit">Connect</button></form>
+<p id="status" role="status"></p><button id="disconnect" type="button">Disconnect and forget pairing</button>
+<p>The harness creates its own background tabs. It does not take control of your current tabs. Chrome may display its debugging indicator while a harness tab is controlled.</p>
+</main><script type="module" src="options.js"></script></body></html>

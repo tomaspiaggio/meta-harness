@@ -1,0 +1,259 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Theme tokens in shadcn/tweakcn format. To restyle, export a theme from
+ * tweakcn.com and replace the :root and .dark blocks below.
+ */
+:root {
+  --background: oklch(0.959 0.011 88);
+  --foreground: oklch(0.22 0.006 130);
+  --card: oklch(0.993 0.008 95);
+  --card-foreground: oklch(0.22 0.006 130);
+  --popover: oklch(0.993 0.008 95);
+  --popover-foreground: oklch(0.22 0.006 130);
+  --primary: oklch(0.62 0.18 40);
+  --primary-foreground: oklch(0.99 0.005 90);
+  --secondary: oklch(0.928 0.015 88);
+  --secondary-foreground: oklch(0.22 0.006 130);
+  --muted: oklch(0.928 0.015 88);
+  --muted-foreground: oklch(0.56 0.014 110);
+  --accent: oklch(0.91 0.018 88);
+  --accent-foreground: oklch(0.22 0.006 130);
+  --destructive: oklch(0.52 0.16 30);
+  --destructive-foreground: oklch(0.99 0.005 90);
+  --border: oklch(0.895 0.018 92);
+  --input: oklch(0.85 0.02 92);
+  --ring: oklch(0.62 0.18 40);
+  --chart-1: oklch(0.62 0.18 40);
+  --chart-2: oklch(0.52 0.08 145);
+  --chart-3: oklch(0.62 0.12 80);
+  --chart-4: oklch(0.45 0.05 230);
+  --chart-5: oklch(0.52 0.16 30);
+  --sidebar: oklch(0.215 0.007 145);
+  --sidebar-foreground: oklch(0.91 0.012 115);
+  --sidebar-primary: oklch(0.66 0.18 40);
+  --sidebar-primary-foreground: oklch(0.99 0.005 90);
+  --sidebar-accent: oklch(0.275 0.009 145);
+  --sidebar-accent-foreground: oklch(0.97 0.008 115);
+  --sidebar-border: oklch(0.31 0.01 145);
+  --sidebar-ring: oklch(0.66 0.18 40);
+  --font-sans: "IBM Plex Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Newsreader Variable", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --radius: 0.625rem;
+  --shadow-2xs: 0 1px 2px 0 oklch(0.22 0.006 130 / 0.04);
+  --shadow-xs: 0 1px 2px 0 oklch(0.22 0.006 130 / 0.05);
+  --shadow-sm: 0 1px 3px 0 oklch(0.22 0.006 130 / 0.07);
+  --shadow: 0 1px 3px 0 oklch(0.22 0.006 130 / 0.08);
+  --shadow-md: 0 4px 12px -2px oklch(0.22 0.006 130 / 0.1);
+  --shadow-lg: 0 12px 32px -12px oklch(0.22 0.006 130 / 0.22);
+  --shadow-xl: 0 20px 48px -16px oklch(0.22 0.006 130 / 0.28);
+  --shadow-2xl: 0 28px 64px -20px oklch(0.22 0.006 130 / 0.34);
+}
+
+.dark {
+  --background: oklch(0.2 0.006 145);
+  --foreground: oklch(0.92 0.012 100);
+  --card: oklch(0.235 0.007 145);
+  --card-foreground: oklch(0.92 0.012 100);
+  --popover: oklch(0.235 0.007 145);
+  --popover-foreground: oklch(0.92 0.012 100);
+  --primary: oklch(0.68 0.17 42);
+  --primary-foreground: oklch(0.18 0.006 145);
+  --secondary: oklch(0.28 0.008 145);
+  --secondary-foreground: oklch(0.92 0.012 100);
+  --muted: oklch(0.28 0.008 145);
+  --muted-foreground: oklch(0.68 0.015 120);
+  --accent: oklch(0.3 0.009 145);
+  --accent-foreground: oklch(0.95 0.01 100);
+  --destructive: oklch(0.62 0.17 30);
+  --destructive-foreground: oklch(0.99 0.005 90);
+  --border: oklch(0.32 0.01 145);
+  --input: oklch(0.36 0.01 145);
+  --ring: oklch(0.68 0.17 42);
+  --chart-1: oklch(0.68 0.17 42);
+  --chart-2: oklch(0.65 0.09 145);
+  --chart-3: oklch(0.72 0.12 80);
+  --chart-4: oklch(0.62 0.06 230);
+  --chart-5: oklch(0.62 0.17 30);
+  --sidebar: oklch(0.17 0.006 145);
+  --sidebar-foreground: oklch(0.91 0.012 115);
+  --sidebar-primary: oklch(0.68 0.17 42);
+  --sidebar-primary-foreground: oklch(0.18 0.006 145);
+  --sidebar-accent: oklch(0.25 0.008 145);
+  --sidebar-accent-foreground: oklch(0.97 0.008 115);
+  --sidebar-border: oklch(0.28 0.009 145);
+  --sidebar-ring: oklch(0.68 0.17 42);
+}
+
+/* App-specific status colours. Keep these when pasting a tweakcn theme. */
+:root {
+  --success: oklch(0.52 0.08 145);
+  --success-soft: oklch(0.93 0.03 140);
+  --warning: oklch(0.58 0.12 80);
+  --warning-soft: oklch(0.95 0.04 90);
+  --danger: var(--destructive);
+  --danger-soft: oklch(0.94 0.03 30);
+  --live: var(--primary);
+  --live-soft: oklch(0.94 0.04 45);
+}
+.dark {
+  --success: oklch(0.72 0.1 145);
+  --success-soft: oklch(0.3 0.04 145);
+  --warning: oklch(0.78 0.12 85);
+  --warning-soft: oklch(0.32 0.05 85);
+  --danger-soft: oklch(0.32 0.06 30);
+  --live-soft: oklch(0.33 0.07 42);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-live: var(--live);
+  --color-live-soft: var(--live-soft);
+
+  --font-sans: var(--font-sans);
+  --font-serif: var(--font-serif);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+  ::selection {
+    @apply bg-primary/20;
+  }
+}
+
+/* Rendered agent output. Element styling stays here; it is not authored JSX. */
+@layer components {
+  .markdown {
+    @apply leading-7 break-words;
+  }
+  .markdown > :first-child {
+    @apply mt-0;
+  }
+  .markdown > :last-child {
+    @apply mb-0;
+  }
+  .markdown :is(p, ul, ol, blockquote, pre, .markdown-table) {
+    @apply my-3;
+  }
+  .markdown :is(h1, h2, h3, h4, h5, h6) {
+    @apply mt-6 mb-2 font-semibold tracking-tight leading-snug;
+  }
+  .markdown h1 {
+    @apply text-2xl;
+  }
+  .markdown h2 {
+    @apply text-xl;
+  }
+  .markdown h3 {
+    @apply text-lg;
+  }
+  .markdown ul {
+    @apply list-disc pl-6;
+  }
+  .markdown ol {
+    @apply list-decimal pl-6;
+  }
+  .markdown li + li {
+    @apply mt-1;
+  }
+  .markdown li::marker {
+    @apply text-muted-foreground;
+  }
+  .markdown a {
+    @apply text-primary underline underline-offset-4;
+  }
+  .markdown code {
+    @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.86em];
+  }
+  .markdown pre {
+    @apply overflow-x-auto rounded-lg bg-sidebar p-4 text-sidebar-foreground leading-relaxed;
+  }
+  .markdown pre code {
+    @apply bg-transparent p-0 text-inherit;
+  }
+  .markdown blockquote {
+    @apply border-l-2 pl-4 text-muted-foreground;
+  }
+  .markdown-table {
+    @apply overflow-x-auto;
+  }
+  .markdown table {
+    @apply w-full border-collapse text-sm;
+  }
+  .markdown :is(th, td) {
+    @apply border-b px-3 py-2 text-left;
+  }
+  .markdown th {
+    @apply font-mono text-xs font-medium text-muted-foreground;
+  }
+  .markdown hr {
+    @apply my-6;
+  }
+  .markdown .task-list-item {
+    @apply list-none;
+  }
+  .markdown input[type="checkbox"] {
+    @apply mr-2;
+  }
+}

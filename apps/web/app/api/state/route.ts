@@ -1,18 +1,19 @@
 import { failure, localRequest } from "../../../server/http";
 import { getStore } from "../../../server/store";
-
 export const dynamic = "force-dynamic";
-
-export function GET(request: Request) {
+export async function GET(request: Request) {
   try {
-    localRequest(request);
-    const store = getStore();
-    store.recoverExpired(Date.now());
+    await localRequest(request);
+    const store = await getStore();
+    await store.recoverExpired(Date.now());
     const query = new URL(request.url).searchParams;
     const workspaceId = query.get("workspace") ?? "business";
-    store.getWorkspace(workspaceId);
+    await store.getWorkspace(workspaceId);
     const sessionId = query.get("session");
-    if (sessionId && store.getSession(sessionId).workspaceId !== workspaceId) {
+    if (
+      sessionId &&
+      (await store.getSession(sessionId)).workspaceId !== workspaceId
+    ) {
       return Response.json(
         { error: "Session is outside this workspace." },
         { status: 404 },
@@ -20,9 +21,20 @@ export function GET(request: Request) {
     }
     return Response.json(
       {
-        workspaces: store.listWorkspaces(),
-        sessions: store.listSessions(workspaceId),
-        turns: sessionId ? store.listTurns(sessionId) : [],
+        workspaces: await store.listWorkspaces(),
+        sessions: await store.listSessions(workspaceId),
+        turns: sessionId
+          ? await Promise.all(
+              (await store.listTurns(sessionId)).map(async (turn) => ({
+                ...turn,
+                waitingReason: await store.waitingReason(turn.id),
+                publications: await store.decisionsForTurn(turn.id),
+                attachments: await store.attachmentsForTurn(turn.id),
+              })),
+            )
+          : [],
+        schedules: sessionId ? await store.listSchedules(sessionId) : [],
+        inputRequests: sessionId ? await store.inputsForSession(sessionId) : [],
       },
       { headers: { "Cache-Control": "no-store" } },
     );

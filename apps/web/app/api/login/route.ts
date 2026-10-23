@@ -4,7 +4,6 @@ import {
   sameOrigin,
   tokenMatches,
 } from "../../../server/security";
-
 export async function POST(request: Request) {
   try {
     sameOrigin(request);

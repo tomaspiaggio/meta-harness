@@ -1,20 +1,20 @@
 import { HarnessError, parseProvider, requiredText } from "@harness/core";
 import { parseProfile } from "@harness/core/scheduling";
-import { flushDispatch } from "../../../server/dispatcher";
+import { after } from "next/server";
 import { failure, jsonBody, localRequest } from "../../../server/http";
+import { maintain } from "../../../server/maintenance";
 import { getStore } from "../../../server/store";
-
 export const dynamic = "force-dynamic";
-export function GET(request: Request) {
+export async function GET(request: Request) {
   try {
-    localRequest(request);
-    const store = getStore();
-    store.recoverExpired(Date.now());
+    await localRequest(request);
+    const store = await getStore();
+    await store.recoverExpired(Date.now());
     return Response.json(
       {
-        tasks: store.listTasks(),
-        workers: store.listWorkers(),
-        workspaces: store.listWorkspaces(),
+        tasks: await store.listTasks(),
+        workers: await store.listWorkers(),
+        workspaces: await store.listWorkspaces(),
       },
       { headers: { "Cache-Control": "no-store" } },
     );
@@ -22,7 +22,6 @@ export function GET(request: Request) {
     return failure(error);
   }
 }
-
 export async function POST(request: Request) {
   try {
     const body = await jsonBody(request);
@@ -34,7 +33,7 @@ export async function POST(request: Request) {
       priority > 100
     )
       throw new HarnessError("Priority must be an integer from -100 to 100.");
-    const task = getStore().createTask({
+    const task = await (await getStore()).createTask({
       id: requiredText(body.id, "Task ID", 100),
       workspaceId: requiredText(body.workspaceId, "Workspace ID", 100),
       title: requiredText(body.title, "Title", 100),
@@ -43,24 +42,21 @@ export async function POST(request: Request) {
       profile: parseProfile(body.profile),
       priority,
     });
-    void flushDispatch().catch((error) =>
-      console.error("Task dispatch will retry:", error),
-    );
+    after(() => maintain());
     return Response.json(task, { status: 201 });
   } catch (error) {
     return failure(error);
   }
 }
-
 export async function PATCH(request: Request) {
   try {
     const body = await jsonBody(request);
     const id = requiredText(body.id, "ID", 100);
-    const store = getStore();
+    const store = await getStore();
     if (body.kind === "worker") {
       if (typeof body.draining !== "boolean")
         throw new HarnessError("Expected a draining flag.");
-      store.drainWorker(id, body.draining);
+      await store.drainWorker(id, body.draining);
     } else {
       if (body.paused !== undefined && typeof body.paused !== "boolean")
         throw new HarnessError("Expected a paused flag.");
@@ -71,7 +67,7 @@ export async function PATCH(request: Request) {
           Math.abs(body.priority) > 100)
       )
         throw new HarnessError("Invalid priority.");
-      store.updateTask(id, {
+      await store.updateTask(id, {
         paused: body.paused as boolean | undefined,
         priority: body.priority as number | undefined,
         targetWorkerId:

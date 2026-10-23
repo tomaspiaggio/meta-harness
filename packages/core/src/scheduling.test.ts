@@ -21,7 +21,6 @@ const report: WorkerReport = {
   maxLoadPerCpu: 1,
   draining: false,
 };
-
 test("admission preserves host headroom independently of the harness budget", () => {
   assert.equal(admissionReason(report, [], "standard", "claude"), null);
   assert.match(
@@ -48,7 +47,6 @@ test("admission preserves host headroom independently of the harness budget", ()
     /CPU load/,
   );
 });
-
 test("build, browser, and agent slot limits are independent", () => {
   assert.match(
     admissionReason(
@@ -87,7 +85,6 @@ test("build, browser, and agent slot limits are independent", () => {
     null,
   );
 });
-
 test("draining and unsupported providers wait without consuming capacity", () => {
   assert.match(
     admissionReason({ ...report, draining: true }, [], "standard", "demo") ??
@@ -99,19 +96,61 @@ test("draining and unsupported providers wait without consuming capacity", () =>
     /unavailable/,
   );
 });
-
-test("worker reports reject invalid measurements and unbounded concurrency", () => {
+test("worker reports reject invalid measurements and unbounded concurrency", async () => {
   assert.deepEqual(parseWorkerReport(report), report);
-  assert.throws(
-    () => parseWorkerReport({ ...report, availableMemoryMiB: Number.NaN }),
+  await assert.rejects(
+    async () =>
+      parseWorkerReport({ ...report, availableMemoryMiB: Number.NaN }),
     /availableMemory/,
   );
-  assert.throws(
-    () => parseWorkerReport({ ...report, maxAgents: 1_000_000 }),
+  await assert.rejects(
+    async () => parseWorkerReport({ ...report, maxAgents: 1000000 }),
     /maxAgents/,
   );
-  assert.throws(
-    () => parseWorkerReport({ ...report, providers: ["unknown"] }),
+  await assert.rejects(
+    async () => parseWorkerReport({ ...report, providers: ["unknown"] }),
     /providers/,
+  );
+});
+test("macOS warning is advisory; critical pressure blocks new agents", async () => {
+  assert.equal(
+    admissionReason(
+      { ...report, memoryPressure: "warning" },
+      [],
+      "standard",
+      "claude",
+    ),
+    null,
+  );
+  assert.match(
+    admissionReason(
+      { ...report, memoryPressure: "critical" },
+      [],
+      "standard",
+      "claude",
+    ) ?? "",
+    /memory pressure is critical/,
+  );
+  await assert.rejects(
+    async () => parseWorkerReport({ ...report, memoryPressure: "invalid" }),
+    /memoryPressure/,
+  );
+  // Demo runs inside the resident worker and starts no agent subprocess.
+  assert.equal(
+    admissionReason(
+      { ...report, memoryPressure: "warning" },
+      [],
+      "standard",
+      "demo",
+    ),
+    null,
+  );
+});
+test("host CPU load does not block the in-process Demo runtime", () => {
+  const busyHost = { ...report, loadPerCpu: 4 };
+  assert.equal(admissionReason(busyHost, [], "standard", "demo"), null);
+  assert.match(
+    admissionReason(busyHost, [], "standard", "claude") ?? "",
+    /CPU load/,
   );
 });

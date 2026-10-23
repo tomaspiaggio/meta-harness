@@ -3,8 +3,13 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HarnessError } from "@harness/core";
 import { dataDirectory } from "@harness/storage";
-
+import { authorizeOwner, hosted, publicOrigin } from "./hosted-auth";
 export function adminToken(): string {
+  if (hosted())
+    throw new HarnessError(
+      "Local administrator tokens are disabled on hosted deployments.",
+      503,
+    );
   const directory = dataDirectory();
   const path = join(directory, "admin-token");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -23,30 +28,30 @@ export function adminToken(): string {
   }
   return readFileSync(path, "utf8").trim();
 }
-
 export function sameOrigin(request: Request): void {
   const origin = request.headers.get("origin");
   if (
-    (origin && new URL(origin).host !== request.headers.get("host")) ||
+    (origin &&
+      (hosted()
+        ? origin !== publicOrigin()
+        : new URL(origin).host !== request.headers.get("host"))) ||
     request.headers.get("sec-fetch-site") === "cross-site"
   )
     throw new HarnessError("Cross-origin request rejected.", 403);
 }
-
 export function tokenMatches(candidate: string): boolean {
   const actual = Buffer.from(candidate);
   const expected = Buffer.from(adminToken());
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
-
 const signature = (payload: string) =>
   createHmac("sha256", adminToken()).update(payload).digest("base64url");
 export function loginCookie(): string {
   const expires = String(Date.now() + 24 * 60 * 60 * 1000);
   return `${expires}.${signature(expires)}`;
 }
-
-export function authorizeAdmin(request: Request): void {
+export async function authorizeAdmin(request: Request): Promise<void> {
+  if (hosted()) return authorizeOwner(request);
   const host = process.env.HARNESS_BIND_HOST ?? "127.0.0.1";
   if (
     ["127.0.0.1", "localhost", "::1"].includes(host) &&

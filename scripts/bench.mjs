@@ -29,8 +29,8 @@ const env = {
   NEXT_TELEMETRY_DISABLED: "1",
 };
 const store = new ControlStore(join(directory, "harness.sqlite"));
-const mac = store.createWorker("Bench Mac");
-const pi = store.createWorker("Bench Pi");
+const mac = await store.createWorker("Bench Mac");
+const pi = await store.createWorker("Bench Pi");
 const identities = new Map([
   [mac.id, mac],
   [pi.id, pi],
@@ -95,7 +95,7 @@ async function stop(child, signal = "SIGTERM") {
     clearTimeout(timer);
   }
 }
-async function until(fn, label, timeout = 15_000) {
+async function until(fn, label, timeout = 15000) {
   const deadline = Date.now() + timeout;
   let lastError;
   while (Date.now() < deadline) {
@@ -138,10 +138,11 @@ try {
     "--hostname",
     "127.0.0.1",
   ]);
-  await until(() => request("state"), "control startup");
+  await until(async () => await request("state"), "control startup");
   let macProcess = worker(mac);
   await until(
-    () => store.listWorkers().find((item) => item.id === mac.id)?.report,
+    async () =>
+      (await store.listWorkers()).find((item) => item.id === mac.id)?.report,
     "Mac registration",
   );
   const heavy = await request(
@@ -152,14 +153,15 @@ try {
     "tasks",
     taskInput("Checkpointed investigation"),
   );
-  const first = await until(() => {
-    const checkpoint = store.getCheckpoint(moving.sessionId);
-    const turn = store.listTurns(moving.sessionId)[0];
+  const first = await until(async () => {
+    const checkpoint = await store.getCheckpoint(moving.sessionId);
+    const turn = (await store.listTurns(moving.sessionId))[0];
     return checkpoint && turn.status === "running" ? turn : null;
   }, "first durable checkpoint");
   assert.equal(first.workerId, mac.id);
   assert.match(
-    store.listTasks().find((item) => item.id === heavy.id).waitingReason,
+    (await store.listTasks()).find((item) => item.id === heavy.id)
+      .waitingReason,
     /reservations|slots/,
   );
   console.log(
@@ -170,14 +172,14 @@ try {
   await stop(macProcess, "SIGKILL");
   worker(pi);
   const recovered = await until(
-    () => {
-      const turn = store.getTurn(first.id);
+    async () => {
+      const turn = await store.getTurn(first.id);
       if (turn.status === "failed" || turn.status === "interrupted")
         throw new Error(turn.error);
       return turn.status === "completed" ? turn : null;
     },
     "Pi takeover after Mac lease expires",
-    55_000,
+    55000,
   );
   const recoveryMs = Date.now() - killedAt;
   assert.equal(recovered.workerId, pi.id);
@@ -239,15 +241,15 @@ try {
   };
   await request("turns", nextInput);
   await request("turns", nextInput);
-  const continued = await until(() => {
-    const turn = store.getTurn(nextInput.id);
+  const continued = await until(async () => {
+    const turn = await store.getTurn(nextInput.id);
     return turn.status === "completed" ? turn : null;
   }, "planned between-turn transfer");
   assert.equal(continued.workerId, mac.id);
   assert.equal(continued.generation, 1);
   assert.equal(
-    store.getSession(moving.sessionId).nativeId,
-    store.getCheckpoint(moving.sessionId).nativeId,
+    (await store.getSession(moving.sessionId)).nativeId,
+    (await store.getCheckpoint(moving.sessionId)).nativeId,
   );
   console.log(
     "PASS planned handoff: draining Pi routes continuation to Mac; duplicate submission executes once",
@@ -280,6 +282,6 @@ try {
   console.log("Distributed bench passed. Report: .data/bench/latest.json");
 } finally {
   for (const child of children.reverse()) await stop(child);
-  store.close();
+  await store.close();
   await rm(directory, { recursive: true, force: true });
 }
