@@ -1,7 +1,15 @@
-# Tomorrow: authenticated resources across workers
+# Authenticated browsers without a Mac dependency
 
-Recorded after the Google-login meta test on 2026-10-22. This is a plan, not a
-claim that the capabilities below are implemented or that Google setup succeeded.
+Recorded after the Google-login meta test on 2026-10-22; updated by the owner on
+2026-10-23. This is a plan, not a claim that the capabilities below are implemented
+or that Google setup succeeded.
+
+Current decision: each eligible browser host uses its own persistent login state.
+If it is signed out, request manual browser takeover so the owner can enter the
+password/MFA on that host, including the Pi. Do not depend on the Mac browser, copy
+its credentials, or add a password-manager subscription. Preserve valid sessions;
+request login only when required. 1Password is a possible future integration, not
+a prerequisite or current implementation task.
 
 ## What the test established
 
@@ -20,15 +28,15 @@ and owner login are separate. Enrollment does not copy any of the other three.
 - [ ] Inspect worker/browser health and report the execution host, browser host,
   backend, paired identity, authenticated account and code revision in one view.
   Do not expose cookie values, passwords or provider tokens.
-- [ ] Reconnect the existing Mac paired extension without a new Chrome profile,
-  new pairing or cookie/password export unless the original pairing is missing.
+- [ ] Start/select a compatible persistent browser on the Pi; expose actual
+  interactive takeover so the owner can log into the required account there.
 - [ ] Target the Google setup turn to the Mac, since it must edit that control
   installation's private environment. Verify the required revision is available.
-- [ ] Separately verify a Pi agent can read a harmless authenticated resource
-  through the Mac browser gateway. Browser location must not follow agent location.
+- [ ] Verify the Pi agent completes a harmless authenticated read with the Pi
+  browser while the Mac browser/worker is unavailable.
 - [ ] Expose missing/offline resource requirements as a visible wait with a
-  specific reason. Do not silently substitute a signed-out browser or imply the
-  task has the Mac's shell/files when it only has the Pi's shell/files.
+  specific reason. A signed-out eligible browser requests login explicitly; do
+  not imply a Pi shell has access to the Mac installation's files.
 - [ ] Resume the Google setup through a new explicit turn after resources work.
   Do not replay the completed or interrupted native turn automatically. Inspect
   existing Google Cloud state before creating anything to avoid duplicate clients.
@@ -39,8 +47,9 @@ and owner login are separate. Enrollment does not copy any of the other three.
 
 - [ ] Bind named browser identities to workspaces and permitted account/domain
   scopes; register host health, authentication validation and resource lifetime.
-- [ ] Allow independent agent/browser placement. A Pi agent can use Mac Chrome
-  while it is online; a browser-dependent task pauses when that resource is gone.
+- [ ] Keep agent/browser placement independent, without a required Mac-hosted
+  browser. Select another eligible host on resource loss, request login there if
+  needed, and pause only when no suitable capacity or human input is available.
 - [ ] For work that must continue with the Mac closed, provision a dedicated
   persistent Patchright profile on a compatible always-on host. Log in once using
   takeover and retain its encrypted supported state; validate it after restart.
@@ -50,9 +59,9 @@ and owner login are separate. Enrollment does not copy any of the other three.
 - [ ] Use the existing secret-reference/backend boundary for non-browser tokens
   and application credentials, scoped to the task and released only when needed.
   Never put a whole password vault or provider authentication home in checkpoints.
-- [ ] Evaluate Dashlane's currently supported integration mechanisms before
-  choosing an implementation. Treat it as a possible user-assisted login source,
-  not an assumed headless secret API, session store or unattended autofill bridge.
+- [ ] Keep password-manager automation deferred. Manual login is the initial
+  path; do not require Dashlane to remain unlocked or add a paid subscription.
+  Revisit an optional 1Password integration only if the owner chooses it later.
 
 ## Payment boundary
 
@@ -79,10 +88,12 @@ navigation alone is also too coarse to establish purchase authorization.
 
 ## Acceptance tests
 
-- [ ] Pi agent + Mac authenticated browser completes a read-only test without
-  another site login; UI identifies both hosts.
-- [ ] Disconnect the Mac: dependent work waits clearly, while unrelated eligible
-  Pi tasks continue. Reconnect and explicitly continue safely.
+- [ ] Pi agent + Pi browser completes a read-only authenticated test with the Mac
+  unavailable; UI identifies the actual hosts.
+- [ ] With the Mac disconnected, a signed-out Pi browser requests interactive
+  login, accepts the owner's password/MFA through takeover, then continues.
+- [ ] Loss of any browser host selects eligible capacity or pauses clearly; do
+  not automatically replay interrupted native execution or ambiguous mutations.
 - [ ] Restart the always-on browser: supported login state survives or a specific
   manual-login request appears; there is no silent signed-out fallback.
 - [ ] Wrong-account/unauthorized-domain tests fail before protected access.

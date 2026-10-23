@@ -285,6 +285,18 @@ Explicit resource registration/bindings, per-resource placement and extension
 adapters remain implementation work. In particular, the current global preference
 for personal Chrome must become an identity/resource-specific choice.
 
+### Initial deployment login policy (2026-10-23)
+
+No browser task should require the Mac to remain online. Each eligible host keeps
+its own persistent browser login state. When the selected host is signed out,
+request interactive takeover for password/MFA entry on that host, including the
+Pi. Reuse valid sessions rather than asking on every task. Do not copy personal
+Chrome credentials or require an unlocked password vault. Password-manager
+automation is deferred; an optional future 1Password integration adds no current
+subscription requirement. Host relocation may require a new login and must still
+respect native interruption and unknown-outcome safeguards. This is the agreed
+policy; actual Pi takeover and host-loss behavior remain validation gates.
+
 ### Current implementation
 
 A browser identity is independent of the agent worker. One eligible host/controller

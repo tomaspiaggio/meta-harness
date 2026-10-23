@@ -616,10 +616,11 @@ Next session — Google meta-test resource access:
 
 - [x] Record the observed Pi/browser/revision blockers and tomorrow's ordered
   plan in `docs/next-session-resource-access.md`; preserve existing data and auth.
-- [ ] Reconnect the existing authenticated browser and target Mac-local setup
-  correctly; separately verify Pi-agent/Mac-browser access.
+- [ ] Provide a persistent Pi browser and interactive login; verify authenticated
+  work continues with the Mac unavailable. Target Mac-local config edits explicitly.
 - [ ] Implement identity-specific resource readiness and visible waiting states.
-- [ ] Evaluate supported Dashlane integration without assuming an unlocked vault
-  supplies portable sessions or protects payments; define enforced approval scope.
+- [x] Simplify login policy: reuse each host's valid session, ask for manual login
+  when needed, require no Mac browser or password-manager subscription. Defer
+  optional 1Password integration; do not implement Dashlane automation.
 - [ ] Exercise host loss, supported login persistence, authorization, private
   takeover and payment-approval fixtures before unattended authenticated work.
