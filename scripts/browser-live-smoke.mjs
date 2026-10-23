@@ -305,6 +305,27 @@ try {
       () => evaluate('document.body.textContent.includes("Browser activity")'),
       "Activity timeline did not render",
     );
+    const identity = (
+      await api(`browser?workspace=${workspace.id}&session=${session.id}`)
+    ).browser;
+    const manualRows = await store
+      .databaseConnection()
+      .prepare(
+        "SELECT COUNT(*) AS count FROM browser_commands WHERE browserId = ? AND action = 'manual'",
+      )
+      .get(identity.id);
+    assert.equal(
+      Number(manualRows.count),
+      0,
+      "Live password input passed through the SQL command queue",
+    );
+    await store.requestInput(
+      `${identity.id}:acceptance-login`,
+      session.id,
+      null,
+      "browser-login",
+      "Use interactive sign-in",
+    );
   } finally {
     if (cleanup && !finished)
       await store
@@ -322,13 +343,69 @@ try {
     await store.close();
   }
 
+  await cli("reload");
+  await until(
+    () =>
+      evaluate(
+        '[...document.querySelectorAll("button")].some(button => button.textContent.trim() === "Sign in")',
+      ),
+    "A login wait did not expose Sign in",
+  );
+  await cli("find", "role", "button", "click", "--name", "Sign in", "--exact");
+  await ready();
+  await cli("focus", "canvas");
+  await cli("press", "Escape");
+  await ready();
+  const waiting = await api(
+    `state?workspace=${workspace.id}&session=${session.id}`,
+  );
+  assert.equal(
+    waiting.turns.length,
+    before.turns.length + 1,
+    "Release during login sent a message",
+  );
+  assert(
+    waiting.inputRequests.some((input) => input.kind === "browser-login"),
+    "Release silently resolved a login wait",
+  );
+  await cli("find", "role", "button", "click", "--name", "Sign in", "--exact");
+  await ready();
+  await cli(
+    "find",
+    "role",
+    "button",
+    "click",
+    "--name",
+    "Continue task",
+    "--exact",
+  );
+  await ready();
+  const resumed = await api(
+    `state?workspace=${workspace.id}&session=${session.id}`,
+  );
+  assert.equal(
+    resumed.turns.length,
+    before.turns.length + 2,
+    "Explicit Continue did not submit exactly one instruction",
+  );
+  assert(
+    !resumed.inputRequests.some((input) => input.kind === "browser-login"),
+    "Explicit Continue left the login wait pending",
+  );
   await cli("find", "role", "button", "click", "--name", "Close browser view");
   await cli("find", "role", "button", "click", "--name", "Open browser");
   await ready();
   assert.equal(
     (await api(`state?workspace=${workspace.id}&session=${session.id}`)).turns
       .length,
-    before.turns.length + 1,
+    before.turns.length + 2,
+  );
+  await cli("set", "viewport", "390", "844");
+  await cli("open", `${base}/schedules`);
+  assert.equal(
+    await evaluate("document.documentElement.scrollWidth > window.innerWidth"),
+    false,
+    "Mobile viewport overflows",
   );
   console.log(
     JSON.stringify({

@@ -40,16 +40,18 @@ not modify another project's installed browsers.
 ```sh
 HARNESS_TEST_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH="$PWD/.data/browser-cache" \
   pnpm exec tsx --test packages/browser/src/browser.test.ts
-pnpm smoke:ui
+HARNESS_URL=http://localhost:3199 HARNESS_SMOKE_DATA_DIR="$PWD/.data/live-browser-fixture" pnpm smoke:ui
 pnpm test:isolation
 ```
 
-`smoke:ui` creates a fixture workspace and exercises encrypted browser takeover,
-manual navigation, return to the same conversation, and phone-width navigation.
-It requires the running local stack and an available browser worker. The fixture
-uses headed Chromium on macOS. Headless Chromium screenshot capture timed out on
-this Mac with the pinned Patchright binary; the default Mac worker therefore stays
-headed. Linux headless behavior still requires validation on its actual host.
+`smoke:ui` and `smoke:browser-live` run the same headless agent-browser acceptance
+flow against an isolated fixture control and available managed browser worker.
+They verify live frames, native click/type/paste, password input, keyboard release,
+explicit login continuation, action screenshots, no unsolicited turns and mobile
+layout. They never use the personal port 3000. Mac headless and the actual Pi's
+system Chromium have passed this flow; see [live browser validation](browser-live-view.md).
+Use `HARNESS_SMOKE_DATA_DIR` for authenticated fixture `pnpm smoke` as well; its
+owner token is read privately from that fixture, not pasted into commands.
 `test:isolation` uses a temporary, resource-limited Docker container and no network
 inside it; the first run may download the Node test image.
 

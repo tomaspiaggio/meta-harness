@@ -656,7 +656,17 @@ Next session — Google meta-test resource access:
 - [x] Verify actual Pi managed Chromium through the full headless owner UI: frames,
   direct typing, password paste/backspace, button click, Esc, reopen, no unsolicited
   messages and agent-action screenshot history.
-- [ ] Roll the verified code/config to the personal control and Pi worker services
-  and verify health without interrupting active work.
+- [x] Roll the verified code/config to the personal control and Pi worker services
+  and verify health without interrupting active work. Original worker IDs, native
+  auth/cache paths and real records retained; original private configs backed up.
 - [ ] Complete real Google sign-in/OAuth client setup; controlled fixture tests
   neither create Google credentials nor establish real-account authentication.
+
+Live-view final verification:
+
+- [x] Full final Pi UI run: 14–16 frames/1.2 seconds and 40–42 ms input ack on
+  this tailnet; five expected field/button events independently verified on Pi.
+- [x] Login request, Sign in, Esc without a message, retained pending login,
+  explicit Continue task producing one turn, and phone-width layout passed.
+- [x] `pnpm check`, browser-enabled `pnpm test` (94 passed, 3 optional integrations
+  skipped), `pnpm build`, authenticated isolated `pnpm smoke` and live UI smoke pass.

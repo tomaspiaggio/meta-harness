@@ -68,3 +68,12 @@ The successful initial Pi run delivered 16 frames in 1.2 seconds and a 55 ms inp
 acknowledgement on this tailnet. These are measurements of the controlled fixture,
 not a guarantee of every website's rendering speed or authentication behavior.
 Real Google authentication and OAuth-client creation remain separate checks.
+
+Personal rollout on 2026-10-23 keeps the existing Pi worker service enabled, its
+original enrollment credential/provider cache and the existing Mac control data.
+The Pi checkout uses `feat/managed-browser-live-view`; the private worker env now
+selects managed headless `/usr/bin/chromium`. Prior configuration is backed up
+privately. The control plane is still on the Mac; moving control to the Pi is a
+separate deployment task. Two final acceptance runs measured 14–16 frames/1.2s
+and 40–42ms input acknowledgement; the Pi independently recorded all five expected
+fixture input events. Explicit login continuation and mobile layout also passed.

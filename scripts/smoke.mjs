@@ -1,17 +1,33 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const base = process.env.HARNESS_URL ?? "http://127.0.0.1:3000";
+const fixtureDirectory = process.env.HARNESS_SMOKE_DATA_DIR;
+const ownerHeaders = {};
+if (fixtureDirectory) {
+  assert(
+    /fixture/.test(basename(fixtureDirectory)) &&
+      ["localhost", "127.0.0.1"].includes(new URL(base).hostname) &&
+      new URL(base).port !== "3000",
+    "Authenticated smoke uses an isolated local fixture",
+  );
+  const file = join(fixtureDirectory, "admin-token");
+  if (existsSync(file))
+    ownerHeaders.authorization = `Bearer ${readFileSync(file, "utf8").trim()}`;
+}
+
 async function request(path, body, method = "POST") {
   const response = await fetch(
     `${base}/api/${path}`,
     body
       ? {
           method,
-          headers: { "content-type": "application/json" },
+          headers: { ...ownerHeaders, "content-type": "application/json" },
           body: JSON.stringify(body),
         }
-      : {},
+      : { headers: ownerHeaders },
   );
   const data = await response.json();
   assert.ok(response.ok, `${response.status}: ${JSON.stringify(data)}`);
@@ -62,6 +78,7 @@ assert.equal(
 const badOrigin = await fetch(`${base}/api/turns`, {
   method: "POST",
   headers: {
+    ...ownerHeaders,
     "content-type": "application/json",
     origin: "https://example.com",
   },
@@ -170,6 +187,7 @@ assert.equal(
 const forbiddenStop = await fetch(`${base}/api/turns`, {
   method: "PATCH",
   headers: {
+    ...ownerHeaders,
     "content-type": "application/json",
     origin: "https://example.com",
   },

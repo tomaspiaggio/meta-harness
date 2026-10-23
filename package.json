@@ -31,7 +31,7 @@
     "db:transfer": "node --import tsx scripts/database-transfer.mjs",
     "test:isolation": "node scripts/isolation-smoke.mjs",
     "smoke:features": "node scripts/features-smoke.mjs",
-    "smoke:ui": "node scripts/ui-smoke.mjs",
+    "smoke:ui": "node --import tsx scripts/browser-live-smoke.mjs",
     "sandbox:prepare": "node scripts/prepare-sandbox.mjs",
     "smoke:payloads": "node --import tsx scripts/payload-smoke.mjs",
     "smoke:deletion": "node scripts/deletion-smoke.mjs",
