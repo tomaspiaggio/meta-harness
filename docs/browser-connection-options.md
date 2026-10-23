@@ -1,3 +1,7 @@
+> 2026-10-23 update: the normal implementation now uses dedicated managed
+> Patchright profiles and a direct live stream. Extension reuse below is historical
+> exploration, not current setup. See [live browser design](browser-live-view.md).
+
 # Browser resources across workers
 
 Updated: 2026-10-22. Host-independent resource model agreed. The initial extension transport is now implemented and fixture-tested; real-account

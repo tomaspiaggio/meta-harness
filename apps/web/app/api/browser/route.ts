@@ -71,9 +71,13 @@ export async function GET(request: Request) {
         ...(typeof result.image === "string" ? { image: result.image } : {}),
       };
     });
+    const stepCursor = rows.map((row) => `${row.id}:${row.status}`).join(";");
+    const unchanged =
+      new URL(request.url).searchParams.get("stepCursor") === stepCursor;
     return Response.json(
       {
-        steps,
+        ...(unchanged ? {} : { steps }),
+        stepCursor,
         policy: await store.resourcePolicy(workspaceId),
         backend: host?.report?.browserBackend ?? "managed",
         host: host

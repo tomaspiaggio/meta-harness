@@ -209,6 +209,8 @@ try {
   const store = new HarnessStore(join(directory, "harness.sqlite"));
   await store.ready;
   const workers = await store.listWorkers();
+  let cleanup;
+  let finished = false;
   try {
     for (const worker of workers) await store.drainWorker(worker.id, true);
     const driver = await store.createWorker(
@@ -236,9 +238,20 @@ try {
       session.id,
       "Read the controlled browser fixture",
     );
+    const task = await store.taskForSession(session.id);
+    if (task)
+      await store.updateTask(task.id, {
+        priority: 100,
+        targetWorkerId: driver.id,
+      });
     await store.enqueue(turnId);
     const claim = await store.claimForWorker(driver.id);
     assert.equal(claim.claim.turn.id, turnId);
+    cleanup = {
+      workerId: driver.id,
+      turnId,
+      generation: claim.claim.turn.generation,
+    };
     const output = await browserTool(
       {
         workerId: driver.id,
@@ -263,12 +276,20 @@ try {
       store,
     );
     assert(screenshot.image, "Agent screenshot has no image");
+    await store.saveCheckpoint(
+      driver.id,
+      turnId,
+      claim.claim.turn.generation,
+      crypto.randomUUID(),
+      { version: 1, files: [] },
+    );
     await store.completeWorkerTurn(
       driver.id,
       turnId,
       claim.claim.turn.generation,
       "completed",
     );
+    finished = true;
     const activity = await api(
       `browser?workspace=${workspace.id}&session=${session.id}`,
     );
@@ -285,6 +306,17 @@ try {
       "Activity timeline did not render",
     );
   } finally {
+    if (cleanup && !finished)
+      await store
+        .completeWorkerTurn(
+          cleanup.workerId,
+          cleanup.turnId,
+          cleanup.generation,
+          "failed",
+          "Acceptance fixture failed; no model was run",
+        )
+        .catch(() => {});
+    if (cleanup) await store.drainWorker(cleanup.workerId, true);
     for (const worker of workers)
       await store.drainWorker(worker.id, !!worker.draining);
     await store.close();

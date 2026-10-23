@@ -82,6 +82,7 @@ export async function liveBrowser(
           throw new Error("Invalid browser pointer input.");
         await cdp.send("Input.dispatchMouseEvent", {
           type: input.event,
+          buttons: Number.isInteger(input.buttons) ? input.buttons & 7 : 0,
           x: input.x,
           y: input.y,
           button: ["left", "right", "middle"].includes(input.button)

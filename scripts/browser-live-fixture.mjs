@@ -1,17 +1,28 @@
 import { createServer } from "node:http";
 
 export async function browserFixture() {
-  let observation = { user: "", password: "", clicks: 0 };
+  let observation = { user: "", password: "", clicks: 0, events: 0 };
   const fixture = createServer(async (request, response) => {
     if (request.url === "/observations") {
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify(observation));
       return;
     }
+    if (request.url === "/favicon.ico") {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (request.url === "/")
+      observation = { user: "", password: "", clicks: 0, events: 0 };
     if (request.url === "/observe" && request.method === "POST") {
       let body = "";
       for await (const chunk of request) body += chunk;
-      observation = { ...observation, ...JSON.parse(body) };
+      observation = {
+        ...observation,
+        ...JSON.parse(body),
+        events: observation.events + 1,
+      };
       response.end("ok");
       return;
     }

@@ -1,5 +1,8 @@
 # Authenticated browsers without a Mac dependency
 
+See [managed live view](browser-live-view.md) for the implemented replacement and
+its measured Pi acceptance test. The checklist below retains the original plan.
+
 Recorded after the Google-login meta test on 2026-10-22; updated by the owner on
 2026-10-23. This is a plan, not a claim that the capabilities below are implemented
 or that Google setup succeeded.

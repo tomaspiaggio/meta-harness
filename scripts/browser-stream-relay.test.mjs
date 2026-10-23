@@ -121,6 +121,25 @@ test("live relay authenticates upgrades, preserves origin/host, isolates workers
     const nextOpen = event(worker, "open");
     const viewer = connect("?browser=browser", { cookie: "fixture-owner=yes" });
     const open = await nextOpen;
+    const other = connect("?role=worker", {
+      authorization: "Bearer fixture-worker",
+      "x-worker-id": "worker-two",
+    });
+    await event(other, "ready");
+    let wrongWorkerFrame = false;
+    viewer.on("message", (raw) => {
+      if (JSON.parse(raw).frame?.ciphertext === "wrong-worker")
+        wrongWorkerFrame = true;
+    });
+    other.send(
+      JSON.stringify({
+        type: "frame",
+        viewId: open.viewId,
+        frame: { ciphertext: "wrong-worker" },
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(wrongWorkerFrame, false);
     const frame = event(viewer, "frame");
     worker.send(
       JSON.stringify({

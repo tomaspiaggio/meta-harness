@@ -36,6 +36,7 @@ export function BrowserPanel({
   const [browser, setBrowser] = useState<View | null>(null);
   const [host, setHost] = useState("");
   const [steps, setSteps] = useState<Step[]>([]);
+  const stepCursor = useRef("");
   const [error, setError] = useState("");
   const [phase, setPhase] = useState("Connecting");
   const [hasFrame, setHasFrame] = useState(false);
@@ -55,6 +56,7 @@ export function BrowserPanel({
   const mounted = useRef(true);
   const generation = useRef(0);
   const held = useRef(new Set<string>());
+  const hoverAt = useRef(0);
   const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleRef = useRef(false);
   const wheelHandler = useRef<(event: WheelEvent) => void>(() => {});
@@ -80,14 +82,15 @@ export function BrowserPanel({
   }
   async function load() {
     const response = await fetch(
-      `/api/browser?workspace=${encodeURIComponent(workspaceId)}&session=${encodeURIComponent(sessionId)}`,
+      `/api/browser?workspace=${encodeURIComponent(workspaceId)}&session=${encodeURIComponent(sessionId)}&stepCursor=${encodeURIComponent(stepCursor.current)}`,
     );
     const data = await response.json();
     if (!response.ok) throw new Error(data.error);
     if (!mounted.current) return;
     setBrowser(data.browser);
     setHost(data.host?.name ?? "");
-    setSteps(data.steps ?? []);
+    if (data.steps) setSteps(data.steps);
+    stepCursor.current = data.stepCursor ?? "";
   }
   const loadRef = useRef(load);
   loadRef.current = load;
@@ -133,6 +136,10 @@ export function BrowserPanel({
           ? { action: "takeover", publicKey, force: true }
           : { action: "enable" },
       );
+      if (!takeControl && data.browser.mode !== "agent")
+        throw new Error(
+          "This browser is paused for another view. Choose Sign in or Take control to reconnect here.",
+        );
       const target = new URL("/api/browser-stream", location.origin);
       target.protocol = location.protocol === "https:" ? "wss:" : "ws:";
       target.searchParams.set("browser", data.browser.id);
@@ -331,7 +338,7 @@ export function BrowserPanel({
   ) {
     if (!controlling) return;
     event.preventDefault();
-    canvas.current?.focus({ preventScroll: true });
+    if (type === "mousePressed") canvas.current?.focus({ preventScroll: true });
     const rect = event.currentTarget.getBoundingClientRect();
     const scale = Math.min(rect.width / 1280, rect.height / 800);
     const offsetX = (rect.width - 1280 * scale) / 2;
@@ -339,6 +346,7 @@ export function BrowserPanel({
     input({
       type: "pointer",
       event: type,
+      buttons: "buttons" in event ? event.buttons : 0,
       x: Math.min(
         1279,
         Math.max(0, (event.clientX - rect.left - offsetX) / scale),
@@ -387,10 +395,7 @@ export function BrowserPanel({
     return () => target?.removeEventListener("wheel", wheel);
   }, [visible]);
   const activity = steps.length > 0 && (
-    <details
-      className="my-3 rounded-xl border bg-card px-4 py-3"
-      open={visible}
-    >
+    <details className="my-3 rounded-xl border bg-card px-4 py-3" open>
       <summary className="cursor-pointer text-sm">
         Browser activity · {steps.length} recent steps
       </summary>
@@ -422,6 +427,17 @@ export function BrowserPanel({
       {createPortal(
         <section
           aria-label="Workspace browser"
+          onKeyDownCapture={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              if (controlling) void release();
+              else {
+                setDismissed(true);
+                onOpenChange(false);
+              }
+            }
+          }}
           className="fixed bottom-4 right-4 top-20 z-50 flex w-[calc(100vw-2rem)] max-w-6xl flex-col overflow-hidden rounded-xl border bg-card shadow-2xl lg:left-[18rem] lg:w-auto"
         >
           <div className="flex flex-wrap items-center gap-2 border-b p-3">
@@ -545,7 +561,10 @@ export function BrowserPanel({
               }}
               onPointerUp={(event) => pointer(event, "mouseReleased")}
               onPointerMove={(event) => {
-                if (event.buttons) pointer(event, "mouseMoved");
+                if (controlling && Date.now() - hoverAt.current > 35) {
+                  hoverAt.current = Date.now();
+                  pointer(event, "mouseMoved");
+                }
               }}
               onContextMenu={(event) => event.preventDefault()}
               onKeyDown={(event) => {

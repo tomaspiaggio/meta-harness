@@ -639,3 +639,24 @@ Next session — Google meta-test resource access:
   Chromium credential entry, UI sign-in/return and local Workflow execution.
 - [ ] Complete a real Google login on the Pi through takeover, then retry OAuth
   client creation. No Google client/secret has been created by these tests.
+
+2026-10-23 — managed Patchright live browser replacement:
+
+- [x] Replace extension-default setup with dedicated managed profiles on each
+  host; keep personal Chrome and existing credentials untouched.
+- [x] Stream encrypted CDP frames/input over WebSockets in the existing launcher,
+  removing frame/keystroke HTTP command-queue round trips.
+- [x] Provide a live viewport with direct click/type/paste, keyboard navigation,
+  Esc release, explicit continuation, host/connection/latency display and reconnect.
+- [x] Separate watching/releasing control from submitting a new session message.
+- [x] Show recent agent steps/screenshots without recording manual login input;
+  bound retention and avoid resending unchanged screenshots.
+- [x] Reproduce/fix the Pi startup race: retain fresh leases, count pending launches
+  as active, and share concurrent profile creation.
+- [x] Verify actual Pi managed Chromium through the full headless owner UI: frames,
+  direct typing, password paste/backspace, button click, Esc, reopen, no unsolicited
+  messages and agent-action screenshot history.
+- [ ] Roll the verified code/config to the personal control and Pi worker services
+  and verify health without interrupting active work.
+- [ ] Complete real Google sign-in/OAuth client setup; controlled fixture tests
+  neither create Google credentials nor establish real-account authentication.
