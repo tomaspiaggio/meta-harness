@@ -53,6 +53,9 @@ try {
     "Agent setup fixture",
   );
   await evaluate(`(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+      writeText: async text => { window.__copiedWorkerSetup = text; }
+    }});
     const create = URL.createObjectURL.bind(URL);
     URL.createObjectURL = blob => { window.__workerGuide = blob; return create(blob); };
     const click = HTMLAnchorElement.prototype.click;
@@ -63,22 +66,58 @@ try {
   let guide;
   for (let i = 0; i < 50; i++) {
     guide = await evaluate(`(async () => {
-      if (!window.__workerGuide) return null;
-      const markdown = await window.__workerGuide.text();
+      if (!window.__copiedWorkerSetup) return null;
+      const markdown = window.__copiedWorkerSetup;
       const match = markdown.match(/\x60\x60\x60json\\n([\\s\\S]*?)\\n\x60\x60\x60/);
-      return { markdown, filename: window.__workerFilename, type: window.__workerGuide.type, credential: match && JSON.parse(match[1]) };
+      return { markdown, credential: match && JSON.parse(match[1]) };
     })()`);
     if (guide) break;
     await delay(100);
   }
-  assert.ok(guide, "Enrollment must trigger the Markdown download");
-  assert.equal(guide.filename, "Agent-setup-fixture-setup.md");
-  assert.match(guide.type, /^text\/markdown/);
+  assert.ok(guide, "Enrollment must copy the setup prompt");
+  if (guide.credential?.id) created.push(guide.credential.id);
+  assert.equal(
+    await evaluate(
+      'Boolean(document.querySelector("h3")?.textContent === "Paste to agent")',
+    ),
+    true,
+  );
+  assert.equal(
+    await evaluate("Boolean(window.__workerGuide)"),
+    false,
+    "Enrollment must not download a file automatically",
+  );
+  await cli("find", "role", "button", "click", "--name", "Download Markdown");
+  const download = await evaluate(
+    "(async () => ({markdown:await window.__workerGuide.text(),filename:window.__workerFilename,type:window.__workerGuide.type}))()",
+  );
+  assert.equal(download.filename, "Agent-setup-fixture-setup.md");
+  assert.match(download.type, /^text\/markdown/);
+  assert.equal(
+    download.markdown,
+    guide.markdown,
+    "Download reuses the same enrollment",
+  );
+  await evaluate(
+    'navigator.clipboard.writeText = async () => {throw new Error("Clipboard denied")}; true',
+  );
+  await cli("find", "role", "button", "click", "--name", "Copy again");
+  assert.equal(
+    await evaluate('document.querySelector("textarea[readonly]")?.value'),
+    guide.markdown,
+  );
+  await evaluate(
+    "navigator.clipboard.writeText = async text => {window.__copiedWorkerSetup = text}; true",
+  );
+  await cli("find", "role", "button", "click", "--name", "Copy setup");
+  assert.equal(
+    await evaluate('Boolean(document.querySelector("textarea[readonly]"))'),
+    false,
+  );
   assert.ok(
     guide.credential?.id && guide.credential.token,
     "Guide contains the new worker credential",
   );
-  created.push(guide.credential.id);
   assert.equal(guide.credential.serverUrl, base);
   assert.match(guide.markdown, /chrome:\/\/extensions/);
   assert.match(guide.markdown, /pnpm browser:pair/);
@@ -144,7 +183,7 @@ try {
   });
   assert.equal(forbidden.status, 403);
   console.log(
-    "Headless worker enrollment passed: two fields, Markdown download, usable scoped credential, Online report, invalid URL and cross-origin rejection. Fixture records retained.",
+    "Headless worker enrollment passed: two fields, copied agent prompt, optional Markdown download, clipboard-denied recovery, usable scoped credential, Online report, invalid URL and cross-origin rejection. Fixture records retained.",
   );
 } finally {
   await cli("close").catch(() => {});

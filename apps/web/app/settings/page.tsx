@@ -67,6 +67,11 @@ function Settings() {
   const [workerUrl, setWorkerUrl] = useState("");
   useEffect(() => setWorkerUrl(window.location.origin), []);
   const [workers, setWorkers] = useState<WorkerRecord[]>([]);
+  const [workerHandoff, setWorkerHandoff] = useState<{
+    markdown: string;
+    filename: string;
+    copied: boolean;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [session, setSession] = useState("");
   const [topic, setTopic] = useState("");
@@ -154,6 +159,22 @@ function Settings() {
     } finally {
       setBusy(false);
     }
+  }
+  async function copyWorkerHandoff(markdown: string, filename: string) {
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(markdown);
+      copied = true;
+    } catch {
+      // The enrollment already succeeded. Keep the same handoff for manual copy
+      // or download when clipboard access requires another click or HTTPS.
+    }
+    setWorkerHandoff({ markdown, filename, copied });
+    setNotice(
+      copied
+        ? "Copied. Paste to agent on your new device."
+        : "Device enrolled. Copy the setup below and paste to agent on your new device.",
+    );
   }
   return (
     <section className="mx-auto grid max-w-3xl gap-5 p-6">
@@ -380,8 +401,8 @@ function Settings() {
           <p className="text-xs text-muted-foreground">
             For another machine, use the control plane’s HTTPS address on your
             private network. localhost and 127.0.0.1 refer to the worker itself.
-            This address is stored in the downloaded setup guide; it does not
-            expose or reconfigure the server.
+            This address is included in the copied setup; it does not expose or
+            reconfigure the server.
           </p>
           <div className="flex gap-2">
             <Input
@@ -407,27 +428,71 @@ function Settings() {
                     const result = await response.json();
                     throw new Error(result.error ?? "Enrollment failed.");
                   }
-                  const url = URL.createObjectURL(await response.blob());
-                  const link = document.createElement("a");
-                  link.href = url;
-                  link.download =
+                  const markdown = await response.text();
+                  const filename =
                     response.headers
                       .get("content-disposition")
                       ?.match(/filename="([^"]+)"/)?.[1] ?? "worker-setup.md";
-                  document.body.append(link);
-                  link.click();
-                  link.remove();
-                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                  await copyWorkerHandoff(markdown, filename);
                   setWorkers(await api("workers"));
-                  setNotice(
-                    "Setup guide downloaded. Give the private Markdown file to the coding agent on your new device; it will guide you through the remaining setup.",
-                  );
                 })
               }
             >
               Enroll worker
             </Button>
           </div>
+          {workerHandoff && (
+            <div className="grid gap-3 rounded border p-3 text-sm">
+              <h3 className="font-medium">Paste to agent</h3>
+              <p className="text-muted-foreground">
+                {workerHandoff.copied
+                  ? "Setup instructions copied. Paste them into the coding agent on your new device; it will guide you through installation and login."
+                  : "Automatic copy was blocked. Use Copy setup, or select and copy the instructions below. Your device is already enrolled."}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  disabled={busy}
+                  onClick={() =>
+                    void copyWorkerHandoff(
+                      workerHandoff.markdown,
+                      workerHandoff.filename,
+                    )
+                  }
+                >
+                  {workerHandoff.copied ? "Copy again" : "Copy setup"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    const url = URL.createObjectURL(
+                      new Blob([workerHandoff.markdown], {
+                        type: "text/markdown; charset=utf-8",
+                      }),
+                    );
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.download = workerHandoff.filename;
+                    document.body.append(link);
+                    link.click();
+                    link.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                  }}
+                >
+                  Download Markdown
+                </Button>
+              </div>
+              {!workerHandoff.copied && (
+                <textarea
+                  aria-label="Agent setup instructions"
+                  readOnly
+                  rows={6}
+                  value={workerHandoff.markdown}
+                  onFocus={(event) => event.currentTarget.select()}
+                  className="rounded border bg-background p-2 font-mono text-xs"
+                />
+              )}
+            </div>
+          )}
           {workers.map((worker) => (
             <div
               key={worker.id}

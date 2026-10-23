@@ -12,9 +12,10 @@ export function workerOnboarding(name: string, credential: WorkerEnrollment) {
   const filename = `${name.replace(/[^a-zA-Z0-9_-]/g, "-") || "worker"}-setup.md`;
   const markdown = `# Set up Meta Harness worker: ${label}
 
-Give this private file to a coding agent running on the new device. It contains
-that device's enrollment credential. Do not publish it, commit it, or share it
-with other devices. Revoke this worker in Settings if the file is lost.
+These instructions are for a coding agent running on the new device. They contain
+that device's enrollment credential. Keep this prompt or downloaded guide private:
+do not publish it, commit it, or share it with other devices. Revoke this worker in
+Settings if the setup credential is exposed.
 
 ## Instructions for the coding agent
 

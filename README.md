@@ -147,14 +147,15 @@ use **Show withdrawn decisions → Restore** to bring one back. Earlier revision
 remain stored, and stale edits are rejected.
 
 In **Settings → Workers**, enter only a device name and a reachable HTTPS control
-URL, then click **Enroll worker**. Enrollment downloads a private Markdown setup
-guide containing that worker's scoped credential. Give the file to a coding agent
-on the new device. It handles the terminal setup and walks you through any
+URL, then click **Enroll worker**. Enrollment copies a private setup prompt and shows
+**Paste to agent**. Paste it into a coding agent on the new device. The prompt
+contains that worker's scoped credential; a Markdown download is also available. It handles the terminal setup and walks you through any
 interactive provider login or browser-extension pairing. The guide covers cloning
 this repository's `main` branch, Node/pnpm, credential storage, model-free
 connectivity checks, provider authentication, optional browser capability, startup
 and Online verification. Headless Pi workers can run agents without an extension.
-Keep the file private and out of git; revoke the worker if it is lost.
+Keep the prompt or downloaded file private and out of git. If clipboard access is
+blocked, use Copy setup or the selectable text without enrolling again.
 
 The control URL must be reachable from that new machine: localhost points to the
 worker itself, not your Mac. Worker machines do not run `pnpm dev` or need direct

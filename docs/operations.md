@@ -151,9 +151,11 @@ No real Vercel/Supabase deployment or identity-provider login was performed here
 
 ## Workers, secrets and isolation
 
-Settings enrollment asks for a name and reachable control URL, then downloads a
-private Markdown handoff with that worker's credential and complete setup
-instructions. Give it to a coding agent on the new device. The agent writes
+Settings enrollment asks for a name and reachable control URL, then copies a
+private agent handoff with that worker's credential and complete setup
+instructions. The UI says **Paste to agent**; paste into a coding agent on the new device.
+A Markdown download is optional, and blocked clipboard access exposes manual copy
+without another enrollment. The agent writes
 `~/.config/meta-harness/worker.json` with mode 600, verifies connectivity and
 guides interactive provider/browser setup. Keep the Markdown private too. The existing
 `pnpm worker:enroll` CLI remains available on the control host. Revocation rejects
@@ -289,7 +291,7 @@ Restore. A revision conflict requires reading the newer record before resubmitti
 it never silently overwrites a concurrent agent update. No data reset or schema
 migration is needed for these controls.
 
-Settings → Workers downloads an agent-led installation guide using this project's
+Settings → Workers copies an agent-led installation prompt using this project's
 GitHub `main` branch. The control URL is the separate address you provide at
 enrollment; use a reachable HTTPS address for another machine. The guide includes
 the scoped credential, device/provider login, optional existing-Chrome extension
@@ -300,7 +302,7 @@ response for existing clients; Settings requests `format: "markdown"`.
 
 Run `HARNESS_URL=http://127.0.0.1:3199 pnpm smoke:worker-enrollment` against an
 isolated fixture stack for a headless agent-browser check of the two-field form,
-actual Markdown download and worker authentication using its embedded credential.
+clipboard copying, blocked-clipboard recovery, optional Markdown download and worker authentication using its embedded credential.
 
 ## Agent models and document uploads
 

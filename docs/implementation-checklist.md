@@ -578,3 +578,6 @@ Final validation on this Mac (Node 24, production Next.js build):
 - [x] Preserve JSON API compatibility, enrollment authorization and existing data.
 - [x] Validate the actual headless download and authenticate a fixture worker
   using only the credential embedded in the generated guide.
+- [x] Make enrollment copy the setup prompt and show "Paste to agent". Retain an
+  optional Markdown download and manual-copy recovery if clipboard access is
+  blocked, without enrolling the device twice.
