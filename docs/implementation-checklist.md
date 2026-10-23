@@ -611,3 +611,15 @@ Repository-aware coding sessions (agreed):
   checkpoint; retain affinity or pause until restoration is safe.
 - [ ] Verify exact-revision restoration on another host, dependencies, native
   continuation and ownership fencing without replaying interrupted native turns.
+
+Next session — Google meta-test resource access:
+
+- [x] Record the observed Pi/browser/revision blockers and tomorrow's ordered
+  plan in `docs/next-session-resource-access.md`; preserve existing data and auth.
+- [ ] Reconnect the existing authenticated browser and target Mac-local setup
+  correctly; separately verify Pi-agent/Mac-browser access.
+- [ ] Implement identity-specific resource readiness and visible waiting states.
+- [ ] Evaluate supported Dashlane integration without assuming an unlocked vault
+  supplies portable sessions or protects payments; define enforced approval scope.
+- [ ] Exercise host loss, supported login persistence, authorization, private
+  takeover and payment-approval fixtures before unattended authenticated work.
