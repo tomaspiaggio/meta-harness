@@ -3,15 +3,24 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 export default function Login() {
-  const [hosted, setHosted] = useState<boolean | null>(null);
+  const [mode, setMode] = useState<"google" | "oidc" | "token" | null>(null);
   useEffect(() => {
     void fetch("/api/auth/status")
-      .then((response) => response.json())
-      .then((value) => setHosted(!!value.hosted))
-      .catch(() => setError("Cannot reach the control plane."));
+      .then(async (response) => {
+        const value = await response.json();
+        if (!response.ok)
+          throw new Error(value.error ?? "Cannot reach the control plane.");
+        setMode(value.mode ?? (value.hosted ? "oidc" : "token"));
+      })
+      .catch((error) => setError(error.message));
+    if (new URLSearchParams(location.search).has("error"))
+      setError(
+        "Google sign-in failed or this account is not allowed. Try again with the owner account.",
+      );
   }, []);
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   return (
     <section className="mx-auto mt-[18vh] max-w-md px-6">
       <div className="mb-10 flex items-center gap-2.5 font-semibold">
@@ -24,15 +33,49 @@ export default function Login() {
         Connect to <em className="text-primary">your work</em>.
       </h1>
       <p className="mt-2 text-muted-foreground">
-        {hosted
-          ? "Sign in with the configured owner identity."
-          : "Enter this control plane’s access token."}
+        {mode === "google"
+          ? "Sign in with your allowed Google account."
+          : mode === "oidc"
+            ? "Sign in with the configured owner identity."
+            : "Enter this control plane’s access token."}
       </p>
-      {hosted ? (
+      {mode === "google" ? (
+        <Button
+          className="mt-6"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            setError("");
+            void fetch("/api/auth/sign-in/social", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                provider: "google",
+                callbackURL: "/",
+                errorCallbackURL: "/login",
+              }),
+            })
+              .then(async (response) => {
+                const value = await response.json();
+                if (!response.ok || !value.url)
+                  throw new Error(
+                    "Google sign-in could not start. Check the control plane configuration.",
+                  );
+                location.assign(value.url);
+              })
+              .catch((error) => {
+                setError(error.message);
+                setBusy(false);
+              });
+          }}
+        >
+          Continue with Google
+        </Button>
+      ) : mode === "oidc" ? (
         <Button className="mt-6" asChild>
           <a href="/api/auth/login">Sign in securely</a>
         </Button>
-      ) : hosted === false ? (
+      ) : mode === "token" ? (
         <form
           className="mt-6 flex gap-2"
           onSubmit={async (event) => {

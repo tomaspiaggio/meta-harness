@@ -24,9 +24,11 @@ const env = {
 };
 const bindHost = process.env.HARNESS_BIND_HOST ?? "127.0.0.1";
 const network = !["127.0.0.1", "localhost", "::1"].includes(bindHost);
+// Keep Workflow callbacks private behind a loopback HTTPS proxy as well.
+const gatewayEnabled = network || process.env.HARNESS_AUTH === "google";
 let privatePort = Number(process.env.PORT ?? 3000);
 let gateway;
-if (network) {
+if (gatewayEnabled) {
   const probe = createServer();
   await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
   privatePort = probe.address().port;
@@ -105,7 +107,7 @@ for (const [name, cwd, args] of [
     env: {
       ...env,
       PORT: String(privatePort),
-      ...(network
+      ...(gatewayEnabled
         ? { WORKFLOW_LOCAL_BASE_URL: `http://127.0.0.1:${privatePort}` }
         : {}),
     },

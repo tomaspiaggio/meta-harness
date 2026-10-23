@@ -7,6 +7,10 @@ export async function register() {
   const { getWorld } = await import("workflow/runtime");
   const world = await getWorld();
   await world.start?.();
+  const { googleAuthEnabled, googleOwnerConfig } = await import(
+    "./server/google-auth"
+  );
+  if (googleAuthEnabled()) googleOwnerConfig();
   const { hosted, hostedConfiguration } = await import("./server/hosted-auth");
   if (hosted()) {
     hostedConfiguration();

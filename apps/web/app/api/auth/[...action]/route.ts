@@ -1,4 +1,9 @@
 import {
+  googleAuthEnabled,
+  googleOwnerConfig,
+  handleGoogleAuth,
+} from "../../../../server/google-auth";
+import {
   completeOwnerLogin,
   cookie,
   hosted,
@@ -7,17 +12,22 @@ import {
 import { failure } from "../../../../server/http";
 import { sameOrigin } from "../../../../server/security";
 import { getStore } from "../../../../server/store";
-export async function GET(
-  request: Request,
-  context: { params: Promise<{ action: string }> },
-) {
+
+type Context = { params: Promise<{ action: string[] }> };
+export async function GET(request: Request, context: Context) {
   try {
-    const { action } = await context.params;
-    if (action === "status")
+    const action = (await context.params).action.join("/");
+    if (action === "status") {
+      if (googleAuthEnabled()) googleOwnerConfig();
       return Response.json(
-        { hosted: hosted() },
+        {
+          hosted: hosted(),
+          mode: googleAuthEnabled() ? "google" : hosted() ? "oidc" : "token",
+        },
         { headers: { "Cache-Control": "no-store" } },
       );
+    }
+    if (googleAuthEnabled()) return await handleGoogleAuth(request);
     if (action === "login") return await startOwnerLogin();
     if (action === "callback") return await completeOwnerLogin(request);
     return new Response("Not found", { status: 404 });
@@ -25,14 +35,19 @@ export async function GET(
     return failure(error);
   }
 }
-export async function POST(
-  request: Request,
-  context: { params: Promise<{ action: string }> },
-) {
+export async function POST(request: Request, context: Context) {
   try {
     sameOrigin(request);
-    if ((await context.params).action !== "logout")
-      return new Response("Not found", { status: 404 });
+    const action = (await context.params).action.join("/");
+    if (googleAuthEnabled()) {
+      if (action === "logout") {
+        const target = new URL(request.url);
+        target.pathname = "/api/auth/sign-out";
+        return await handleGoogleAuth(new Request(target, request));
+      }
+      return await handleGoogleAuth(request);
+    }
+    if (action !== "logout") return new Response("Not found", { status: 404 });
     const token = cookie(request, "harness_owner");
     if (token) await (await getStore()).revokeOwnerSession(token);
     const headers = new Headers({ "Cache-Control": "no-store" });

@@ -581,3 +581,33 @@ Final validation on this Mac (Node 24, production Next.js build):
 - [x] Make enrollment copy the setup prompt and show "Paste to agent". Retain an
   optional Markdown download and manual-copy recovery if clipboard access is
   blocked, without enrolling the device twice.
+
+Google login and Pi control deployment:
+
+- [x] Add Better Auth Google login independently of hosting/database choice.
+  Enforce verified-email allowlisting and disable legacy token bypass in Google mode.
+- [x] Use encrypted eight-hour cookies plus the existing persistent owner-session
+  ledger for immediate revocation; retain worker authentication separately.
+- [x] Keep internal Workflow routes behind the gateway with a loopback HTTPS proxy.
+- [x] Prepare a Headscale DNS/HTTPS, Google OAuth, data-preserving control migration,
+  systemd startup and worker reconnection runbook in `deploy/pi-headscale.md`.
+- [x] Pass `pnpm check`, `pnpm test` (87 passed, 7 optional integrations skipped),
+  `pnpm build`, local Workflow smoke and headless Google auth/UI smoke. Exercise
+  signed OAuth fixtures, verified-owner rejection and persistent revocation;
+  actual Google login remains a deployment gate below.
+- [ ] Choose the owned domain and configure Headscale DNS and its HTTPS certificate.
+- [ ] Create the Google OAuth web client and enable the allowed owner account.
+- [ ] Copy quiescent Mac control data to the Pi; preserve keys and verify records.
+- [ ] Install/enable the Pi control service and reverse proxy; test restart/reboot.
+- [ ] Verify actual owner login, workers and schedules on the Pi deployment.
+
+Repository-aware coding sessions (agreed):
+
+- [ ] Bind multiple repositories/worktrees, branches, exact commits and PRs to
+  each coding session; track staged, unstaged and untracked state.
+- [ ] Display linked repo/PR chips, branches, dirty status and current worker in
+  the session header; expand for commit details and migration blockers.
+- [ ] Gate handoff on pushed/bundled commits and a consistent dirty-file/native
+  checkpoint; retain affinity or pause until restoration is safe.
+- [ ] Verify exact-revision restoration on another host, dependencies, native
+  continuation and ownership fencing without replaying interrupted native turns.

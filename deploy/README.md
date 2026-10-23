@@ -1,7 +1,9 @@
 # Private deployment preparation
 
-No service has been installed on the Pi or Jetson. These templates are inputs to
-a deployment after SSH access and actual hardware compatibility are established.
+These templates are deployment inputs, not a completed Pi control-plane cutover.
+Use [Pi + Headscale + Google setup](pi-headscale.md) for the current guided path,
+including preserving the Mac database and enabling a user service at startup.
+Execution worker enrollment is separate and may already be running.
 Node must be **24+**; update `/usr/bin/node` to its actual installed location.
 Do not install the control service on the Mac if tasks must survive closing it.
 

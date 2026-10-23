@@ -14,6 +14,10 @@ test("gateway admits only the public UI/API surface, regardless of encoded inter
     "/api/worker?action=claim",
     "/api/tasks",
     "/api/preferences",
+    "/api/auth/sign-in/social",
+    "/api/auth/callback/google",
+    "/api/auth/get-session",
+    "/api/auth/sign-out",
     "/_next/static/app.js",
   ])
     assert.equal(publicPath(path), true, path);
@@ -23,6 +27,8 @@ test("gateway admits only the public UI/API surface, regardless of encoded inter
     "/api/../.well-known/workflow/v1/flow",
     "/api/%2e%2e/.well-known/workflow/v1/flow",
     "/api/worker/claim/extra",
+    "/api/auth/sign-up/email",
+    "/api/auth/callback/github",
     "/_next/%2e%2e/.well-known/workflow/v1/flow",
     "/_next/%252e%252e/.well-known/workflow/v1/flow",
     "http://attacker.invalid/api/state",

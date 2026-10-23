@@ -1,4 +1,5 @@
 import { HarnessError } from "@harness/core";
+import { googleAuthEnabled, googleOwnerConfig } from "./google-auth";
 import { hosted, publicOrigin } from "./hosted-auth";
 import { authorizeAdmin } from "./security";
 export async function localRequest(request: Request): Promise<void> {
@@ -8,12 +9,17 @@ export async function localRequest(request: Request): Promise<void> {
   if (
     !host ||
     (!hosted() &&
+      !googleAuthEnabled() &&
       ["localhost", "127.0.0.1", "::1"].includes(
         process.env.HARNESS_BIND_HOST ?? "127.0.0.1",
       ) &&
       !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) ||
     (origin &&
-      (hosted() ? origin !== publicOrigin() : new URL(origin).host !== host)) ||
+      (googleAuthEnabled()
+        ? origin !== googleOwnerConfig().origin
+        : hosted()
+          ? origin !== publicOrigin()
+          : new URL(origin).host !== host)) ||
     request.headers.get("sec-fetch-site") === "cross-site"
   ) {
     throw new HarnessError(

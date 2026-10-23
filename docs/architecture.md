@@ -367,6 +367,46 @@ are fetched only for that owned turn. Browser-dependent/non-portable work waits;
 finished/expired capacity revokes and stops. Actual cloud startup/auth/connectivity,
 timeouts, spending and teardown must be validated before enabling real tasks.
 
+## Google owner authentication
+
+`HARNESS_AUTH=google` selects Better Auth independently of `HARNESS_HOSTED`.
+The local Pi can retain SQLite; no additional DB connection or daemon is needed.
+Google's authorization-code flow uses the configured canonical origin and exact
+callback `/api/auth/callback/google`. Require a verified email from the explicit
+owner allowlist at profile acceptance and on every protected request. Password
+signup, account linking and direct client ID-token login are not exposed.
+
+Better Auth validates encrypted eight-hour session cookies. The existing hashed
+`owner_sessions` ledger makes revocation immediate across processes/restarts;
+Google access/refresh tokens are not retained in an account cookie. Legacy token
+login, owner bearer tokens and old owner cookies cannot bypass Google mode.
+Worker keys and attempt-scoped tool identities keep their separate auth paths.
+
+Only the required auth endpoints pass the public gateway. Google mode forces that
+gateway even for a loopback listener behind Caddy; Next/Workflow callbacks remain
+on a separate private port. Trust only the configured origin for browser writes.
+The gateway replaces caller-supplied proxy IP headers before auth rate limiting.
+Missing selected-mode settings fail closed. Google mode is enabled only after the
+origin, provider client and owner allowlist have been configured.
+
+## Coding repositories and handoff (agreed follow-up)
+
+Coding sessions bind repository URLs, isolated worktrees, branch/upstream,
+base/head commit IDs and current PR URLs/numbers. A local commit is portable only
+after pushing or bundling its git objects; the next host restores the exact
+revision. An unconstrained pull can select a different revision.
+
+Dirty state includes the index, unstaged changes and untracked files. Capture it
+consistently with execution files and native provider state, or retain worker
+affinity and pause if that host disappears. Record handoff readiness and uncertain
+external effects. A clean tree does not imply that interrupted native execution
+can be automatically retried. Begin with transfers at safe turn boundaries.
+
+The session header should show linked repo/PR chips, branch, clean/dirty state and
+current worker. Expand for commit IDs, per-repo details and handoff blockers. A
+session may use multiple repositories and PRs. These are tracked implementation
+requirements, not guarantees of the current generic file checkpoints.
+
 ## Temporal boundary
 
 A Temporal adapter can compose the existing enqueue/outcome, schedule occurrence,

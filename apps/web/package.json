@@ -19,6 +19,7 @@
     "@harness/storage": "workspace:*",
     "@tailwindcss/postcss": "^4.3.3",
     "@vercel/sandbox": "3.8.0",
+    "better-auth": "1.7.12",
     "chat": "4.43.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

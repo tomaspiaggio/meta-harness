@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { HarnessError } from "@harness/core";
 import * as oidc from "openid-client";
+import { googleAuthEnabled, googleOwnerConfig } from "./google-auth";
 import { getStore } from "./store";
 
 export const hosted = () =>
@@ -26,6 +27,7 @@ export function publicOrigin(): string {
 }
 export function hostedConfiguration(): void {
   publicOrigin();
+  if (googleAuthEnabled()) googleOwnerConfig();
   if (
     process.env.VERCEL &&
     (!process.env.VERCEL_DEPLOYMENT_ID ||
@@ -37,16 +39,22 @@ export function hostedConfiguration(): void {
     );
   if (
     !process.env.DATABASE_URL ||
-    !process.env.HARNESS_OIDC_ISSUER ||
-    !process.env.HARNESS_OIDC_CLIENT_ID ||
-    !(process.env.HARNESS_OWNER_SUBJECTS || process.env.HARNESS_OWNER_EMAILS) ||
+    (!googleAuthEnabled() &&
+      (!process.env.HARNESS_OIDC_ISSUER ||
+        !process.env.HARNESS_OIDC_CLIENT_ID ||
+        !(
+          process.env.HARNESS_OWNER_SUBJECTS || process.env.HARNESS_OWNER_EMAILS
+        ))) ||
     Buffer.from(process.env.HARNESS_GRANT_KEY ?? "", "base64url").length < 32
   )
     throw new HarnessError(
-      "Hosted access is disabled until PostgreSQL, OIDC, an owner allowlist and a grant signing key are configured.",
+      "Hosted access is disabled until PostgreSQL, owner authentication, an owner allowlist and a grant signing key are configured.",
       503,
     );
-  if (new URL(process.env.HARNESS_OIDC_ISSUER).protocol !== "https:")
+  if (
+    !googleAuthEnabled() &&
+    new URL(process.env.HARNESS_OIDC_ISSUER ?? "").protocol !== "https:"
+  )
     throw new HarnessError("OIDC requires HTTPS.", 503);
 }
 export function cookie(request: Request, name: string): string | undefined {

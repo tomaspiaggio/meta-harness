@@ -1,3 +1,4 @@
+import { googleAuthEnabled } from "../../../server/google-auth";
 import { failure, readJson } from "../../../server/http";
 import {
   loginCookie,
@@ -6,6 +7,8 @@ import {
 } from "../../../server/security";
 export async function POST(request: Request) {
   try {
+    if (googleAuthEnabled())
+      return Response.json({ error: "Use Google sign-in." }, { status: 403 });
     sameOrigin(request);
     const body = await readJson(request);
     if (typeof body.token !== "string" || !tokenMatches(body.token))

@@ -380,6 +380,20 @@ port. Network-mode development does not proxy HMR WebSockets; use loopback
 that file on network startup; do not publish it or put it in git. Worker credentials are separate and cannot administer tasks.
 The default loopback-only development flow needs no login.
 
+For Google owner login, set `HARNESS_AUTH=google`, `HARNESS_PUBLIC_URL`,
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `BETTER_AUTH_SECRET` (32+ random
+characters), and `HARNESS_OWNER_EMAILS` to the allowed verified Google email(s).
+The login page shows **Continue with Google**. Other accounts and unverified email
+claims are denied; legacy access-token login is disabled in this mode. It works
+with local SQLite on the Pi as well as PostgreSQL and needs no additional service.
+Register `<HARNESS_PUBLIC_URL>/api/auth/callback/google` in Google Cloud Console.
+Use HTTPS outside localhost. Google mode keeps an allowlisted gateway even behind
+a loopback reverse proxy, so internal Workflow routes stay private.
+
+See [Pi, Headscale, HTTPS and Google setup](deploy/pi-headscale.md) for DNS, OAuth
+configuration, a data-preserving move from this Mac, systemd startup and worker
+reconnection. MagicDNS resolves names; HTTPS certificates are configured separately.
+
 This is a trusted-worker prototype, not a multi-tenant sandbox: native tools run
 as the worker's OS user. Worker secrets are omitted from provider subprocess
 environment variables, but same-user filesystem access is not an isolation
