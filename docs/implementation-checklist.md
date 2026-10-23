@@ -624,3 +624,18 @@ Next session — Google meta-test resource access:
   optional 1Password integration; do not implement Dashlane automation.
 - [ ] Exercise host loss, supported login persistence, authorization, private
   takeover and payment-approval fixtures before unattended authenticated work.
+
+2026-10-23 — host-local browser login fix:
+
+- [x] Reproduce the global personal-Chrome preference blocking another available
+  host; remove it and prefer the executing worker's browser for new/idle work.
+- [x] Exclude disconnected extensions, reassign stale owners and fence old commands;
+  preserve active command/turn and human takeover ownership on healthy hosts.
+- [x] Keep login state host-local on reassignment, clear stale previews and display
+  the actual selected browser host/backend in the UI.
+- [x] Serve manual-login instructions through the MCP browser tool, including for
+  older workers; retain encrypted takeover and explicit continuation.
+- [x] Verify broker/tool placement, login requests, host-loss fencing, headless
+  Chromium credential entry, UI sign-in/return and local Workflow execution.
+- [ ] Complete a real Google login on the Pi through takeover, then retry OAuth
+  client creation. No Google client/secret has been created by these tests.

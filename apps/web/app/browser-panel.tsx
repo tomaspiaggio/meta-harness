@@ -32,6 +32,7 @@ export function BrowserPanel({
 }) {
   const [browser, setBrowser] = useState<BrowserView | null>(null);
   const [backend, setBackend] = useState("managed");
+  const [hostName, setHostName] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [frame, setFrame] = useState<string | null>(null);
@@ -67,6 +68,7 @@ export function BrowserPanel({
         if (!cancelled) {
           setBrowser(result.browser);
           setBackend(result.backend ?? "managed");
+          setHostName(result.host?.name ?? result.host?.hostname ?? null);
         }
       } catch (error) {
         if (!cancelled)
@@ -254,6 +256,9 @@ export function BrowserPanel({
               ? "Browser sign-in"
               : "Browser"}
         </h3>
+        {hostName && (
+          <span className="text-xs text-muted-foreground">{hostName}</span>
+        )}
         {browser && (
           <StatusBadge
             status={
@@ -297,7 +302,7 @@ export function BrowserPanel({
           {attention && !frame && (
             <p className="text-sm text-muted-foreground">
               {["personal-chrome", "extension"].includes(backend)
-                ? "This uses your signed-in browser through the Meta Harness Browser extension. Install and pair it once using the Browser connection steps in Settings. Remote debugging approval is not required."
+                ? "This browser runs on the host shown above. Sign in here if this host needs authentication; its accounts may differ from your other machines. Extension setup is available in Settings if it is disconnected."
                 : "Sign in to the workspace browser below."}{" "}
               Return control when finished.
             </p>
@@ -312,7 +317,9 @@ export function BrowserPanel({
               {browser?.mode === "human" && !keys.current
                 ? "Continue sign-in in this tab"
                 : ["personal-chrome", "extension"].includes(backend)
-                  ? "Use my Chrome"
+                  ? attention
+                    ? "Sign in"
+                    : "Take control"
                   : attention
                     ? "Sign in"
                     : "Take control"}

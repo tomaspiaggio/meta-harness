@@ -24,17 +24,18 @@ export async function GET(request: Request) {
     await store.getWorkspace(workspaceId);
     const broker = new BrowserBroker(store);
     await broker.expire();
+    const browser = await broker.forWorkspace(workspaceId);
+    const host = (await store.listWorkers()).find(
+      (worker) => worker.id === browser?.workerId,
+    );
     return Response.json(
       {
         policy: await store.resourcePolicy(workspaceId),
-        backend: (await store.listWorkers()).some((worker) =>
-          ["personal-chrome", "extension"].includes(
-            worker.report?.browserBackend ?? "",
-          ),
-        )
-          ? "extension"
-          : "managed",
-        browser: visible(await broker.forWorkspace(workspaceId)),
+        backend: host?.report?.browserBackend ?? "managed",
+        host: host
+          ? { id: host.id, name: host.name, hostname: host.report?.hostname }
+          : null,
+        browser: visible(browser),
       },
       { headers: { "Cache-Control": "no-store" } },
     );

@@ -281,9 +281,11 @@ Unknown external outcomes and interrupted native execution are not replayed mere
 because a different resource becomes available.
 
 This target is documented in [Browser resources across workers](browser-connection-options.md).
-Explicit resource registration/bindings, per-resource placement and extension
-adapters remain implementation work. In particular, the current global preference
-for personal Chrome must become an identity/resource-specific choice.
+Explicit resource registration/bindings and full identity-specific placement remain
+implementation work. Browser allocation now prefers the executing worker when an
+existing browser is idle, without a global personal-Chrome preference. Active
+commands, running turns using that browser and human takeover retain their host;
+offline/disconnected hosts cannot pin a workspace indefinitely.
 
 ### Initial deployment login policy (2026-10-23)
 
@@ -295,7 +297,8 @@ Chrome credentials or require an unlocked password vault. Password-manager
 automation is deferred; an optional future 1Password integration adds no current
 subscription requirement. Host relocation may require a new login and must still
 respect native interruption and unknown-outcome safeguards. This is the agreed
-policy; actual Pi takeover and host-loss behavior remain validation gates.
+policy. Broker host-loss and headless takeover are covered with fixtures; actual
+Pi account login remains a real-host validation gate.
 
 ### Current implementation
 
@@ -341,8 +344,11 @@ cells. Canvas editor text alone is not proof of cell access.
 Agent navigation URLs remain limited to 4 KB. Browser resource requests allow up
 to 64 KiB for applications such as Calendar, whose data-request URLs exceed 4 KB;
 both paths reject embedded credentials and private/control-plane addresses.
-Agent/browser workers may differ; identity-aware resource placement beyond the
-current worker report/broker selection remains planned.
+Agent/browser workers may differ. Allocation excludes disconnected extension
+hosts, prefers the task worker and falls back to other eligible capacity. Moving
+to another host clears cached page/state references and uses that host's persistent
+profile; it does not copy another host's cookies. The UI reports the selected host
+and its actual backend. Full account/domain bindings remain planned.
 
 The browser card is hidden until explicitly opened or a human-control/login
 request needs attention. The composer provides an Open browser button.
