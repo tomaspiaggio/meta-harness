@@ -94,6 +94,18 @@ test("real Chromium: screenshots, encrypted takeover, no model capture during lo
     },
   });
   try {
+    const starting = host.livePage(assignment("manual", {}));
+    assert.equal(
+      host.active()[0]?.id,
+      identity.id,
+      "Pending launch must retain its broker assignment",
+    );
+    const concurrent = host.livePage(assignment("manual", {}));
+    assert.equal(
+      (await starting).page,
+      (await concurrent).page,
+      "Concurrent views must share one persistent-profile launch",
+    );
     const navigation = await host.execute(assignment("navigate", { url }));
     assert.equal(typeof navigation.result.image, "string");
     assert.match(

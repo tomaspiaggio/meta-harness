@@ -104,6 +104,10 @@ export class BrowserActionNotStarted extends Error {}
 
 export class BrowserHost {
   private contexts = new Map<string, Context>();
+  private creating = new Map<
+    string,
+    { generation: number; promise: Promise<Context> }
+  >();
   private attachedBrowser?: Browser;
   private relay?: ExtensionRelay;
   readonly backend: BrowserBackend;
@@ -161,10 +165,16 @@ export class BrowserHost {
     );
   }
   active() {
-    return [...this.contexts].map(([id, context]) => ({
-      id,
-      generation: context.generation,
-    }));
+    const active = new Map(
+      [...this.contexts].map(([id, context]) => [
+        id,
+        { id, generation: context.generation },
+      ]),
+    );
+    for (const [id, pending] of this.creating)
+      if (!active.has(id))
+        active.set(id, { id, generation: pending.generation });
+    return [...active.values()];
   }
   async synchronize(identities: Pick<BrowserIdentity, "id" | "generation">[]) {
     const allowed = new Map(
@@ -194,6 +204,9 @@ export class BrowserHost {
     await rm(join(this.root, id), { recursive: true, force: true });
   }
   async close() {
+    await Promise.allSettled(
+      [...this.creating.values()].map((pending) => pending.promise),
+    );
     for (const context of this.contexts.values()) await this.release(context);
     this.contexts.clear();
     await this.disconnectIfIdle();
@@ -323,6 +336,20 @@ export class BrowserHost {
     });
   }
   private async get(assignment: BrowserAssignment): Promise<Context> {
+    const pending = this.creating.get(assignment.identity.id);
+    if (pending) return pending.promise;
+    const promise = this.getOrCreate(assignment);
+    this.creating.set(assignment.identity.id, {
+      generation: assignment.identity.generation,
+      promise,
+    });
+    try {
+      return await promise;
+    } finally {
+      this.creating.delete(assignment.identity.id);
+    }
+  }
+  private async getOrCreate(assignment: BrowserAssignment): Promise<Context> {
     const { identity } = assignment;
     const existing = this.contexts.get(identity.id);
     if (

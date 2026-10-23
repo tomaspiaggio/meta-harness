@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { basename, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { browserTool } from "../apps/web/server/browser.ts";
 import { HarnessStore } from "../packages/storage/src/application.ts";
+import { browserFixture } from "./browser-live-fixture.mjs";
 
 const base = process.env.HARNESS_URL ?? "http://localhost:3199";
 const directory = process.env.HARNESS_SMOKE_DATA_DIR;
@@ -33,23 +33,8 @@ async function api(path, body) {
   assert(response.ok, `${path}: ${JSON.stringify(value)}`);
   return value;
 }
-let observation = { user: "", password: "", clicks: 0 };
-const fixture = createServer(async (request, response) => {
-  if (request.url === "/observe" && request.method === "POST") {
-    let body = "";
-    for await (const chunk of request) body += chunk;
-    observation = { ...observation, ...JSON.parse(body) };
-    response.end("ok");
-    return;
-  }
-  response.setHeader("Content-Type", "text/html");
-  response.end(`<!doctype html><html><body style="margin:0;background:#eff6ff;font:24px sans-serif"><h1 style="padding:20px">Managed browser test</h1><p id="clock"></p>
-  <input id="user" aria-label="Username" style="position:absolute;left:400px;top:260px;width:400px;height:40px;font-size:24px">
-  <input id="password" type="password" aria-label="Password" style="position:absolute;left:400px;top:350px;width:400px;height:40px;font-size:24px">
-  <button id="login" style="position:absolute;left:400px;top:440px;width:400px;height:50px" onclick="localStorage.setItem('fixture-login','yes');document.cookie='fixture-login=yes; SameSite=Lax';fetch('/observe',{method:'POST',body:JSON.stringify({clicks:1})});this.textContent='Signed in'">Sign in</button>
-  <script>setInterval(()=>{document.getElementById('clock').textContent='Live animation '+Date.now()},80);for(const id of ['user','password']) document.getElementById(id).oninput=e=>fetch('/observe',{method:'POST',body:JSON.stringify({[id]:e.target.value})});</script></body></html>`);
-});
-await new Promise((resolve) => fixture.listen(0, "127.0.0.1", resolve));
+const liveFixture = await browserFixture();
+const fixture = liveFixture.server;
 const pageUrl =
   process.env.HARNESS_LIVE_TEST_URL ??
   `http://127.0.0.1:${fixture.address().port}/`;
@@ -154,7 +139,7 @@ try {
   await cli("press", "i");
   if (!process.env.HARNESS_LIVE_TEST_URL)
     await until(
-      () => Promise.resolve(observation.user === "hi"),
+      () => Promise.resolve(liveFixture.observation.user === "hi"),
       "Native typing did not reach the remote page",
     );
   await cli("press", "Tab");
@@ -163,19 +148,25 @@ try {
   );
   if (!process.env.HARNESS_LIVE_TEST_URL)
     await until(
-      () => Promise.resolve(observation.password === "fixture-only-password"),
+      () =>
+        Promise.resolve(
+          liveFixture.observation.password === "fixture-only-password",
+        ),
       "Paste did not reach remote password field",
     );
   await cli("press", "Backspace");
   if (!process.env.HARNESS_LIVE_TEST_URL)
     await until(
-      () => Promise.resolve(observation.password === "fixture-only-passwor"),
+      () =>
+        Promise.resolve(
+          liveFixture.observation.password === "fixture-only-passwor",
+        ),
       "Backspace was not forwarded",
     );
   await clickPage(550, 465);
   if (!process.env.HARNESS_LIVE_TEST_URL)
     await until(
-      () => Promise.resolve(observation.clicks === 1),
+      () => Promise.resolve(liveFixture.observation.clicks === 1),
       "Click did not activate remote button",
     );
   const frames = await evaluate(

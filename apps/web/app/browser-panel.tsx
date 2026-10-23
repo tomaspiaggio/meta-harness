@@ -55,8 +55,11 @@ export function BrowserPanel({
   const mounted = useRef(true);
   const generation = useRef(0);
   const held = useRef(new Set<string>());
+  const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visibleRef = useRef(false);
   const wheelHandler = useRef<(event: WheelEvent) => void>(() => {});
   const visible = open || (needsLogin && !dismissed);
+  visibleRef.current = visible;
   useEffect(() => {
     if (!needsLogin) setDismissed(false);
   }, [needsLogin]);
@@ -105,6 +108,7 @@ export function BrowserPanel({
   }, [visible]);
 
   async function connect(takeControl = false) {
+    if (retry.current) clearTimeout(retry.current);
     setBusy(true);
     setError("");
     setPhase("Connecting");
@@ -219,12 +223,17 @@ export function BrowserPanel({
       };
       onOpenChange(true);
     } catch (failure) {
-      setError(
+      const reason =
         failure instanceof Error
           ? failure.message
-          : "Browser connection failed.",
-      );
-      setPhase("Disconnected");
+          : "Browser connection failed.";
+      setError(reason);
+      if (reason.startsWith("Waiting for")) {
+        setPhase("Waiting for capacity");
+        retry.current = setTimeout(() => {
+          if (visibleRef.current) void connectRef.current(takeControl);
+        }, 1500);
+      } else setPhase("Disconnected");
     } finally {
       setBusy(false);
     }
@@ -235,6 +244,7 @@ export function BrowserPanel({
     if (visible) void connectRef.current(false);
     else socket.current?.close();
     return () => {
+      if (retry.current) clearTimeout(retry.current);
       socket.current?.close();
     };
   }, [visible]);

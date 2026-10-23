@@ -22,6 +22,8 @@ export async function browserWorker(
         for (const identity of work.identities)
           if (
             identity.mode === "agent" &&
+            (identity.status !== "starting" ||
+              Date.now() - identity.updatedAt > 10000) &&
             !host.active().some((item) => item.id === identity.id) &&
             !work.assignments.some((item) => item.identity.id === identity.id)
           )
