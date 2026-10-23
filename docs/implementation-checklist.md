@@ -567,3 +567,14 @@ Final validation on this Mac (Node 24, production Next.js build):
 - [x] Pass `pnpm check`, browser-enabled `pnpm test` (87 passed; 3 optional
   integrations skipped), `pnpm build` and isolated local `pnpm smoke`.
   Restart the personal worker with the fix and retain all real application data.
+
+2026-10-22 — agent-led worker onboarding:
+
+- [x] Ask only for the device name and reachable control URL in worker enrollment.
+- [x] Download a private Markdown handoff containing the scoped worker credential,
+  clone/setup commands and instructions for the device's coding agent.
+- [x] Cover provider/device login, model-free connectivity, optional paired Chrome
+  or managed browsers, agent-only Pi operation and final Online verification.
+- [x] Preserve JSON API compatibility, enrollment authorization and existing data.
+- [x] Validate the actual headless download and authenticate a fixture worker
+  using only the credential embedded in the generated guide.

@@ -366,7 +366,7 @@ function Settings() {
           <CardTitle>Workers</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
-          <WorkerSetup name={name} />
+          <WorkerSetup />
           <label htmlFor="worker-control-url" className="grid gap-1 text-sm">
             Control URL reachable from the worker
             <Input
@@ -380,7 +380,7 @@ function Settings() {
           <p className="text-xs text-muted-foreground">
             For another machine, use the control plane’s HTTPS address on your
             private network. localhost and 127.0.0.1 refer to the worker itself.
-            This address is stored in the downloaded credential; it does not
+            This address is stored in the downloaded setup guide; it does not
             expose or reconfigure the server.
           </p>
           <div className="flex gap-2">
@@ -394,23 +394,33 @@ function Settings() {
               disabled={busy || !name.trim() || !workerUrl.trim()}
               onClick={() =>
                 void perform(async () => {
-                  const credential = await api("workers", "POST", {
-                    name,
-                    serverUrl: workerUrl.trim(),
-                  });
-                  const url = URL.createObjectURL(
-                    new Blob([JSON.stringify(credential, null, 2)], {
-                      type: "application/json",
+                  const response = await fetch("/api/workers", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      name,
+                      serverUrl: workerUrl.trim(),
+                      format: "markdown",
                     }),
-                  );
+                  });
+                  if (!response.ok) {
+                    const result = await response.json();
+                    throw new Error(result.error ?? "Enrollment failed.");
+                  }
+                  const url = URL.createObjectURL(await response.blob());
                   const link = document.createElement("a");
                   link.href = url;
-                  link.download = `${name.replace(/[^a-zA-Z0-9_-]/g, "-")}-worker.json`;
+                  link.download =
+                    response.headers
+                      .get("content-disposition")
+                      ?.match(/filename="([^"]+)"/)?.[1] ?? "worker-setup.md";
+                  document.body.append(link);
                   link.click();
-                  URL.revokeObjectURL(url);
+                  link.remove();
+                  setTimeout(() => URL.revokeObjectURL(url), 1000);
                   setWorkers(await api("workers"));
                   setNotice(
-                    "Credential downloaded. Store it privately; revoke it here if it is lost.",
+                    "Setup guide downloaded. Give the private Markdown file to the coding agent on your new device; it will guide you through the remaining setup.",
                   );
                 })
               }

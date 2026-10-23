@@ -151,8 +151,11 @@ No real Vercel/Supabase deployment or identity-provider login was performed here
 
 ## Workers, secrets and isolation
 
-Settings can download a new per-worker credential; copy it securely to the machine,
-`chmod 600` it, and run `pnpm worker --credential /private/worker.json`. The existing
+Settings enrollment asks for a name and reachable control URL, then downloads a
+private Markdown handoff with that worker's credential and complete setup
+instructions. Give it to a coding agent on the new device. The agent writes
+`~/.config/meta-harness/worker.json` with mode 600, verifies connectivity and
+guides interactive provider/browser setup. Keep the Markdown private too. The existing
 `pnpm worker:enroll` CLI remains available on the control host. Revocation rejects
 new requests and existing attempt/tool grants. Workers connect outbound and expose
 no shell, Docker socket, CDP listener or machine-administration endpoint.
@@ -286,10 +289,18 @@ Restore. A revision conflict requires reading the newer record before resubmitti
 it never silently overwrites a concurrent agent update. No data reset or schema
 migration is needed for these controls.
 
-Settings → Workers now documents installation step by step. Its repository URL
-is an instruction aid; enrollment stores the separate control URL you provide.
-Use a reachable HTTPS address for another machine and transfer its credential
-outside git. Worker credentials grant no owner/database administration access.
+Settings → Workers downloads an agent-led installation guide using this project's
+GitHub `main` branch. The control URL is the separate address you provide at
+enrollment; use a reachable HTTPS address for another machine. The guide includes
+the scoped credential, device/provider login, optional existing-Chrome extension
+pairing, managed-browser compatibility and agent-only Pi operation. Keep both the
+guide and resulting credential outside git. Worker credentials grant no
+owner/database administration access. JSON enrollment remains the default API
+response for existing clients; Settings requests `format: "markdown"`.
+
+Run `HARNESS_URL=http://127.0.0.1:3199 pnpm smoke:worker-enrollment` against an
+isolated fixture stack for a headless agent-browser check of the two-field form,
+actual Markdown download and worker authentication using its embedded credential.
 
 ## Agent models and document uploads
 

@@ -146,16 +146,20 @@ Decisions can be edited or deleted in their tab. Delete records a withdrawal;
 use **Show withdrawn decisions → Restore** to bring one back. Earlier revisions
 remain stored, and stale edits are rejected.
 
-Settings includes a step-by-step worker installation guide, from cloning this
-repository through provider login, credential transfer and checking Online status.
-When enrolling another machine, set its reachable HTTPS control URL: localhost
-points to that worker, not your Mac.
-The guide defaults to this repository's `main` branch at
-[tomaspiaggio/meta-harness](https://github.com/tomaspiaggio/meta-harness), so you can
-copy the commands to a Pi or hand the guide to its coding agent. Enroll the Pi in
-Settings and securely transfer its downloaded credential before starting
-`pnpm worker --credential ~/.config/meta-harness/worker.json`; worker machines do
-not run `pnpm dev` or need direct database access.
+In **Settings → Workers**, enter only a device name and a reachable HTTPS control
+URL, then click **Enroll worker**. Enrollment downloads a private Markdown setup
+guide containing that worker's scoped credential. Give the file to a coding agent
+on the new device. It handles the terminal setup and walks you through any
+interactive provider login or browser-extension pairing. The guide covers cloning
+this repository's `main` branch, Node/pnpm, credential storage, model-free
+connectivity checks, provider authentication, optional browser capability, startup
+and Online verification. Headless Pi workers can run agents without an extension.
+Keep the file private and out of git; revoke the worker if it is lost.
+
+The control URL must be reachable from that new machine: localhost points to the
+worker itself, not your Mac. Worker machines do not run `pnpm dev` or need direct
+database access. The legacy JSON enrollment response remains available to CLI/API
+clients; the Settings UI requests the Markdown download.
 
 Choose the default agent and its model in **Settings → Default agent and model**.
 Each agent remembers its own default model. New conversations inherit these
