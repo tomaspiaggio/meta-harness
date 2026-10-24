@@ -7,6 +7,7 @@ import type {
   JsonObject,
   ToolDefinition,
 } from "@harness/core/integrations";
+import { IntegrationNotStartedError } from "@harness/core/integrations";
 import type { HarnessStore } from "@harness/storage/application";
 import Ajv from "ajv";
 
