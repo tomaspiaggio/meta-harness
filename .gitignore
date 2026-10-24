@@ -12,3 +12,6 @@ apps/web/app/.well-known/workflow/
 packages/storage/generated/
 
 apps/browser-extension/dist/
+
+# Private, machine-specific operational skills (never published).
+/.agents/skills/
