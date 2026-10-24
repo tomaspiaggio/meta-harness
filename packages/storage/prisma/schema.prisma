@@ -8,6 +8,7 @@ datasource db {
 }
 
 model Workspaces {
+ integrationBindings IntegrationBindings[]
   id                              String              @id
   name                            String
   instructions                    String
@@ -612,4 +613,31 @@ model CleanupJobs {
   leaseUntil BigInt?
   error String?
   @@map("cleanup_jobs")
+}
+
+model IntegrationDefinitions {
+ id String @id
+ revision String
+ record String
+ connections IntegrationConnections[]
+ @@map("integration_definitions")
+}
+model IntegrationConnections {
+ id String @id
+ integrationId String
+ revision String
+ record String
+ definition IntegrationDefinitions @relation(fields:[integrationId],references:[id],onDelete:Restrict)
+ bindings IntegrationBindings[]
+ @@map("integration_connections")
+}
+model IntegrationBindings {
+ workspaceId String
+ connectionId String
+ revision String
+ record String
+ connection IntegrationConnections @relation(fields:[connectionId],references:[id],onDelete:Restrict)
+ workspace Workspaces @relation(fields:[workspaceId],references:[id],onDelete:Restrict)
+ @@id([workspaceId,connectionId])
+ @@map("integration_bindings")
 }

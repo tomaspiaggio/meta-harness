@@ -39,6 +39,10 @@ export async function deleteResource(
         )
         .run(`${type}:${value}`, type, value, Date.now());
     };
+    if (kind === "workspace")
+      await db
+        .prepare("DELETE FROM integration_bindings WHERE workspaceId = ?")
+        .run(id);
     const sessions =
       kind === "session"
         ? [{ id }]
