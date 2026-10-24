@@ -67,9 +67,13 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
 - [x] Local CRM-shaped task: Codex hits a login, asks for sign-in, the owner signs
       in privately from a phone-sized screen, Codex continues and reads the leads.
 - [ ] Real CRM task on the live deployment (read-only; no CRM changes or outreach).
-- [ ] "Work on project X": pulls the repo with `gh`, creates a worktree, starts work.
-- [ ] Common assistant-style tasks (research/summary, file edit, schedule proposal,
-      Q&A over a workspace).
+- [x] "Work on project X" (local, Codex): cloned `tomaspiaggio/treemux` with `gh`,
+      created worktree branch `harness-readme-check`, explained the project, then
+      in a follow-up turn added a README Testing section and committed locally
+      (nothing pushed).
+- [x] Common assistant tasks (local, Codex): Hacker News research through the
+      harness browser (8 steps, all with screenshots); "every weekday at 9am check
+      my CRM" produced an inactive schedule draft for review.
 - [x] `pnpm check`, `pnpm test` (with real-browser tests), `pnpm build`,
       `pnpm smoke`, `smoke:browser-live`, `smoke:worker-enrollment` pass locally.
 - [ ] Deployed to the Pi and checked on the phone.
