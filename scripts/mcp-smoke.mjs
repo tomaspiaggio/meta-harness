@@ -102,6 +102,9 @@ const env = {
   PORT: String(port),
   // This isolated fixture deliberately exercises local owner access.
   HARNESS_BIND_HOST: "127.0.0.1",
+  HARNESS_AUTH: "local",
+  HARNESS_REQUIRE_AUTH: "0",
+  HARNESS_PUBLIC_URL: base,
   HARNESS_DATA_DIR: directory,
   HARNESS_SECRET_BINDINGS: JSON.stringify({
     "fixture-auth": "JOB_SECRET_MCP_FIXTURE",
