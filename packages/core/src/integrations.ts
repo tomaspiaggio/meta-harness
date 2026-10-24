@@ -171,3 +171,6 @@ export function parseIntegrationBinding(
     enabled: v.enabled,
   };
 }
+
+/** An adapter may use this only with evidence that no external action was sent. */
+export class IntegrationNotStartedError extends Error {}

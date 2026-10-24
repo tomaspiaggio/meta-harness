@@ -241,7 +241,8 @@ export async function callIntegrationTool(
       receipt,
     );
     return JSON.parse(receipt);
-  } catch {
+  } catch (error) {
+    if (error instanceof IntegrationNotStartedError) sent = false;
     const state = sent ? "unknown_outcome" : "failed";
     await store.integrationOperationOutcome(
       id,
