@@ -114,11 +114,23 @@ test("shared collection ports preserve descriptions and schemas; grants fence re
     };
     registerIntegrationAdapter(adapter);
     const descriptors = await integrationToolDescriptors(store, "tech");
-    assert.equal(descriptors.length, 1);
-    assert.match(descriptors[0]!.description, /Search fixture records/);
+    assert.equal(descriptors.length, 2);
+    const firstDescriptor = descriptors[0];
+    assert.ok(firstDescriptor);
+    assert.match(firstDescriptor.description, /Search fixture records/);
     assert.deepEqual(await integrationToolDescriptors(store, "business"), []);
-    const name = descriptors[0]!.name;
+    const name = firstDescriptor.name;
     assert.ok(name.length <= 64);
+    const catalog = await callIntegrationTool(
+      store,
+      grant,
+      "tech",
+      "integration_catalog",
+      {},
+      new AbortController().signal,
+    );
+    assert.match(JSON.stringify(catalog), /Fixture account/);
+    assert.doesNotMatch(JSON.stringify(catalog), /adapterId|credentialRef/);
     const args = { operation_id: "logical", arguments: { query: "hello" } };
     await assert.rejects(
       callIntegrationTool(
@@ -186,7 +198,9 @@ test("physical attempt outcomes are fenced and ambiguous writes cannot repeat", 
         throw new Error("secret fixture credential must not be stored");
       },
     });
-    const name = (await integrationToolDescriptors(store, "tech"))[0]!.name;
+    const descriptor = (await integrationToolDescriptors(store, "tech"))[0];
+    assert.ok(descriptor);
+    const name = descriptor.name;
     const args = { operation_id: "ambiguous", arguments: { query: "hello" } };
     await assert.rejects(
       callIntegrationTool(
@@ -214,11 +228,13 @@ test("physical attempt outcomes are fenced and ambiguous writes cannot repeat", 
       (await store.getTurn(grant.turnId)).sessionId,
     );
     assert.equal(pending.length, 1);
-    assert.equal(pending[0]!.state, "unknown_outcome");
+    const firstPending = pending[0];
+    assert.ok(firstPending);
+    assert.equal(firstPending.state, "unknown_outcome");
     assert.doesNotMatch(JSON.stringify(pending), /secret fixture/);
     assert.equal(
       await store.integrationOperationOutcome(
-        pending[0]!.id,
+        firstPending.id,
         "stale",
         "succeeded",
         "{}",
@@ -247,7 +263,9 @@ test("connection and binding revocation abort active adapter I/O", () =>
         return null;
       },
     });
-    const name = (await integrationToolDescriptors(store, "tech"))[0]!.name;
+    const descriptor = (await integrationToolDescriptors(store, "tech"))[0];
+    assert.ok(descriptor);
+    const name = descriptor.name;
     const calling = callIntegrationTool(
       store,
       grant,
@@ -257,11 +275,109 @@ test("connection and binding revocation abort active adapter I/O", () =>
       new AbortController().signal,
     );
     await started;
-    const old = (await store.listIntegrationBindings("tech"))[0]!;
+    const old = (await store.listIntegrationBindings("tech"))[0];
+    assert.ok(old);
     await store.putIntegrationBinding(
       { ...old, revision: "b2", enabled: false },
       "b1",
     );
     await assert.rejects(calling, /unknown/);
     assert.deepEqual(await integrationToolDescriptors(store, "tech"), []);
+  }));
+
+test("proven pre-execution rejection can be explicitly retried and stale physical attempts cannot finalize a new receipt", () =>
+  fixture(async (store, grant) => {
+    const { IntegrationNotStartedError } = await import(
+      "@harness/core/integrations"
+    );
+    let ready = false,
+      calls = 0;
+    registerIntegrationAdapter({
+      id: "fixture",
+      async discover() {
+        return definition;
+      },
+      async execute() {
+        if (!ready)
+          throw new IntegrationNotStartedError("Missing fixture token");
+        calls++;
+        return { ok: true };
+      },
+    });
+    const descriptors = await integrationToolDescriptors(store, "tech");
+    const descriptor = descriptors[0];
+    assert.ok(descriptor);
+    const args = { operation_id: "prestart", arguments: { query: "test" } };
+    await assert.rejects(
+      callIntegrationTool(
+        store,
+        grant,
+        "tech",
+        descriptor.name,
+        args,
+        new AbortController().signal,
+      ),
+      /could not start/,
+    );
+    ready = true;
+    await assert.rejects(
+      callIntegrationTool(
+        store,
+        grant,
+        "tech",
+        descriptor.name,
+        args,
+        new AbortController().signal,
+      ),
+      /failed/,
+    );
+    await callIntegrationTool(
+      store,
+      grant,
+      "tech",
+      descriptor.name,
+      { ...args, retry_unstarted: true },
+      new AbortController().signal,
+    );
+    assert.equal(calls, 1);
+    const id = "fixture-physical-fence";
+    await store.operation(
+      grant.workerId,
+      grant.turnId,
+      grant.generation,
+      id,
+      { a: 1 },
+      { attemptToken: "old" },
+    );
+    assert.equal(
+      await store.integrationOperationOutcome(
+        id,
+        "old",
+        "failed",
+        JSON.stringify({ attemptToken: "old", execution: "not_started" }),
+      ),
+      true,
+    );
+    const admitted = await store.operation(
+      grant.workerId,
+      grant.turnId,
+      grant.generation,
+      id,
+      { a: 1 },
+      { attemptToken: "new", retryUnstarted: true },
+    );
+    assert.equal(admitted.state, "new");
+    assert.equal(
+      await store.integrationOperationOutcome(id, "old", "succeeded", "{}"),
+      false,
+    );
+    assert.equal(
+      await store.integrationOperationOutcome(
+        id,
+        "new",
+        "succeeded",
+        JSON.stringify({ execution: "completed" }),
+      ),
+      true,
+    );
   }));
