@@ -29,7 +29,10 @@ export class BrowserBroker {
       .prepare("SELECT * FROM browser_identities WHERE workspaceId = ?")
       .get(workspaceId)) as unknown as BrowserIdentity | null;
   }
-  async ensure(workspaceId: string): Promise<BrowserIdentity> {
+  async ensure(
+    workspaceId: string,
+    preferredWorkerId?: string,
+  ): Promise<BrowserIdentity> {
     const workspace = await this.store.getWorkspace(workspaceId);
     return this.db.transaction(async () => {
       const id = `browser-${createHash("sha256").update(workspaceId).digest("hex").slice(0, 24)}`;
@@ -39,37 +42,81 @@ export class BrowserBroker {
         )
         .run(id, workspaceId, `${workspace.name} browser`, Date.now());
       let browser = await this.get(id);
-      if (browser.workerId && (browser.leaseUntil ?? 0) > Date.now())
-        return browser;
+      const now = Date.now();
       const workers = await this.store.listWorkers();
-      let candidate: string | null = null;
-      // A known personal Chrome host is authoritative for existing logins.
-      // Never silently fall back to a blank managed profile when it is offline.
-      const personal = workers.some((worker) =>
-        ["personal-chrome", "extension"].includes(
-          worker.report?.browserBackend ?? "",
-        ),
+      const online = (worker: (typeof workers)[number]) =>
+        !!worker.report?.browserHost &&
+        worker.report.browserBackend !== "extension" &&
+        worker.report.browserBackend !== "personal-chrome" &&
+        (worker.seenAt ?? 0) >= now - 30000;
+      const owner = workers.find((worker) => worker.id === browser.workerId);
+      const preferred = workers.find(
+        (worker) => worker.id === preferredWorkerId,
       );
-      for (const worker of workers) {
+      const preferredReport = preferred?.report;
+      const preferredReady =
+        preferred &&
+        preferredReport &&
+        online(preferred) &&
+        !preferred.draining &&
+        !preferredReport.draining &&
+        preferredReport.memoryPressure !== "critical" &&
+        preferredReport.availableMemoryMiB - preferredReport.reserveMemoryMiB >=
+          384 &&
+        preferredReport.maxBrowsers > 0;
+      // Do not move an in-use browser, including gaps between a running turn's
+      // commands. An idle browser can follow a new turn to its executing host.
+      if (owner && online(owner) && (browser.leaseUntil ?? 0) > now) {
+        const inUse = await this.db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM browser_commands LEFT JOIN turns ON turns.id = browser_commands.turnId WHERE browserId = ? AND (browser_commands.status IN ('pending', 'running') OR turns.status = 'running')",
+          )
+          .get(id);
+        if (
+          browser.mode !== "agent" ||
+          !preferredReady ||
+          owner.id === preferredWorkerId ||
+          Number(inUse?.count) > 0
+        )
+          return browser;
+      }
+      if (
+        owner &&
+        online(owner) &&
+        (browser.leaseUntil ?? 0) > now &&
+        preferredReady
+      ) {
+        const used = await this.db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM browser_identities WHERE workerId = ? AND leaseUntil > ? AND id != ?",
+          )
+          .get(preferred.id, now, id);
+        if (Number(used?.count) >= preferredReport.maxBrowsers) return browser;
+      }
+      let candidate: string | null = null;
+      // Prefer the executing worker's own persistent browser, with no global
+      // personal-Chrome preference. Other healthy hosts can supply capacity.
+      const ordered = [...workers].sort(
+        (left, right) =>
+          Number(right.id === preferredWorkerId) -
+          Number(left.id === preferredWorkerId),
+      );
+      for (const worker of ordered) {
         const report = worker.report;
         if (
-          !report?.browserHost ||
-          (personal &&
-            !["personal-chrome", "extension"].includes(
-              report.browserBackend ?? "",
-            )) ||
+          !report ||
+          !online(worker) ||
           worker.draining ||
           report.draining ||
-          (worker.seenAt ?? 0) < Date.now() - 30000 ||
           report.memoryPressure === "critical" ||
           report.availableMemoryMiB - report.reserveMemoryMiB < 384
         )
           continue;
         const used = await this.db
           .prepare(
-            "SELECT COUNT(*) AS count FROM browser_identities WHERE workerId = ? AND leaseUntil > ?",
+            "SELECT COUNT(*) AS count FROM browser_identities WHERE workerId = ? AND leaseUntil > ? AND id != ?",
           )
-          .get(worker.id, Date.now());
+          .get(worker.id, now, id);
         if (Number(used?.count) < report.maxBrowsers) {
           candidate = worker.id;
           break;
@@ -77,9 +124,7 @@ export class BrowserBroker {
       }
       if (!candidate)
         throw new HarnessError(
-          personal
-            ? "Waiting for your personal Chrome worker to be online with a free browser slot and memory headroom. Your existing logins stay on that machine."
-            : "Waiting for an online browser host with a free browser slot and memory headroom. Install Chromium with pnpm browser:install on a worker.",
+          "Waiting for an online browser host with a free browser slot and memory headroom. Disconnected extensions are unavailable; a managed browser can be installed with pnpm browser:install. Sign in through browser takeover when the selected host needs login.",
           409,
         );
       await this.db
@@ -89,9 +134,14 @@ export class BrowserBroker {
         .run(id);
       await this.db
         .prepare(
-          "UPDATE browser_identities SET workerId = ?, generation = generation + 1, leaseUntil = ?, status = 'starting', mode = 'agent', userPublicKey = NULL, expiresAt = NULL, frame = NULL, error = NULL, updatedAt = ? WHERE id = ?",
+          "UPDATE browser_commands SET status = 'failed', result = ?, error = 'Browser host changed before execution.' WHERE browserId = ? AND status = 'pending'",
         )
-        .run(candidate, Date.now() + 30000, Date.now(), id);
+        .run(JSON.stringify({ execution: "not_started" }), id);
+      await this.db
+        .prepare(
+          "UPDATE browser_identities SET stateCipher = CASE WHEN workerId = ? THEN stateCipher ELSE NULL END, lastUrl = CASE WHEN workerId = ? THEN lastUrl ELSE NULL END, workerId = ?, generation = generation + 1, leaseUntil = ?, status = 'starting', mode = 'agent', userPublicKey = NULL, expiresAt = NULL, frame = NULL, frameAt = NULL, error = NULL, updatedAt = ? WHERE id = ?",
+        )
+        .run(candidate, candidate, candidate, now + 30000, now, id);
       browser = await this.get(id);
       return browser;
     });
@@ -462,6 +512,7 @@ export class BrowserBroker {
     id: string,
     generation: number,
     sessionId: string,
+    resume = false,
   ): Promise<BrowserIdentity> {
     return this.db.transaction(async () => {
       const browser = await this.get(id);
@@ -475,7 +526,13 @@ export class BrowserBroker {
         .prepare("SELECT id FROM turns WHERE id = ?")
         .get(continuationId);
       if (existing) return browser;
-      if (browser.generation !== generation || browser.mode === "agent")
+      if (
+        !resume &&
+        browser.mode === "agent" &&
+        browser.generation === generation + 1
+      )
+        return browser;
+      if (browser.generation !== generation)
         throw new HarnessError(
           "Browser control changed. Refresh before returning it.",
           409,
@@ -495,16 +552,18 @@ export class BrowserBroker {
           "UPDATE browser_identities SET mode = 'agent', generation = generation + 1, userPublicKey = NULL, expiresAt = NULL, frame = NULL, updatedAt = ? WHERE id = ?",
         )
         .run(Date.now(), id);
-      await this.db
-        .prepare(
-          "UPDATE input_requests SET status = 'answered', response = 'Browser control returned', resolvedAt = ? WHERE id LIKE ? AND kind = 'browser-login' AND status = 'pending'",
-        )
-        .run(Date.now(), `${id}:%`);
-      await this.store.submitMessage(
-        continuationId,
-        sessionId,
-        "I returned browser control. Refresh the page/account state and continue the browser task. Reconcile any unfinished external operation before repeating it.",
-      );
+      if (resume)
+        await this.db
+          .prepare(
+            "UPDATE input_requests SET status = 'answered', response = 'Browser control returned', resolvedAt = ? WHERE id LIKE ? AND kind = 'browser-login' AND status = 'pending'",
+          )
+          .run(Date.now(), `${id}:%`);
+      if (resume)
+        await this.store.submitMessage(
+          continuationId,
+          sessionId,
+          "I returned browser control. Refresh the page/account state and continue the browser task. Reconcile any unfinished external operation before repeating it.",
+        );
       return this.get(id);
     });
   }
@@ -520,7 +579,7 @@ export class BrowserBroker {
       .prepare(
         "UPDATE browser_commands SET result = NULL WHERE action != 'manual' AND result IS NOT NULL AND completedAt < ?",
       )
-      .run(now - 60000);
+      .run(now - 24 * 60 * 60000);
     await this.db
       .prepare(
         "DELETE FROM browser_commands WHERE action = 'manual' AND completedAt < ?",
@@ -555,7 +614,7 @@ export async function browserTool(
     (await store.getTurn(grant.turnId)).sessionId,
   );
   const broker = new BrowserBroker(store);
-  const browser = await broker.ensure(session.workspaceId);
+  const browser = await broker.ensure(session.workspaceId, grant.workerId);
   const action = requiredText(args.action, "Browser action", 30);
   if (action === "status")
     return {
@@ -563,6 +622,9 @@ export async function browserTool(
         status: browser.status,
         mode: browser.mode,
         url: browser.lastUrl,
+        workerId: browser.workerId,
+        instruction:
+          "This host uses its own browser login state. If the required account is signed out, navigate to the login page and call needs_login for interactive takeover. Never request passwords in chat.",
       },
     };
   if (action === "needs_login") {
@@ -655,7 +717,21 @@ export async function browserTool(
       throw new HarnessError(command.error ?? "Browser action failed.", 409);
     }
     const result = JSON.parse(command.result ?? "{}");
-    const image = typeof result.image === "string" ? result.image : undefined;
+    const image =
+      !["read", "sheet_read"].includes(action) &&
+      typeof result.image === "string"
+        ? result.image
+        : undefined;
+    if (result.status === "needs_login")
+      await store.requestInput(
+        `${browser.id}:${grant.turnId}`,
+        session.id,
+        grant.turnId,
+        "browser-login",
+        result.login === "rejected"
+          ? "Google rejected this browser. Sign-in has not completed; open the browser to resolve access before continuing."
+          : "Sign in to the workspace browser, then choose Continue task.",
+      );
     delete result.image;
     if (mutating)
       await store.operationOutcome(id, "succeeded", JSON.stringify(result));

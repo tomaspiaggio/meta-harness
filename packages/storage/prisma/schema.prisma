@@ -8,6 +8,7 @@ datasource db {
 }
 
 model Workspaces {
+ integrationBindings IntegrationBindings[]
   id                              String              @id
   name                            String
   instructions                    String
@@ -612,4 +613,81 @@ model CleanupJobs {
   leaseUntil BigInt?
   error String?
   @@map("cleanup_jobs")
+}
+
+model IntegrationDefinitions {
+ id String @id
+ revision String
+ record String
+ connections IntegrationConnections[]
+ @@map("integration_definitions")
+}
+model IntegrationConnections {
+ mcpDiscovery McpDiscoverySnapshots?
+ id String @id
+ googleAuthorization GoogleAccountAuthorizations?
+ googleOAuthStates GoogleOAuthStates[]
+ integrationId String
+ revision String
+ record String
+ definition IntegrationDefinitions @relation(fields:[integrationId],references:[id],onDelete:Restrict)
+ bindings IntegrationBindings[]
+ @@map("integration_connections")
+}
+model IntegrationBindings {
+ workspaceId String
+ connectionId String
+ revision String
+ record String
+ connection IntegrationConnections @relation(fields:[connectionId],references:[id],onDelete:Restrict)
+ workspace Workspaces @relation(fields:[workspaceId],references:[id],onDelete:Restrict)
+ @@id([workspaceId,connectionId])
+ @@map("integration_bindings")
+}
+
+model McpDiscoverySnapshots {
+ connectionId String @id
+ revision String?
+ descriptors String?
+ status String
+ error String?
+ testedAt BigInt
+ connection IntegrationConnections @relation(fields:[connectionId],references:[id],onDelete:Cascade)
+ @@map("mcp_discovery_snapshots")
+}
+
+model GoogleAccountAuthorizations {
+ refreshExpiresAt BigInt?
+ connectionId String @id
+ subject String @default("")
+ email String @default("")
+ scopes String @default("[]")
+ status String @default("disconnected")
+ revision Int @default(0)
+ lockOwner String?
+ lockUntil BigInt @default(0)
+ connection IntegrationConnections @relation(fields:[connectionId],references:[id],onDelete:Cascade)
+ credential GoogleCredentials?
+ @@map("google_account_authorizations")
+}
+model GoogleCredentials {
+ connectionId String @id
+ cipher String
+ revision Int
+ authorization GoogleAccountAuthorizations @relation(fields:[connectionId],references:[connectionId],onDelete:Cascade)
+ @@map("google_credentials")
+}
+model GoogleOAuthStates {
+ stateHash String @id
+ ownerHash String
+ connectionId String
+ connectionRevision String
+ verifierCipher String
+ nonce String
+ scopes String
+ redirectUri String
+ expiresAt BigInt
+ connection IntegrationConnections @relation(fields:[connectionId],references:[id],onDelete:Cascade)
+ @@index([expiresAt],map:"google_oauth_expiry")
+ @@map("google_oauth_states")
 }

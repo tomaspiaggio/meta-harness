@@ -1,4 +1,7 @@
-export const featureSchema = `
+import { googleSchema } from "./google-schema";
+import { mcpSchema } from "./mcp-schema";
+export const featureSchema = `${mcpSchema}
+${googleSchema}
 CREATE TABLE IF NOT EXISTS deleted_resources (kind TEXT NOT NULL, id TEXT NOT NULL, createdAt INTEGER NOT NULL, PRIMARY KEY(kind,id));
 CREATE TABLE IF NOT EXISTS worker_cleanup (workerId TEXT NOT NULL REFERENCES workers(id), kind TEXT NOT NULL, resourceId TEXT NOT NULL, PRIMARY KEY(workerId,kind,resourceId));
 CREATE TABLE IF NOT EXISTS cleanup_jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, nextAt INTEGER NOT NULL, leaseUntil INTEGER, error TEXT);
@@ -92,5 +95,14 @@ CREATE TABLE IF NOT EXISTS workflow_waiters (
 );
 CREATE TABLE IF NOT EXISTS workflow_wakeups (
  turnId TEXT PRIMARY KEY REFERENCES turns(id), createdAt INTEGER NOT NULL, deliveredAt INTEGER
+);
+CREATE TABLE IF NOT EXISTS integration_definitions (
+ id TEXT PRIMARY KEY, revision TEXT NOT NULL, record TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS integration_connections (
+ id TEXT PRIMARY KEY, integrationId TEXT NOT NULL REFERENCES integration_definitions(id), revision TEXT NOT NULL, record TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS integration_bindings (
+ workspaceId TEXT NOT NULL REFERENCES workspaces(id), connectionId TEXT NOT NULL REFERENCES integration_connections(id), revision TEXT NOT NULL, record TEXT NOT NULL, PRIMARY KEY(workspaceId, connectionId)
 );
 `;

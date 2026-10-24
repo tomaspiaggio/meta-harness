@@ -2,6 +2,7 @@ import { HarnessError, requiredText } from "@harness/core";
 import { hosted, publicOrigin } from "../../../server/hosted-auth";
 import { failure, jsonBody, localRequest } from "../../../server/http";
 import { getStore } from "../../../server/store";
+import { workerOnboarding } from "../../../server/worker-onboarding";
 export async function GET(request: Request) {
   try {
     await localRequest(request);
@@ -15,6 +16,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await jsonBody(request);
+    if (body.format !== undefined && body.format !== "markdown")
+      throw new HarnessError("Unsupported worker enrollment format.");
     let server: URL;
     try {
       server = new URL(
@@ -40,16 +43,24 @@ export async function POST(request: Request) {
       throw new HarnessError(
         "Use a bare HTTP(S) control URL, without credentials or a path.",
       );
-    const worker = await (await getStore()).createWorker(
-      requiredText(body.name, "Worker name", 100),
-    );
-    return Response.json(
-      {
-        ...worker,
-        serverUrl: server.origin,
-      },
-      { status: 201, headers: { "Cache-Control": "no-store" } },
-    );
+    const name = requiredText(body.name, "Worker name", 100);
+    const worker = await (await getStore()).createWorker(name);
+    const credential = { ...worker, serverUrl: server.origin };
+    if (body.format === "markdown") {
+      const guide = workerOnboarding(name, credential);
+      return new Response(guide.markdown, {
+        status: 201,
+        headers: {
+          "Content-Type": "text/markdown; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${guide.filename}"`,
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+    return Response.json(credential, {
+      status: 201,
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     return failure(error);
   }

@@ -21,6 +21,9 @@
   },
   "globalPassThroughEnv": [
     "HARNESS_*",
+    "BETTER_AUTH_SECRET",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
     "WORKFLOW_*",
     "CODEX_BIN",
     "CLAUDE_BIN",

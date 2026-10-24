@@ -4,10 +4,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { BrowserBroker } from "../../../apps/web/server/browser";
+import type { BrowserAssignment } from "@harness/core/browser";
+import { BrowserBroker, browserTool } from "../../../apps/web/server/browser";
 import { HarnessStore } from "./application";
 
-test("personal Chrome placement preserves logged-in identity instead of silently falling back to an empty browser", async () => {
+test("browser placement uses an available host when personal Chrome is offline", async () => {
   const root = await mkdtemp(join(tmpdir(), "harness-personal-browser-"));
   const store = new HarnessStore(join(root, "db.sqlite"));
   await store.ready;
@@ -22,7 +23,7 @@ test("personal Chrome placement preserves logged-in identity instead of silently
       memoryBudgetMiB: 4096,
       cpuSlots: 2,
       maxBuilds: 1,
-      maxBrowsers: 2,
+      maxBrowsers: 3,
       availableMemoryMiB: 8192,
       reserveMemoryMiB: 512,
       loadPerCpu: 0,
@@ -39,20 +40,155 @@ test("personal Chrome placement preserves logged-in identity instead of silently
       browserBackend: "personal-chrome",
     });
     const broker = new BrowserBroker(store);
-    assert.equal((await broker.ensure("business")).workerId, personal.id);
     await store
       .databaseConnection()
       .prepare("UPDATE workers SET seenAt = 1 WHERE id = ?")
       .run(personal.id);
-    await assert.rejects(
-      broker.ensure("tech"),
-      /Waiting for your personal Chrome worker/,
-    );
+    assert.equal((await broker.ensure("tech")).workerId, managed.id);
     await store.reportWorker(personal.id, {
       ...report,
       browserBackend: "personal-chrome",
     });
-    assert.equal((await broker.ensure("tech")).workerId, personal.id);
+    assert.equal((await broker.ensure("tech")).workerId, managed.id);
+  } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("browser host loss prefers the task worker, fences old commands and keeps logins host-local", async () => {
+  const root = await mkdtemp(join(tmpdir(), "harness-browser-host-loss-"));
+  const store = new HarnessStore(join(root, "db.sqlite"));
+  await store.ready;
+  try {
+    const mac = await store.createWorker("Mac");
+    const pi = await store.createWorker("Pi");
+    const report = {
+      hostname: "fixture",
+      providers: ["demo" as const],
+      labels: [],
+      maxAgents: 1,
+      memoryBudgetMiB: 4096,
+      cpuSlots: 2,
+      maxBuilds: 1,
+      maxBrowsers: 3,
+      availableMemoryMiB: 8192,
+      reserveMemoryMiB: 512,
+      loadPerCpu: 0,
+      maxLoadPerCpu: 2,
+      draining: false,
+      browserHost: true,
+      browserBackend: "managed" as const,
+      browserExtensionReady: true,
+    };
+    await store.reportWorker(mac.id, report);
+    await store.reportWorker(pi.id, report);
+    const broker = new BrowserBroker(store);
+    const session = await store.createSession(
+      "fundraising",
+      "Pi login",
+      "demo",
+    );
+    await store.createTurn("pi-login", session.id, "Open my account");
+    await store.enqueue("pi-login");
+    const claimed = await store.claimForWorker(pi.id);
+    assert.ok(claimed);
+    const grant = {
+      workerId: pi.id,
+      turnId: "pi-login",
+      generation: claimed.claim.turn.generation,
+      expiresAt: Date.now() + 60000,
+      purpose: "tools" as const,
+    };
+    const status = await browserTool(grant, { action: "status" }, store);
+    assert.equal((status.result as { workerId: string }).workerId, pi.id);
+    const reading = browserTool(grant, { action: "read" }, store);
+    let loginCommand: BrowserAssignment | undefined;
+    for (let attempt = 0; !loginCommand && attempt < 100; attempt++) {
+      loginCommand = (await broker.poll(pi.id)).assignments[0];
+      if (!loginCommand) await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert(loginCommand);
+    await broker.complete(
+      pi.id,
+      loginCommand.command.id,
+      loginCommand.identity.generation,
+      {
+        status: "needs_login",
+        login: "rejected",
+        url: "https://accounts.google.com/v3/signin/rejected",
+      },
+    );
+    const readResult = await reading;
+    assert.equal(
+      (readResult.result as { status: string }).status,
+      "needs_login",
+    );
+    // Repeated model requests use the same pending input, rather than spawning turns.
+    await browserTool(grant, { action: "needs_login" }, store);
+    const requests = await store.inputsForSession(session.id);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].kind, "browser-login");
+    // Both hosts are healthy; the Pi task should use its own browser.
+    assert.equal((await broker.ensure("tech", pi.id)).workerId, pi.id);
+    let identity = await broker.ensure("business", mac.id);
+    assert.equal(identity.workerId, mac.id);
+    await broker.command("old-pending", identity.id, "read", {});
+    await store
+      .databaseConnection()
+      .prepare(
+        "UPDATE browser_identities SET stateCipher = ?, lastUrl = ?, frame = ?, frameAt = ? WHERE id = ?",
+      )
+      .run(
+        "mac-private-state",
+        "https://example.com/private",
+        "old-frame",
+        Date.now(),
+        identity.id,
+      );
+    const oldGeneration = identity.generation;
+    await store.reportWorker(mac.id, {
+      ...report,
+      browserBackend: "extension",
+      browserExtensionReady: false,
+    });
+    // The old lease is still fresh, but the extension is disconnected.
+    identity = await broker.ensure("business", pi.id);
+    assert.equal(identity.workerId, pi.id);
+    assert.ok(identity.generation > oldGeneration);
+    assert.equal(identity.stateCipher, null);
+    assert.equal(identity.lastUrl, null);
+    assert.equal(identity.frame, null);
+    assert.equal(identity.frameAt, null);
+    const old = await store
+      .databaseConnection()
+      .prepare("SELECT * FROM browser_commands WHERE id = ?")
+      .get("old-pending");
+    assert.equal(old?.status, "failed");
+    assert.equal(JSON.parse(String(old?.result)).execution, "not_started");
+    await assert.rejects(
+      broker.complete(mac.id, "old-pending", oldGeneration, {}),
+      /expired/,
+    );
+    await broker.command("pi-running", identity.id, "read", {});
+    await broker.poll(pi.id);
+    // Reconnecting the Mac does not steal the healthy Pi browser mid-task.
+    await store.reportWorker(mac.id, report);
+    assert.equal((await broker.ensure("business", mac.id)).workerId, pi.id);
+    await store
+      .databaseConnection()
+      .prepare("UPDATE workers SET seenAt = 1 WHERE id = ?")
+      .run(pi.id);
+    identity = await broker.ensure("business", mac.id);
+    assert.equal(identity.workerId, mac.id);
+    const interrupted = await store
+      .databaseConnection()
+      .prepare("SELECT status FROM browser_commands WHERE id = ?")
+      .get("pi-running");
+    assert.equal(interrupted?.status, "unknown_outcome");
+    // A healthy but idle old host does not pin a new task to the Mac.
+    await store.reportWorker(pi.id, report);
+    assert.equal((await broker.ensure("business", pi.id)).workerId, pi.id);
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -146,11 +282,32 @@ test("browser broker fences host ownership, excludes model capture during takeov
       /workspace/i,
     );
     const previousGeneration = browser.generation;
-    await broker.returnControl(browser.id, previousGeneration, session.id);
-    await broker.returnControl(browser.id, previousGeneration, session.id);
+    await broker.returnControl(
+      browser.id,
+      previousGeneration,
+      session.id,
+      true,
+    );
+    await broker.returnControl(
+      browser.id,
+      previousGeneration,
+      session.id,
+      true,
+    );
     assert.equal((await store.listTurns(session.id)).length, 1);
     assert.equal((await broker.get(browser.id)).mode, "agent");
     assert.equal((await broker.get(browser.id)).frame, null);
+    const inspecting = await broker.takeover(
+      browser.id,
+      user.getPublicKey().toString("base64"),
+    );
+    await broker.returnControl(browser.id, inspecting.generation, session.id);
+    await broker.returnControl(browser.id, inspecting.generation, session.id);
+    assert.equal(
+      (await store.listTurns(session.id)).length,
+      1,
+      "releasing control does not send a message",
+    );
   } finally {
     delete process.env.HARNESS_ENCRYPTION_KEY;
     await store.close();

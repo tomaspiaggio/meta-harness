@@ -3,6 +3,11 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HarnessError } from "@harness/core";
 import { dataDirectory } from "@harness/storage";
+import {
+  authorizeGoogleOwner,
+  googleAuthEnabled,
+  googleOwnerConfig,
+} from "./google-auth";
 import { authorizeOwner, hosted, publicOrigin } from "./hosted-auth";
 export function adminToken(): string {
   if (hosted())
@@ -32,9 +37,11 @@ export function sameOrigin(request: Request): void {
   const origin = request.headers.get("origin");
   if (
     (origin &&
-      (hosted()
-        ? origin !== publicOrigin()
-        : new URL(origin).host !== request.headers.get("host"))) ||
+      (googleAuthEnabled()
+        ? origin !== googleOwnerConfig().origin
+        : hosted()
+          ? origin !== publicOrigin()
+          : new URL(origin).host !== request.headers.get("host"))) ||
     request.headers.get("sec-fetch-site") === "cross-site"
   )
     throw new HarnessError("Cross-origin request rejected.", 403);
@@ -51,6 +58,7 @@ export function loginCookie(): string {
   return `${expires}.${signature(expires)}`;
 }
 export async function authorizeAdmin(request: Request): Promise<void> {
+  if (googleAuthEnabled()) return authorizeGoogleOwner(request);
   if (hosted()) return authorizeOwner(request);
   const host = process.env.HARNESS_BIND_HOST ?? "127.0.0.1";
   if (

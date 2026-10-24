@@ -281,59 +281,73 @@ Unknown external outcomes and interrupted native execution are not replayed mere
 because a different resource becomes available.
 
 This target is documented in [Browser resources across workers](browser-connection-options.md).
-Explicit resource registration/bindings, per-resource placement and extension
-adapters remain implementation work. In particular, the current global preference
-for personal Chrome must become an identity/resource-specific choice.
+Explicit resource registration/bindings and full identity-specific placement remain
+implementation work. Browser allocation now prefers the executing worker when an
+existing browser is idle, without a global personal-Chrome preference. Active
+commands, running turns using that browser and human takeover retain their host;
+offline/disconnected hosts cannot pin a workspace indefinitely.
+
+### Initial deployment login policy (2026-10-23)
+
+No browser task should require the Mac to remain online. Each eligible host keeps
+its own persistent browser login state. When the selected host is signed out,
+request interactive takeover for password/MFA entry on that host, including the
+Pi. Reuse valid sessions rather than asking on every task. Do not copy personal
+Chrome credentials or require an unlocked password vault. Password-manager
+automation is deferred; an optional future 1Password integration adds no current
+subscription requirement. Host relocation may require a new login and must still
+respect native interruption and unknown-outcome safeguards. This is the agreed
+policy. Broker host-loss and headless takeover are covered with fixtures; actual
+Pi account login remains a real-host validation gate.
 
 ### Current implementation
 
-A browser identity is independent of the agent worker. One eligible host/controller
-owns it at a time. Patchright starts only on demand and closes idle contexts. Browser
-access is available in every workspace without an enable step. Legacy stored
-`browser:false` values are ignored on read without rewriting other resource
-settings. Availability alone does not impose a browser execution profile or
-prevent Sandbox placement; an explicit browser task still needs suitable capacity.
-Managed browser hosts are headless by default. Mac workers with Chrome installed
-now default to `extension`. The Meta Harness Browser extension is loaded once and
-paired to the browser host's local worker with `pnpm browser:pair`. A small
-in-process loopback WebSocket/CDP relay authenticates that profile, binds its
-extension origin and connects the pinned Patchright client. Browser commands only
-reach extension-created background tabs. The extension never activates a tab or
-focuses a window; `Page.bringToFront` is a no-op. Chrome's normal extension debugger
-indicator can remain visible, but remote-debugging connection dialogs are not part
-of this path. The bridge rejects profile cookie export and browser-wide mutation
-commands. Existing authenticated state is used in place, not bundled/exported.
+A workspace browser identity has one host lease and ownership generation. New
+allocations prefer the agent's worker when eligible, while a healthy active
+browser/human takeover retains its host. Managed Patchright profiles are the
+normal path on every platform. The broker excludes extension/personal-Chrome
+backends from new placement. Existing extension source and pairing files are
+retained for compatibility, not used by the new UI or enrollment guide.
 
-Pairing and automatic reconnect survive worker relay restarts. Idle cleanup closes
-owned tabs while retaining an approved transport; worker shutdown disconnects the
-client and local relay without exiting Chrome. An unpaired resource reports the
-one-time setup steps; a previously paired offline browser asks for that profile to
-be opened, not another login or pairing. The profile pairing credential is a local
-restricted file and is not sent in worker reports, model context, URLs or git.
+The managed browser is a separate persistent profile, headless by default, with
+on-demand startup and idle cleanup. Supported Linux hosts may use a compatible
+system Chromium through HARNESS_BROWSER_EXECUTABLE. A slow startup counts as an
+active allocation, concurrent opens share the same launch, and a fresh starting
+lease has a bounded grace period before unused release. This prevents the Pi
+poller releasing a browser while its stream is still launching.
 
-Set `HARNESS_BROWSER_BACKEND=extension` on another compatible browser host to use
-this adapter. The extension is not Mac-specific. Use `managed` for isolated
-persistent/headless profiles. The older `personal-chrome` permission-based CDP
-adapter remains an explicit diagnostic option, not the default. It requires
-Chrome's remote-debugging Allow prompt; normal setup should not recommend it.
+Browser tools still use the durable command/operation ledger. The live owner view
+uses a separate ephemeral path: CDP screencast -> authenticated outbound worker
+WebSocket -> relay in the existing control launcher -> owner browser. No new
+resident daemon or public CDP port is introduced. Frames and direct interaction
+never pass through the SQL command queue. JPEG frames are change-driven, throttled
+and dropped under backpressure rather than accumulated. A closed view stops its
+screencast; the managed browser then follows the normal idle policy.
 
-Browser reads include bounded accessibility text, omitting form input values.
-They wait up to five seconds for the site's `aria-busy` loading markers to clear;
-an unfinished load is explicitly labeled as a partial snapshot, not absent data.
-`sheet_read` fetches the current signed-in Google Sheet's `htmlview/sheet` content
-within Chrome, preserving gid and account selection. The HTML shell alone contains
-no rows. Inert HTML parsing runs on the worker, outside the page's Trusted Types
-policy; no script executes and the site's policy is unchanged. Returned rows,
-columns, bytes and text are bounded. It neither publishes the sheet nor changes
-cells. Canvas editor text alone is not proof of cell access.
-Agent navigation URLs remain limited to 4 KB. Browser resource requests allow up
-to 64 KiB for applications such as Calendar, whose data-request URLs exceed 4 KB;
-both paths reject embedded credentials and private/control-plane addresses.
-Agent/browser workers may differ; identity-aware resource placement beyond the
-current worker report/broker selection remains planned.
+The owner may watch without taking control, and close without sending a message.
+Take control/Sign in establishes an exclusive generation-fenced manual lease;
+normal pointer, keyboard and paste events go directly over the stream. Esc
+releases control without a turn. Only explicit Continue task submits a continuation.
+Login waits remain pending on ordinary release. Each viewer creates ephemeral
+ECDH keys, so the relay sees encrypted frame/input payloads. Owner auth/origin and
+worker credentials are checked on upgrades; every input rechecks controller key,
+generation, enrollment and lease. Streams are periodically revalidated and fail
+closed on host loss/revocation. Human input/capture stay out of model history and
+browser-action records. Browser interaction failures are never automatically
+replayed.
 
-The browser card is hidden until explicitly opened or a human-control/login
-request needs attention. The composer provides an Open browser button.
+The view identifies its host, connection state and input acknowledgement latency.
+Agent actions have bounded step summaries and optional screenshots in the
+conversation. Manual input is excluded and fill summaries omit values. Agent
+result images retain the existing private command storage for up to 24 hours;
+the UI fetches the latest 12 steps and uses a cursor to avoid repeatedly transferring
+unchanged screenshots. This is recent activity, not an unbounded video recording.
+
+Reads include bounded accessibility text with form values omitted. Sheets CRM
+reads use authenticated htmlview/sheet content, parsed outside the page's Trusted
+Types policy, with row/column/byte bounds. Network isolation still rejects private,
+control-plane and credential-bearing destinations; the loopback exemption is only
+for explicitly configured isolated acceptance fixtures.
 
 Tool operations use stable logical IDs and a session-scoped ledger; old generations,
 stopped turns and manual-control leases reject new agent admissions. Unfinished
@@ -350,14 +364,12 @@ unknown unless there is a completion receipt. Legacy Chrome-connection failures
 are reconciled only when the failed command contains the exact pre-execution
 connection error; generic failures/timeouts are insufficient evidence.
 
-The UI receives screenshots/URL and can take over the same browser for login/MFA.
-The initial transport is an encrypted JPEG/input relay, a measured alternative to
-noVNC that needs no extra VNC daemon or public CDP/WebSocket port. Only the UI and
-browser worker hold its ephemeral transport key. Agent input/model capture pause
-during manual control; return clears the manual view and submits a continuation.
-Worker enrollment/browser generations and input IDs make retries/failures explicit.
-Managed-profile cookies and supported local storage are encrypted outside the database key backup;
-OS/hardware-bound auth, full profiles and service-specific relocation remain gates.
+The old encrypted queued-manual API remains for older clients and fixtures, but
+is not the current live UI transport. Native provider interruption behavior and
+external-effect reconciliation are unchanged. Browser supported-state backups
+remain encrypted; profiles and authentication are host-local in the initial
+policy. A new host may require manual login. Website/device-bound authentication
+and real Google sign-in remain service-specific validation gates.
 
 Sandbox is optional, cold and disabled by default. A workspace capacity policy plus
 deployment configuration allow provisioning only compatible work. The manager
@@ -366,6 +378,50 @@ pinned image, and enrolls an expiring identity scoped to one turn. Provider secr
 are fetched only for that owned turn. Browser-dependent/non-portable work waits;
 finished/expired capacity revokes and stops. Actual cloud startup/auth/connectivity,
 timeouts, spending and teardown must be validated before enabling real tasks.
+
+## Google owner authentication
+
+`HARNESS_AUTH=google` selects Better Auth independently of `HARNESS_HOSTED`.
+The local Pi can retain SQLite; no additional DB connection or daemon is needed.
+Google's authorization-code flow uses the configured canonical origin and exact
+callback `/api/auth/callback/google`. Require a verified email from the explicit
+owner allowlist at profile acceptance and on every protected request. Password
+signup, account linking and direct client ID-token login are not exposed.
+
+Better Auth validates encrypted eight-hour session cookies. The existing hashed
+`owner_sessions` ledger makes revocation immediate across processes/restarts;
+Google access/refresh tokens are not retained in an account cookie. Legacy token
+login, owner bearer tokens and old owner cookies cannot bypass Google mode.
+Worker keys and attempt-scoped tool identities keep their separate auth paths.
+
+Only the required auth endpoints pass the public gateway. Google mode forces that
+gateway even for a loopback listener behind Caddy; Next/Workflow callbacks remain
+on a separate private port. Trust only the configured origin for browser writes.
+The gateway replaces caller-supplied proxy IP headers before auth rate limiting.
+Missing selected-mode settings fail closed. Google mode is enabled only after the
+origin, provider client and owner allowlist have been configured. The public auth
+status endpoint reports readiness without credentials or account information,
+including while configuration is incomplete. The login page shows a Google setup
+message instead of an administrator-token form; it does not change the selected
+server access policy or silently enable anonymous access.
+
+## Coding repositories and handoff (agreed follow-up)
+
+Coding sessions bind repository URLs, isolated worktrees, branch/upstream,
+base/head commit IDs and current PR URLs/numbers. A local commit is portable only
+after pushing or bundling its git objects; the next host restores the exact
+revision. An unconstrained pull can select a different revision.
+
+Dirty state includes the index, unstaged changes and untracked files. Capture it
+consistently with execution files and native provider state, or retain worker
+affinity and pause if that host disappears. Record handoff readiness and uncertain
+external effects. A clean tree does not imply that interrupted native execution
+can be automatically retried. Begin with transfers at safe turn boundaries.
+
+The session header should show linked repo/PR chips, branch, clean/dirty state and
+current worker. Expand for commit IDs, per-repo details and handoff blockers. A
+session may use multiple repositories and PRs. These are tracked implementation
+requirements, not guarantees of the current generic file checkpoints.
 
 ## Temporal boundary
 
@@ -395,3 +451,71 @@ are outside this deletion operation. Published shared decisions remain canonical
 source session/turn links are detached, and the workspace ID remains historical
 provenance. A persistent bootstrap marker prevents deleted default workspaces
 from being recreated after a restart.
+
+## Browser account walls, activity and downloads
+
+Known Google and LinkedIn sign-in walls return `needs_login` and create a durable
+input request. They do not return page text/images to the agent or imply that CRM
+or calendar data was checked. Google may reject an automated browser even when
+manual control works; Patchright does not establish account compatibility.
+
+Agent actions keep timestamped owner history with short action labels, target
+URLs and post-action thumbnails (including reads). Read thumbnails are retained
+for the UI without adding model vision input. Human frames and keystrokes remain
+on the ephemeral encrypted stream; sign-in pages have no history thumbnail.
+
+Managed browsers accept downloads into a private per-profile directory. Up to four
+completed files of at most 8 MiB each are retained; transfers time out after one
+minute. These are retention/retrieval limits, not a hard temporary disk quota while
+Chromium receives a file. File contents are excluded from tool results, database
+records and attachments. An owner with current manual control can retrieve a file
+through authenticated, generation-checked encrypted stream requests in 64 KiB
+chunks. A download is local to its browser worker, not automatically replicated.
+
+Linux workers may enable `HARNESS_BROWSER_VIRTUAL_DISPLAY=1` with Xvfb and xauth
+installed. Each active managed profile gets an authenticated private display and
+headed Chromium. Display processes are created on demand and terminated with the
+owned browser. This never attaches to the user's desktop or disables account
+security. Headless mode remains the default elsewhere; a headed display is a
+compatibility option, not a promise that Google permits automation.
+
+
+Development routes only the same-origin `/_next/hmr` and
+`/_next/webpack-hmr` WebSocket upgrades to the private Next server. The browser
+stream relay still owns `/api/browser-stream`; unknown/internal upgrades are
+rejected, and production never forwards HMR. Forwarded identity headers are
+sanitized on both HTTP and HMR traffic, and gateway shutdown closes its tunnels.
+Next's development client needs this connection to finish startup: dropping it
+can leave login at its server-rendered loading state and trigger reload loops.
+
+## Integration collections
+
+The shared integration definition/connection/workspace-binding registry is
+engine-independent. The authenticated harness gateway derives workspace identity
+from the attempt grant, projects namespaced schemas/descriptions and invokes a
+registered adapter on demand in the control/API process. Native adapters and MCP
+HTTP collections share ownership, revision, explicit tool-subset and receipt
+policy. Known pre-action rejection can be explicitly retried; ambiguous external
+effects cannot. A physical attempt token fences receipt finalization. Active I/O
+rechecks stop and revoked grants and conservatively records unknown outcomes.
+
+The MCP HTTP adapter uses a cold bounded session with DNS-pinned destinations and
+server-side secret references; its protocol/session state does not enter Workflow
+history or native provider environment. Stdio/remote private-host execution,
+upstream OAuth and durable protocol tasks remain later capabilities. Eve remains
+an architectural reference and is not a runtime dependency. See the
+[integration contract](integration-contract.md) and
+[HTTP compatibility matrix](mcp-connections-plan.md#shipped-http-slice-2026-10-23).
+
+## Native resource integration execution
+
+Google Workspace read/search uses the same integration definitions, account
+connections, revisioned workspace bindings, tool descriptors and operation receipts
+as other collections. The control/API process composes engine-independent adapters
+from `packages/integrations`; no provider loop, browser dependency or new resident
+service is introduced. Google resource OAuth is separate from owner identity login,
+and encrypted refresh tokens remain in the control-process broker. Account-scoped
+leases serialize refresh rotation without replaying HTTP within database transaction
+retries. Explicit Gmail label, file, sheet range and calendar allowlists supplement
+provider scopes. See [Google operations](google-integrations.md) for the scope map,
+recovery process and real-provider deployment gates. Eve remains a reference only.

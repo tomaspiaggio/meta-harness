@@ -13,6 +13,13 @@ import { Input } from "@/components/ui/input";
 import { ModelPicker } from "../model-picker";
 import { ErrorNote, PageHeading, Shell, useTree } from "../shell";
 import { WorkerSetup } from "../worker-setup";
+import { GoogleIntegrationSetup } from "./GoogleIntegrationSetup";
+import { GoogleWorkspaceLimits } from "./GoogleWorkspaceLimits";
+import { Integrations } from "./integrations";
+import {
+  McpConnectionSettings,
+  McpIntegrationSetup,
+} from "./McpIntegrationSetup";
 export default function Page() {
   return (
     <Shell>
@@ -67,6 +74,11 @@ function Settings() {
   const [workerUrl, setWorkerUrl] = useState("");
   useEffect(() => setWorkerUrl(window.location.origin), []);
   const [workers, setWorkers] = useState<WorkerRecord[]>([]);
+  const [workerHandoff, setWorkerHandoff] = useState<{
+    markdown: string;
+    filename: string;
+    copied: boolean;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [session, setSession] = useState("");
   const [topic, setTopic] = useState("");
@@ -154,6 +166,22 @@ function Settings() {
     } finally {
       setBusy(false);
     }
+  }
+  async function copyWorkerHandoff(markdown: string, filename: string) {
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(markdown);
+      copied = true;
+    } catch {
+      // The enrollment already succeeded. Keep the same handoff for manual copy
+      // or download when clipboard access requires another click or HTTPS.
+    }
+    setWorkerHandoff({ markdown, filename, copied });
+    setNotice(
+      copied
+        ? "Copied. Paste to agent on your new device."
+        : "Device enrolled. Copy the setup below and paste to agent on your new device.",
+    );
   }
   return (
     <section className="mx-auto grid max-w-3xl gap-5 p-6">
@@ -272,50 +300,38 @@ function Settings() {
               placeholder="America/Los_Angeles"
             />
           </label>
-          <p className="text-xs text-muted-foreground">
-            Browser tools are available in every workspace. For your signed-in
-            Chrome, install and pair the Meta Harness Browser extension once. It
-            works in background tabs without remote-debugging approval dialogs.
-            Other capable workers can host managed browsers.
-          </p>
           <div className="grid gap-2 rounded border p-3 text-sm">
-            <strong>Connect your signed-in browser once</strong>
+            <strong>Managed browser on each worker</strong>
             <p>
-              Patchright is the Playwright-compatible driver that runs browser
-              actions. The extension connects it to your existing signed-in
-              Chrome profile without repeated remote-debugging approval dialogs.
-              A separate managed browser also uses Patchright, but has its own
-              logins and does not inherit your everyday Chrome sessions.
+              Patchright runs a dedicated persistent browser profile. It does
+              not use your everyday Chrome, an extension, or another machine's
+              logins.
             </p>
             <ol className="list-decimal space-y-1 pl-5">
               <li>
-                On the browser host, run <code>pnpm install</code> and{" "}
-                <code>pnpm --filter @harness/browser-extension build</code>.
+                On the browser host run <code>pnpm browser:install</code>. On a
+                Pi with compatible system Chromium, set{" "}
+                <code>HARNESS_BROWSER_EXECUTABLE=/usr/bin/chromium</code>.
               </li>
               <li>
-                Open <code>chrome://extensions</code>, turn on Developer mode,
-                choose Load unpacked, and select{" "}
-                <code>apps/browser-extension/dist</code>.
+                Use <code>HARNESS_BROWSER_BACKEND=managed</code> and restart
+                that worker. No extension pairing or remote-debugging approval
+                is needed.
               </li>
               <li>
-                Start that worker. Run <code>pnpm browser:pair</code> in the
-                same checkout and worker environment. For an enrolled worker,
-                use the same credential file:
-                <pre className="mt-2 overflow-x-auto rounded bg-muted p-3 text-xs">
-                  {
-                    "HARNESS_WORKER_TOKEN_FILE=~/.config/meta-harness/worker.json pnpm browser:pair"
-                  }
-                </pre>
+                Open the browser from a conversation to watch live. Click Take
+                control or Sign in, then click and type directly in the browser
+                view.
               </li>
               <li>
-                Click the Meta Harness Browser extension icon, paste the pairing
-                code there and choose Connect. Keep the code out of chat.
+                Press Esc to release control without sending a message. Continue
+                task explicitly resumes an agent waiting for login.
               </li>
             </ol>
             <p>
-              Pairing survives worker/browser reconnects. Your account sessions
-              remain in that browser. You can disconnect it from the extension
-              at any time.
+              Each host retains its own sessions. If a new host needs
+              authentication, sign in there through the encrypted view. Never
+              paste passwords into chat.
             </p>
           </div>
           <label className="grid gap-1 text-sm">
@@ -361,12 +377,28 @@ function Settings() {
           </Button>
         </CardContent>
       </Card>
+      <Integrations
+        setup={
+          <>
+            <GoogleIntegrationSetup />
+            <McpIntegrationSetup />
+          </>
+        }
+        connectionSetup={(connection) =>
+          connection.adapter === "mcp" ? (
+            <McpConnectionSettings connection={connection} />
+          ) : connection.adapter === "native" &&
+            connection.config.adapterId === "google" ? (
+            <GoogleWorkspaceLimits connectionId={connection.id} />
+          ) : null
+        }
+      />
       <Card>
         <CardHeader>
           <CardTitle>Workers</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
-          <WorkerSetup name={name} />
+          <WorkerSetup />
           <label htmlFor="worker-control-url" className="grid gap-1 text-sm">
             Control URL reachable from the worker
             <Input
@@ -380,8 +412,8 @@ function Settings() {
           <p className="text-xs text-muted-foreground">
             For another machine, use the control plane’s HTTPS address on your
             private network. localhost and 127.0.0.1 refer to the worker itself.
-            This address is stored in the downloaded credential; it does not
-            expose or reconfigure the server.
+            This address is included in the copied setup; it does not expose or
+            reconfigure the server.
           </p>
           <div className="flex gap-2">
             <Input
@@ -394,30 +426,84 @@ function Settings() {
               disabled={busy || !name.trim() || !workerUrl.trim()}
               onClick={() =>
                 void perform(async () => {
-                  const credential = await api("workers", "POST", {
-                    name,
-                    serverUrl: workerUrl.trim(),
-                  });
-                  const url = URL.createObjectURL(
-                    new Blob([JSON.stringify(credential, null, 2)], {
-                      type: "application/json",
+                  const response = await fetch("/api/workers", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      name,
+                      serverUrl: workerUrl.trim(),
+                      format: "markdown",
                     }),
-                  );
-                  const link = document.createElement("a");
-                  link.href = url;
-                  link.download = `${name.replace(/[^a-zA-Z0-9_-]/g, "-")}-worker.json`;
-                  link.click();
-                  URL.revokeObjectURL(url);
+                  });
+                  if (!response.ok) {
+                    const result = await response.json();
+                    throw new Error(result.error ?? "Enrollment failed.");
+                  }
+                  const markdown = await response.text();
+                  const filename =
+                    response.headers
+                      .get("content-disposition")
+                      ?.match(/filename="([^"]+)"/)?.[1] ?? "worker-setup.md";
+                  await copyWorkerHandoff(markdown, filename);
                   setWorkers(await api("workers"));
-                  setNotice(
-                    "Credential downloaded. Store it privately; revoke it here if it is lost.",
-                  );
                 })
               }
             >
               Enroll worker
             </Button>
           </div>
+          {workerHandoff && (
+            <div className="grid gap-3 rounded border p-3 text-sm">
+              <h3 className="font-medium">Paste to agent</h3>
+              <p className="text-muted-foreground">
+                {workerHandoff.copied
+                  ? "Setup instructions copied. Paste them into the coding agent on your new device; it will guide you through installation and login."
+                  : "Automatic copy was blocked. Use Copy setup, or select and copy the instructions below. Your device is already enrolled."}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  disabled={busy}
+                  onClick={() =>
+                    void copyWorkerHandoff(
+                      workerHandoff.markdown,
+                      workerHandoff.filename,
+                    )
+                  }
+                >
+                  {workerHandoff.copied ? "Copy again" : "Copy setup"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    const url = URL.createObjectURL(
+                      new Blob([workerHandoff.markdown], {
+                        type: "text/markdown; charset=utf-8",
+                      }),
+                    );
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.download = workerHandoff.filename;
+                    document.body.append(link);
+                    link.click();
+                    link.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                  }}
+                >
+                  Download Markdown
+                </Button>
+              </div>
+              {!workerHandoff.copied && (
+                <textarea
+                  aria-label="Agent setup instructions"
+                  readOnly
+                  rows={6}
+                  value={workerHandoff.markdown}
+                  onFocus={(event) => event.currentTarget.select()}
+                  className="rounded border bg-background p-2 font-mono text-xs"
+                />
+              )}
+            </div>
+          )}
           {workers.map((worker) => (
             <div
               key={worker.id}

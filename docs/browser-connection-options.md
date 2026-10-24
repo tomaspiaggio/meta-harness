@@ -1,3 +1,7 @@
+> 2026-10-23 update: the normal implementation now uses dedicated managed
+> Patchright profiles and a direct live stream. Extension reuse below is historical
+> exploration, not current setup. See [live browser design](browser-live-view.md).
+
 # Browser resources across workers
 
 Updated: 2026-10-22. Host-independent resource model agreed. The initial extension transport is now implemented and fixture-tested; real-account
@@ -77,8 +81,9 @@ architecture, memory and lifecycle determine eligibility.
 | Browser lease | Exclusive controller, ownership generation and session-owned tabs; independent of agent placement. |
 
 These are target domain responsibilities. Explicit resource registration and
-binding/placement are implementation tasks; the current broker still selects
-hosts from worker reports and has a global personal-Chrome preference.
+identity bindings remain implementation tasks. The current broker selects healthy
+hosts from worker reports, prefers the task worker for new/idle work and excludes
+disconnected extensions. It no longer imposes a global personal-Chrome preference.
 
 ```mermaid
 flowchart TD
@@ -111,8 +116,9 @@ without moving the agent into that Sandbox.
 Browser placement considers the requested identity, allowed workspaces/domains,
 backend capabilities, validated authentication, host availability, free browser
 slots, memory/CPU budget, architecture, lifetime and durability requirements.
-Personal-Chrome preference must be scoped to the requested resource/identity;
-an unavailable desktop must not block unrelated browser work on eligible hosts.
+An unavailable desktop must not block browser work on eligible hosts. Each host
+uses its own persistent login state; request manual takeover when signed out.
+Account-specific resource bindings remain a separate follow-up.
 Return a concrete wait reason when no resource can satisfy the request.
 
 Pair existing profiles during setup. Keep connection credentials in browser-host

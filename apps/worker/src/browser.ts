@@ -22,6 +22,8 @@ export async function browserWorker(
         for (const identity of work.identities)
           if (
             identity.mode === "agent" &&
+            (identity.status !== "starting" ||
+              Date.now() - identity.updatedAt > 10000) &&
             !host.active().some((item) => item.id === identity.id) &&
             !work.assignments.some((item) => item.identity.id === identity.id)
           )
@@ -78,6 +80,9 @@ export async function createBrowserHost(
   const host = new BrowserHost(root, {
     headless: process.env.HARNESS_BROWSER_HEADLESS !== "0",
     idleMs: Number(process.env.HARNESS_BROWSER_IDLE_MS ?? 120000),
+    allowTestLoopback:
+      process.env.HARNESS_TEST_BROWSER_LOOPBACK === "1" &&
+      /fixture/.test(process.env.HARNESS_DATA_DIR ?? ""),
   });
   await host.initialize();
   return host;

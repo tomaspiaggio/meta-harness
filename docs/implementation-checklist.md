@@ -567,3 +567,202 @@ Final validation on this Mac (Node 24, production Next.js build):
 - [x] Pass `pnpm check`, browser-enabled `pnpm test` (87 passed; 3 optional
   integrations skipped), `pnpm build` and isolated local `pnpm smoke`.
   Restart the personal worker with the fix and retain all real application data.
+
+2026-10-22 — agent-led worker onboarding:
+
+- [x] Ask only for the device name and reachable control URL in worker enrollment.
+- [x] Download a private Markdown handoff containing the scoped worker credential,
+  clone/setup commands and instructions for the device's coding agent.
+- [x] Cover provider/device login, model-free connectivity, optional paired Chrome
+  or managed browsers, agent-only Pi operation and final Online verification.
+- [x] Preserve JSON API compatibility, enrollment authorization and existing data.
+- [x] Validate the actual headless download and authenticate a fixture worker
+  using only the credential embedded in the generated guide.
+- [x] Make enrollment copy the setup prompt and show "Paste to agent". Retain an
+  optional Markdown download and manual-copy recovery if clipboard access is
+  blocked, without enrolling the device twice.
+
+Google login and Pi control deployment:
+
+- [x] Add Better Auth Google login independently of hosting/database choice.
+  Enforce verified-email allowlisting and disable legacy token bypass in Google mode.
+- [x] Use encrypted eight-hour cookies plus the existing persistent owner-session
+  ledger for immediate revocation; retain worker authentication separately.
+- [x] Keep internal Workflow routes behind the gateway with a loopback HTTPS proxy.
+- [x] Prepare a Headscale DNS/HTTPS, Google OAuth, data-preserving control migration,
+  systemd startup and worker reconnection runbook in `deploy/pi-headscale.md`.
+- [x] Pass `pnpm check`, `pnpm test` (87 passed, 7 optional integrations skipped),
+  `pnpm build`, local Workflow smoke and headless Google auth/UI smoke. Exercise
+  signed OAuth fixtures, verified-owner rejection and persistent revocation;
+  actual Google login remains a deployment gate below.
+- [ ] Choose the owned domain and configure Headscale DNS and its HTTPS certificate.
+- [ ] Create the Google OAuth web client and enable the allowed owner account.
+- [ ] Copy quiescent Mac control data to the Pi; preserve keys and verify records.
+- [ ] Install/enable the Pi control service and reverse proxy; test restart/reboot.
+- [ ] Verify actual owner login, workers and schedules on the Pi deployment.
+
+Repository-aware coding sessions (agreed):
+
+- [ ] Bind multiple repositories/worktrees, branches, exact commits and PRs to
+  each coding session; track staged, unstaged and untracked state.
+- [ ] Display linked repo/PR chips, branches, dirty status and current worker in
+  the session header; expand for commit details and migration blockers.
+- [ ] Gate handoff on pushed/bundled commits and a consistent dirty-file/native
+  checkpoint; retain affinity or pause until restoration is safe.
+- [ ] Verify exact-revision restoration on another host, dependencies, native
+  continuation and ownership fencing without replaying interrupted native turns.
+
+Next session — Google meta-test resource access:
+
+- [x] Record the observed Pi/browser/revision blockers and tomorrow's ordered
+  plan in `docs/next-session-resource-access.md`; preserve existing data and auth.
+- [ ] Provide a persistent Pi browser and interactive login; verify authenticated
+  work continues with the Mac unavailable. Target Mac-local config edits explicitly.
+- [ ] Implement identity-specific resource readiness and visible waiting states.
+- [x] Simplify login policy: reuse each host's valid session, ask for manual login
+  when needed, require no Mac browser or password-manager subscription. Defer
+  optional 1Password integration; do not implement Dashlane automation.
+- [ ] Exercise host loss, supported login persistence, authorization, private
+  takeover and payment-approval fixtures before unattended authenticated work.
+
+2026-10-23 — host-local browser login fix:
+
+- [x] Reproduce the global personal-Chrome preference blocking another available
+  host; remove it and prefer the executing worker's browser for new/idle work.
+- [x] Exclude disconnected extensions, reassign stale owners and fence old commands;
+  preserve active command/turn and human takeover ownership on healthy hosts.
+- [x] Keep login state host-local on reassignment, clear stale previews and display
+  the actual selected browser host/backend in the UI.
+- [x] Serve manual-login instructions through the MCP browser tool, including for
+  older workers; retain encrypted takeover and explicit continuation.
+- [x] Verify broker/tool placement, login requests, host-loss fencing, headless
+  Chromium credential entry, UI sign-in/return and local Workflow execution.
+- [ ] Complete a real Google login on the Pi through takeover, then retry OAuth
+  client creation. No Google client/secret has been created by these tests.
+
+2026-10-23 — managed Patchright live browser replacement:
+
+- [x] Replace extension-default setup with dedicated managed profiles on each
+  host; keep personal Chrome and existing credentials untouched.
+- [x] Stream encrypted CDP frames/input over WebSockets in the existing launcher,
+  removing frame/keystroke HTTP command-queue round trips.
+- [x] Provide a live viewport with direct click/type/paste, keyboard navigation,
+  Esc release, explicit continuation, host/connection/latency display and reconnect.
+- [x] Separate watching/releasing control from submitting a new session message.
+- [x] Show recent agent steps/screenshots without recording manual login input;
+  bound retention and avoid resending unchanged screenshots.
+- [x] Reproduce/fix the Pi startup race: retain fresh leases, count pending launches
+  as active, and share concurrent profile creation.
+- [x] Verify actual Pi managed Chromium through the full headless owner UI: frames,
+  direct typing, password paste/backspace, button click, Esc, reopen, no unsolicited
+  messages and agent-action screenshot history.
+- [x] Roll the verified code/config to the personal control and Pi worker services
+  and verify health without interrupting active work. Original worker IDs, native
+  auth/cache paths and real records retained; original private configs backed up.
+- [ ] Complete real Google sign-in/OAuth client setup; controlled fixture tests
+  neither create Google credentials nor establish real-account authentication.
+
+Live-view final verification:
+
+- [x] Full final Pi UI run: 14–16 frames/1.2 seconds and 40–42 ms input ack on
+  this tailnet; five expected field/button events independently verified on Pi.
+- [x] Login request, Sign in, Esc without a message, retained pending login,
+  explicit Continue task producing one turn, and phone-width layout passed.
+- [x] `pnpm check`, browser-enabled `pnpm test` (94 passed, 3 optional integrations
+  skipped), `pnpm build`, authenticated isolated `pnpm smoke` and live UI smoke pass.
+
+2026-10-23 — browser schedule readiness:
+
+- [x] Readable single-column activity, chronological timestamps, wrapped targets,
+  named click/fill targets, explicit missing-preview and failed-step feedback.
+- [x] Capture read thumbnails for owner history without adding model vision input;
+  omit login-wall captures and preserve encrypted human-only streaming.
+- [x] Turn known account walls into durable input requests instead of empty reads.
+- [x] Enable private worker-local downloads and encrypted owner retrieval; never
+  publish credential file contents into model/tool/database history.
+- [x] Add optional authenticated on-demand Linux display for headed Chromium.
+- [x] Verify full owner UI download with multiple encrypted chunks on Mac and Pi.
+- [x] Verify headed display lifecycle and full owner controls on the actual Pi.
+- [ ] Complete real Google sign-in and create/download the OAuth credential.
+- [ ] Rehearse the existing CRM briefing against authenticated sources before
+  resuming its paused weekday schedule. Do not send outreach messages.
+
+Browser readiness verification: `pnpm check`, browser-enabled `pnpm test` (96
+passed, three optional tests skipped), `pnpm build`, authenticated isolated
+`pnpm smoke`, and actual Pi headed browser owner-UI acceptance passed. Pi runs
+showed 14–15 frames per 1.2 seconds and 78–146 ms input acknowledgements. A
+90,000-byte payload plus credential-shaped metadata crossed multiple encrypted
+chunks intact. Original worker credentials, caches, profiles and paused real
+schedule were retained. No live Google credential or CRM action was established.
+
+
+2026-10-23 — Google login screen:
+
+- [x] Remove the access-token input and token submission from the web login page.
+- [x] Show Google sign-in with a disabled button and setup-pending explanation
+  until the selected Google authentication configuration is complete.
+- [x] Serve local Google setup/readiness even when credentials are missing,
+  instead of failing Next startup before the login page can render.
+- [x] Keep public readiness metadata free of OAuth credentials and owner data;
+  retain fail-closed protected routes and separate worker authentication.
+- [ ] Supply real Google OAuth client credentials and verify the allowed owner
+  can sign in. Removing the token form does not complete OAuth provisioning.
+
+Google login screen verification: `pnpm check`, `pnpm test` (92 passed, seven
+optional tests skipped), `pnpm build`, isolated production headless
+`scripts/login-screen-smoke.mjs`, and isolated `pnpm smoke` passed. Missing Google
+credentials produce a usable setup page while protected APIs deny access and an
+enrolled fixture worker keeps reporting. Personal auth configuration was not
+changed; no OAuth credentials or owner sessions were invented.
+
+
+2026-10-23 — development login hydration:
+
+- [x] Reproduce the stuck server-rendered login and rejected HMR handshake.
+- [x] Forward same-origin development HMR through the existing gateway; keep
+  production, cross-origin and internal upgrades blocked and sanitize proxy headers.
+- [x] Add a gateway regression and an actual Next dev + headless agent-browser
+  fixture checking Google-button hydration, worker reports and idle page stability.
+- [x] Verify the real localhost login shows the enabled Google button and remains
+  mounted without additional auth checks while the existing workers report.
+
+
+2026-10-23 — account avatar and sign-out:
+
+- [x] Add a compact header account menu with the Google photo, initials fallback,
+  name/email and Sign out; support Escape, keyboard use and phone layouts.
+- [x] Expose only name/email/HTTPS image from an authenticated, non-cacheable
+  profile route, with the existing owner allowlist and revocation checks.
+- [x] Keep the menu open with an actionable error after failed sign-out; clear the
+  current app session and navigate to login only after successful sign-out.
+- [x] Verify actual Google-cookie profile output and sign-out revocation using
+  signed SDK fixtures, including rejection of saved cookies after logout.
+- [x] Verify headless generic-account UI, Escape/mobile layout, offline failure
+  recovery and real owner-cookie logout on an isolated production stack.
+
+Account validation: `pnpm check`, `pnpm test` (93 passed, seven optional skips),
+`pnpm build`, `scripts/account-menu-smoke.mjs` and isolated `pnpm smoke` passed.
+Real user login was not signed out by these tests.
+
+2026-10-23 — unified tools release and decision provenance:
+
+- [x] Combine the shared registry, HTTP MCP transport and native Google adapters
+  with the current browser, Google owner login and account menu.
+- [x] Keep both setup flows in Settings → Integrations, both adapter registrations,
+  storage schemas, Prisma relations and tool grants in the merged release.
+- [x] Admit only the explicit integration API routes through the gateway and bind
+  Google resource consent to the verified Better Auth owner session.
+- [ ] Add decision-source conversation lookup: retain workspace/session/turn
+  provenance and expose a bounded, paginated tool keyed by decision ID. Agents
+  should fetch relevant source turns on demand when reviewing the rationale.
+- [ ] Enforce source-conversation visibility independently of shared decision
+  visibility; return an explicit unavailable result for deleted or inaccessible
+  sources. Exclude credential-entry frames/secrets and avoid full transcript
+  injection. Test allowed cross-workspace lookup, revoked grants and missing data.
+
+Unified release validation: `pnpm check` (ten packages), `pnpm test` (124 passed,
+seven optional tests skipped), `pnpm build`, Prisma generation, `pnpm smoke:mcp`,
+`pnpm smoke:google` and the development login stability fixture passed. Both
+transport suites exercised the authenticated production gateway plus the common
+Workflow smoke. A headless owner Settings check showed both setup flows and
+verified authenticated endpoints, anonymous denial and phone-width layout.

@@ -23,6 +23,14 @@ import {
 } from "@harness/core/browser";
 import { stableJson } from "@harness/core/idempotency";
 import {
+  type IntegrationConnection,
+  type IntegrationDefinition,
+  parseIntegrationBinding,
+  parseIntegrationConnection,
+  parseIntegrationDefinition,
+  type WorkspaceIntegrationBinding,
+} from "@harness/core/integrations";
+import {
   type AgentDefaults,
   defaultAgentDefaults,
   parseAgentDefaults,
@@ -84,6 +92,190 @@ export class HarnessStore extends ControlStore {
         VALUES ('turn:' || NEW.id, NEW.sessionId, NEW.status, NEW.id, CAST(unixepoch('subsec') * 1000 AS INTEGER), CAST(unixepoch('subsec') * 1000 AS INTEGER));
         INSERT OR IGNORE INTO workflow_wakeups(turnId, createdAt) VALUES (NEW.id, CAST(unixepoch('subsec') * 1000 AS INTEGER)); END;`);
     }
+  }
+  async listIntegrationDefinitions(): Promise<IntegrationDefinition[]> {
+    return (
+      await this.db
+        .prepare("SELECT record FROM integration_definitions ORDER BY id")
+        .all()
+    ).map((row) => parseIntegrationDefinition(JSON.parse(String(row.record))));
+  }
+  async listIntegrationConnections(): Promise<IntegrationConnection[]> {
+    return (
+      await this.db
+        .prepare("SELECT record FROM integration_connections ORDER BY id")
+        .all()
+    ).map((row) => parseIntegrationConnection(JSON.parse(String(row.record))));
+  }
+  async listIntegrationBindings(
+    workspaceId?: string,
+  ): Promise<WorkspaceIntegrationBinding[]> {
+    const rows = workspaceId
+      ? await this.db
+          .prepare(
+            "SELECT record FROM integration_bindings WHERE workspaceId = ?",
+          )
+          .all(workspaceId)
+      : await this.db.prepare("SELECT record FROM integration_bindings").all();
+    return rows.map((row) =>
+      parseIntegrationBinding(JSON.parse(String(row.record))),
+    );
+  }
+  private async integrationRevision(
+    table: string,
+    id: string,
+    revision: string,
+    expected?: string,
+  ) {
+    const row = await this.db
+      .prepare(`SELECT revision FROM ${table} WHERE id = ?`)
+      .get(id);
+    if (
+      row
+        ? row.revision !== expected || revision === expected
+        : expected !== undefined
+    )
+      throw new HarnessError(
+        "Integration revision conflict. Refresh and retry.",
+        409,
+      );
+  }
+  async putIntegrationDefinition(
+    value: unknown,
+    expectedRevision?: string,
+  ): Promise<IntegrationDefinition> {
+    const record = parseIntegrationDefinition(value);
+    return this.transaction(async () => {
+      await this.integrationRevision(
+        "integration_definitions",
+        record.id,
+        record.revision,
+        expectedRevision,
+      );
+      await this.db
+        .prepare(
+          "INSERT INTO integration_definitions(id,revision,record) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,record=excluded.record",
+        )
+        .run(record.id, record.revision, JSON.stringify(record));
+      return record;
+    });
+  }
+  async putIntegrationConnection(
+    value: unknown,
+    expectedRevision?: string,
+  ): Promise<IntegrationConnection> {
+    const record = parseIntegrationConnection(value);
+    return this.transaction(async () => {
+      await this.integrationRevision(
+        "integration_connections",
+        record.id,
+        record.revision,
+        expectedRevision,
+      );
+      if (
+        !(await this.listIntegrationDefinitions()).some(
+          (d) => d.id === record.integrationId,
+        )
+      )
+        throw new HarnessError("Integration definition not found.", 404);
+      await this.db
+        .prepare(
+          "INSERT INTO integration_connections(id,integrationId,revision,record) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET integrationId=excluded.integrationId,revision=excluded.revision,record=excluded.record",
+        )
+        .run(
+          record.id,
+          record.integrationId,
+          record.revision,
+          JSON.stringify(record),
+        );
+      return record;
+    });
+  }
+  async putIntegrationBinding(
+    value: unknown,
+    expectedRevision?: string,
+  ): Promise<WorkspaceIntegrationBinding> {
+    const record = parseIntegrationBinding(value);
+    return this.transaction(async () => {
+      await this.getWorkspace(record.workspaceId);
+      const old = (await this.listIntegrationBindings(record.workspaceId)).find(
+        (b) => b.connectionId === record.connectionId,
+      );
+      if (
+        old
+          ? old.revision !== expectedRevision ||
+            record.revision === expectedRevision
+          : expectedRevision !== undefined
+      )
+        throw new HarnessError("Binding revision conflict.", 409);
+      const connection = (await this.listIntegrationConnections()).find(
+        (c) => c.id === record.connectionId,
+      );
+      const definition = (await this.listIntegrationDefinitions()).find(
+        (d) => d.id === connection?.integrationId,
+      );
+      if (
+        !connection ||
+        !definition ||
+        connection.revision !== record.connectionRevision ||
+        definition.revision !== record.integrationRevision ||
+        record.toolIds.some((id) => !definition.tools.some((t) => t.id === id))
+      )
+        throw new HarnessError(
+          "Accept current connection and tool revisions before binding.",
+          409,
+        );
+      await this.db
+        .prepare(
+          "INSERT INTO integration_bindings(workspaceId,connectionId,revision,record) VALUES (?,?,?,?) ON CONFLICT(workspaceId,connectionId) DO UPDATE SET revision=excluded.revision,record=excluded.record",
+        )
+        .run(
+          record.workspaceId,
+          record.connectionId,
+          record.revision,
+          JSON.stringify(record),
+        );
+      return record;
+    });
+  }
+  async deleteIntegrationConnection(
+    id: string,
+    expectedRevision: string,
+  ): Promise<void> {
+    await this.transaction(async () => {
+      const connection = (await this.listIntegrationConnections()).find(
+        (c) => c.id === id,
+      );
+      if (!connection || connection.revision !== expectedRevision)
+        throw new HarnessError("Connection revision conflict.", 409);
+      await this.db
+        .prepare("DELETE FROM integration_bindings WHERE connectionId = ?")
+        .run(id);
+      await this.db
+        .prepare("DELETE FROM integration_connections WHERE id = ?")
+        .run(id);
+    });
+  }
+  /** Only the physical attempt that admitted I/O may finalize its receipt. */
+  async integrationOperationOutcome(
+    id: string,
+    attemptToken: string,
+    state: "succeeded" | "failed" | "unknown_outcome",
+    receipt: string,
+    error?: string,
+  ): Promise<boolean> {
+    return this.transaction(async () => {
+      const row = await this.db
+        .prepare("SELECT receipt,state FROM operation_ledger WHERE id = ?")
+        .get(id);
+      if (
+        row?.state !== "running" ||
+        JSON.parse(String(row.receipt ?? "{} ")).attemptToken !== attemptToken
+      )
+        return false;
+      await this.operationOutcome(id, state, receipt, error);
+      return true;
+    });
   }
   async agentDefaults(): Promise<AgentDefaults> {
     const row = await this.db

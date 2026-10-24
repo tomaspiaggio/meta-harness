@@ -1,9 +1,14 @@
+import "../../../server/integration-adapters";
 export const maxDuration = 60;
 
 import { createHash } from "node:crypto";
 import { HarnessError, requiredText } from "@harness/core";
 import { verifyAttemptGrant } from "../../../server/grants";
 import { failure, readJson } from "../../../server/http";
+import {
+  callIntegrationTool,
+  integrationToolDescriptors,
+} from "../../../server/integrations";
 import { sameOrigin } from "../../../server/security";
 import { getStore } from "../../../server/store";
 
@@ -95,7 +100,7 @@ const tools = [
   {
     name: "browser_action",
     description:
-      "Use the workspace browser. Actions: status, navigate(url), screenshot, click(selector), fill(selector,text), read(optional selector; includes accessibility), sheet_read(gid,start_row,max_rows,max_columns), needs_login. For Google Sheets CRM, navigate to the sheet then use sheet_read to get actual bounded cell rows through the signed-in HTML view. Do not report CRM contents as read merely because the editor opened. Provide a random operation_id for each new logical navigation or mutation; reuse that same ID across retries and later turns of this conversation. Read, sheet_read and screenshot need no ID. Ambiguous results must be reconciled, not repeated. A confirmed connection failure before execution can be retried with the same operation_id after Chrome is connected; the harness retains separate attempt history. While the user controls the browser, stop interacting and finish your turn. Never request or capture credentials in chat.",
+      "Use the available workspace browser host; it may run on the Pi or another eligible machine and does not require the Mac. Each host has its own login state. If the required account is signed out, navigate to its login page, call needs_login and finish the turn so the owner can sign in through interactive takeover. Never require a Mac login or copy credentials between hosts. Actions: status, navigate(url), screenshot, click(selector), fill(selector,text), read(optional selector; includes accessibility), sheet_read(gid,start_row,max_rows,max_columns), needs_login. For Google Sheets CRM, navigate to the sheet then use sheet_read to get actual bounded cell rows through the signed-in HTML view. Do not report CRM contents as read merely because the editor opened. Provide a random operation_id for each new logical navigation or mutation; reuse that same ID across retries and later turns of this conversation. Read, sheet_read and screenshot need no ID. Ambiguous results must be reconciled, not repeated. A confirmed connection failure before execution can be retried with the same operation_id after Chrome is connected; the harness retains separate attempt history. While the user controls the browser, stop interacting and finish your turn. Never request or capture credentials in chat.",
     inputSchema: {
       type: "object",
       properties: {
@@ -158,7 +163,16 @@ export async function POST(request: Request) {
     )
       return new Response(null, { status: 202 });
     if (message.method === "ping") return reply({});
-    if (message.method === "tools/list") return reply({ tools });
+    if (message.method === "tools/list") {
+      const turn = await store.getTurn(grant.turnId);
+      const session = await store.getSession(turn.sessionId);
+      return reply({
+        tools: [
+          ...tools,
+          ...(await integrationToolDescriptors(store, session.workspaceId)),
+        ],
+      });
+    }
     if (message.method !== "tools/call")
       return Response.json({
         jsonrpc: "2.0",
@@ -243,9 +257,34 @@ export async function POST(request: Request) {
             ],
           });
         result = browser.result;
-      } else throw new HarnessError("Unknown tool.", 404);
+      } else if (parameters?.name?.startsWith("integration_"))
+        result = await callIntegrationTool(
+          store,
+          grant,
+          session.workspaceId,
+          parameters.name,
+          args,
+          request.signal,
+        );
+      else throw new HarnessError("Unknown tool.", 404);
+      const external =
+        parameters?.name?.startsWith("integration_") &&
+        result &&
+        typeof result === "object" &&
+        "result" in result
+          ? (result as { result: unknown }).result
+          : undefined;
+      const output =
+        external && typeof external === "object"
+          ? (external as Record<string, unknown>)
+          : undefined;
       return reply({
         content: [{ type: "text", text: JSON.stringify(result) }],
+        ...(output?.structuredContent &&
+        typeof output.structuredContent === "object"
+          ? { structuredContent: output.structuredContent }
+          : {}),
+        ...(output?.isError === true ? { isError: true } : {}),
       });
     } catch (error) {
       return reply({

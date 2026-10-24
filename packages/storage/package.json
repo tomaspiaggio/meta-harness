@@ -8,7 +8,9 @@
     "./control": "./src/control.ts",
     "./application": "./src/application.ts",
     "./database": "./src/database.ts",
-    "./objects": "./src/objects.ts"
+    "./objects": "./src/objects.ts",
+    "./google": "./src/google.ts",
+    "./mcp": "./src/mcp.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

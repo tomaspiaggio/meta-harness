@@ -1,0 +1,397 @@
+import assert from "node:assert/strict";
+import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import {
+  POST as authAction,
+  GET as authStatus,
+} from "../apps/web/app/api/auth/[...action]/route.ts";
+import { GET as ownerProfile } from "../apps/web/app/api/auth/profile/route.ts";
+import { POST as tokenLogin } from "../apps/web/app/api/login/route.ts";
+import {
+  allowedGoogleOwner,
+  createGoogleOwnerAuth,
+  googleLoginReadiness,
+  googleOwnerConfig,
+  requireGoogleOwner,
+} from "../apps/web/server/google-auth.ts";
+import { googleOwnerBinding } from "../apps/web/server/google-integrations.ts";
+import { authorizeAdmin } from "../apps/web/server/security.ts";
+import { HarnessStore } from "../packages/storage/src/application.ts";
+
+const owner = "tomas.piaggio12@gmail.com";
+const config = {
+  origin: "https://harness.example.test",
+  secret: randomBytes(48).toString("base64url"),
+  clientId: "fixture-google-client",
+  clientSecret: "fixture-only-client-secret",
+  emails: [owner],
+};
+function applyCookies(jar, response) {
+  for (const cookie of response.headers.getSetCookie()) {
+    const pair = cookie.split(";")[0];
+    const at = pair.indexOf("=");
+    if (/Max-Age=0(?:;|$)/i.test(cookie)) jar.delete(pair.slice(0, at));
+    else jar.set(pair.slice(0, at), pair.slice(at + 1));
+  }
+}
+const cookieHeader = (jar) => [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
+
+test("Google owner configuration fails closed and never inherits token/loopback access", async () => {
+  const prior = { ...process.env };
+  try {
+    process.env.HARNESS_AUTH = "google";
+    process.env.HARNESS_PUBLIC_URL = config.origin;
+    delete process.env.BETTER_AUTH_SECRET;
+    assert.throws(googleOwnerConfig, /disabled/);
+    assert.equal(googleLoginReadiness().configured, false);
+    const response = await authStatus(
+      new Request(`${config.origin}/api/auth/status`),
+      { params: Promise.resolve({ action: ["status"] }) },
+    );
+    assert.equal(
+      response.status,
+      200,
+      "Login readiness must remain visible when credentials are missing",
+    );
+    assert.deepEqual(await response.json(), {
+      hosted: false,
+      mode: "google",
+      ...googleLoginReadiness(),
+    });
+    assert.equal(
+      (
+        await tokenLogin(
+          new Request(`${config.origin}/api/login`, { method: "POST" }),
+        )
+      ).status,
+      403,
+    );
+    delete process.env.HARNESS_AUTH;
+    const setup = await authStatus(
+      new Request(`${config.origin}/api/auth/status`),
+      { params: Promise.resolve({ action: ["status"] }) },
+    );
+    const setupValue = await setup.json();
+    assert.equal(setupValue.mode, "setup");
+    assert.equal(setupValue.configured, false);
+    process.env.HARNESS_AUTH = "google";
+    await assert.rejects(
+      authorizeAdmin(new Request(`${config.origin}/api/state`)),
+      /disabled/,
+    );
+    Object.assign(process.env, {
+      BETTER_AUTH_SECRET: config.secret,
+      GOOGLE_CLIENT_ID: config.clientId,
+      GOOGLE_CLIENT_SECRET: config.clientSecret,
+      HARNESS_OWNER_EMAILS: owner,
+    });
+    assert.equal(googleOwnerConfig().emails[0], owner);
+    assert.deepEqual(
+      googleLoginReadiness(),
+      { configured: true },
+      "Readiness must not expose client credentials or owner account data",
+    );
+    await assert.rejects(
+      authorizeAdmin(
+        new Request(`${config.origin}/api/state`, {
+          headers: {
+            authorization: "Bearer old-local-token",
+            cookie: "harness_session=old-cookie",
+          },
+        }),
+      ),
+      /allowed Google/,
+    );
+    process.env.HARNESS_PUBLIC_URL = "http://jetdad.tomhom";
+    assert.throws(googleOwnerConfig, /HTTPS/);
+    assert.ok(
+      allowedGoogleOwner({ email: owner.toUpperCase(), emailVerified: true }, [
+        owner,
+      ]),
+    );
+    for (const user of [
+      { email: owner, emailVerified: false },
+      { email: "stranger@gmail.com", emailVerified: true },
+      { email: "tomas.piaggio12+other@gmail.com", emailVerified: true },
+    ])
+      assert.equal(allowedGoogleOwner(user, [owner]), false);
+  } finally {
+    for (const key of Object.keys(process.env))
+      if (!(key in prior)) delete process.env[key];
+    Object.assign(process.env, prior);
+  }
+});
+
+test("Google OAuth validates state and verified owner, survives restart, and revokes immediately without another database", async () => {
+  const root = await mkdtemp(join(tmpdir(), "harness-google-auth-fixture-"));
+  const store = new HarnessStore(join(root, "db.sqlite"));
+  await store.ready;
+  const ledger = async () => store;
+  const originalFetch = globalThis.fetch;
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+  });
+  const jwk = {
+    ...publicKey.export({ format: "jwk" }),
+    kid: "fixture-kid",
+    alg: "RS256",
+    use: "sig",
+  };
+  let email = owner,
+    verified = true,
+    nonce,
+    exchanges = 0;
+  globalThis.fetch = async (input) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url === "https://oauth2.googleapis.com/token") {
+      exchanges++;
+      const now = Math.floor(Date.now() / 1000);
+      const encode = (value) =>
+        Buffer.from(JSON.stringify(value)).toString("base64url");
+      const payload = `${encode({ alg: "RS256", kid: "fixture-kid", typ: "JWT" })}.${encode({ iss: "https://accounts.google.com", aud: config.clientId, sub: "fixture-google-subject", email, email_verified: verified, name: "Fixture owner", picture: "https://lh3.googleusercontent.com/fixture-avatar", iat: now, exp: now + 600, nonce })}`;
+      const jwt = `${payload}.${sign("RSA-SHA256", Buffer.from(payload), privateKey).toString("base64url")}`;
+      return Response.json({
+        access_token: "fixture-access-token",
+        token_type: "Bearer",
+        expires_in: 3600,
+        scope: "openid email profile",
+        id_token: jwt,
+      });
+    }
+    if (url === "https://www.googleapis.com/oauth2/v3/certs")
+      return Response.json({ keys: [jwk] });
+    throw new Error(
+      `Unexpected fixture network request: ${new URL(url).origin}`,
+    );
+  };
+  let loginAttempt = 0;
+  const start = async (auth) => {
+    const response = await auth.handler(
+      new Request(`${config.origin}/api/auth/sign-in/social`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          origin: config.origin,
+          "x-forwarded-for": `192.0.2.${++loginAttempt}`,
+        },
+        body: JSON.stringify({
+          provider: "google",
+          callbackURL: "/",
+          errorCallbackURL: "/login",
+        }),
+      }),
+    );
+    assert.equal(response.status, 200);
+    const authorization = new URL((await response.json()).url);
+    assert.equal(authorization.origin, "https://accounts.google.com");
+    assert.equal(
+      authorization.searchParams.get("redirect_uri"),
+      `${config.origin}/api/auth/callback/google`,
+    );
+    assert.ok(authorization.searchParams.get("code_challenge"));
+    nonce = authorization.searchParams.get("nonce") ?? undefined;
+    const jar = new Map();
+    applyCookies(jar, response);
+    return { jar, state: authorization.searchParams.get("state") };
+  };
+  const callback = async (auth, flow, withCookie = true) => {
+    const response = await auth.handler(
+      new Request(
+        config.origin +
+          "/api/auth/callback/google?code=fixture-code&state=" +
+          flow.state,
+        { headers: withCookie ? { cookie: cookieHeader(flow.jar) } : {} },
+      ),
+    );
+    applyCookies(flow.jar, response);
+    return response;
+  };
+  try {
+    const auth = createGoogleOwnerAuth(config, ledger);
+    const forged = await start(auth);
+    await callback(auth, forged, false);
+    assert.equal(
+      exchanges,
+      0,
+      "Missing state cookie must fail before Google token exchange",
+    );
+    email = "stranger@gmail.com";
+    const denied = await start(auth);
+    await callback(auth, denied);
+    assert.equal(
+      await auth.api.getSession({
+        headers: new Headers({ cookie: cookieHeader(denied.jar) }),
+      }),
+      null,
+    );
+    email = owner;
+    verified = false;
+    const unverified = await start(auth);
+    await callback(auth, unverified);
+    assert.equal(
+      await auth.api.getSession({
+        headers: new Headers({ cookie: cookieHeader(unverified.jar) }),
+      }),
+      null,
+    );
+    verified = true;
+    const valid = await start(auth);
+    const response = await callback(auth, valid);
+    assert.equal(response.status, 302);
+    const headers = new Headers({ cookie: cookieHeader(valid.jar) });
+    const signed = await requireGoogleOwner(auth, config, ledger, headers);
+    assert.equal(signed.user.email, owner);
+    assert.ok(await store.ownerSession(signed.session.token));
+    assert.equal(
+      [...valid.jar.keys()].some((key) => key.includes("account_data")),
+      false,
+      "Google token material is not retained in an account cookie",
+    );
+    const restarted = createGoogleOwnerAuth(config, ledger);
+    assert.equal(
+      (await requireGoogleOwner(restarted, config, ledger, headers)).user.email,
+      owner,
+    );
+    await assert.rejects(
+      requireGoogleOwner(
+        restarted,
+        { emails: ["someone-else@gmail.com"] },
+        ledger,
+        headers,
+      ),
+      /allowed Google/,
+    );
+    const tampered = new Map(valid.jar);
+    for (const [key, value] of tampered)
+      if (key.includes("session_data"))
+        tampered.set(key, `${value.slice(0, -2)}xx`);
+    await assert.rejects(
+      requireGoogleOwner(
+        restarted,
+        config,
+        ledger,
+        new Headers({ cookie: cookieHeader(tampered) }),
+      ),
+      /allowed Google/,
+    );
+    const savedEnvironment = { ...process.env };
+    const savedStore = globalThis.harnessStore;
+    Object.assign(process.env, {
+      HARNESS_AUTH: "google",
+      HARNESS_PUBLIC_URL: config.origin,
+      BETTER_AUTH_SECRET: config.secret,
+      GOOGLE_CLIENT_ID: config.clientId,
+      GOOGLE_CLIENT_SECRET: config.clientSecret,
+      HARNESS_OWNER_EMAILS: owner,
+    });
+    globalThis.harnessStore = Promise.resolve(store);
+    try {
+      const profileHeaders = {
+        cookie: cookieHeader(valid.jar),
+        host: new URL(config.origin).host,
+        origin: config.origin,
+      };
+      assert.equal(
+        (
+          await ownerProfile(
+            new Request(`${config.origin}/api/auth/profile`, {
+              headers: { host: new URL(config.origin).host },
+            }),
+          )
+        ).status,
+        401,
+      );
+      const profile = await ownerProfile(
+        new Request(`${config.origin}/api/auth/profile`, {
+          headers: profileHeaders,
+        }),
+      );
+      assert.equal(profile.status, 200);
+      assert.match(profile.headers.get("cache-control"), /no-store/);
+      assert.deepEqual(
+        await profile.json(),
+        {
+          user: {
+            name: "Fixture owner",
+            email: owner,
+            image: "https://lh3.googleusercontent.com/fixture-avatar",
+          },
+        },
+        "Profile must expose no session token or provider credentials",
+      );
+      const flowCookie = "fixture-resource-browser-flow";
+      const originalRequest = new Request(
+        `${config.origin}/api/integrations/google/start`,
+        { headers: profileHeaders },
+      );
+      const originalBinding = await googleOwnerBinding(
+        originalRequest,
+        flowCookie,
+      );
+      assert.equal(
+        await googleOwnerBinding(originalRequest, flowCookie),
+        originalBinding,
+      );
+      const anotherLogin = await start(auth);
+      await callback(auth, anotherLogin);
+      const otherRequest = new Request(
+        `${config.origin}/api/integrations/google/start`,
+        {
+          headers: {
+            ...profileHeaders,
+            cookie: cookieHeader(anotherLogin.jar),
+          },
+        },
+      );
+      assert.notEqual(
+        await googleOwnerBinding(otherRequest, flowCookie),
+        originalBinding,
+        "Resource OAuth must be bound to the exact Google owner session, not a shared local fallback",
+      );
+      const logout = await authAction(
+        new Request(`${config.origin}/api/auth/logout`, {
+          method: "POST",
+          headers: profileHeaders,
+        }),
+        { params: Promise.resolve({ action: ["logout"] }) },
+      );
+      assert.equal(logout.status, 200);
+      assert(
+        logout.headers
+          .getSetCookie()
+          .some((cookie) => cookie.includes("Max-Age=0")),
+        "Sign-out must clear the browser cookie",
+      );
+      assert.equal(
+        Boolean(await store.ownerSession(signed.session.token)),
+        false,
+      );
+      assert.equal(
+        (
+          await ownerProfile(
+            new Request(`${config.origin}/api/auth/profile`, {
+              headers: profileHeaders,
+            }),
+          )
+        ).status,
+        401,
+        "Saved cookies cannot bypass sign-out revocation",
+      );
+    } finally {
+      globalThis.harnessStore = savedStore;
+      for (const key of Object.keys(process.env))
+        if (!(key in savedEnvironment)) delete process.env[key];
+      Object.assign(process.env, savedEnvironment);
+    }
+    await assert.rejects(
+      requireGoogleOwner(restarted, config, ledger, headers),
+      /allowed Google/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await store.close();
+  }
+});

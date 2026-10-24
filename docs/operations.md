@@ -40,16 +40,22 @@ not modify another project's installed browsers.
 ```sh
 HARNESS_TEST_BROWSER=1 PLAYWRIGHT_BROWSERS_PATH="$PWD/.data/browser-cache" \
   pnpm exec tsx --test packages/browser/src/browser.test.ts
-pnpm smoke:ui
+HARNESS_URL=http://localhost:3199 HARNESS_SMOKE_DATA_DIR="$PWD/.data/live-browser-fixture" pnpm smoke:ui
 pnpm test:isolation
 ```
 
-`smoke:ui` creates a fixture workspace and exercises encrypted browser takeover,
-manual navigation, return to the same conversation, and phone-width navigation.
-It requires the running local stack and an available browser worker. The fixture
-uses headed Chromium on macOS. Headless Chromium screenshot capture timed out on
-this Mac with the pinned Patchright binary; the default Mac worker therefore stays
-headed. Linux headless behavior still requires validation on its actual host.
+`smoke:ui` and `smoke:browser-live` run the same headless agent-browser acceptance
+flow against an isolated fixture control and available managed browser worker.
+They verify live frames, native click/type/paste, password input, keyboard release,
+explicit login continuation, action screenshots, no unsolicited turns and mobile
+layout. They never use the personal port 3000. Mac headless and the actual Pi's
+system Chromium have passed this flow; see [live browser validation](browser-live-view.md).
+Use `HARNESS_SMOKE_DATA_DIR` for authenticated fixture `pnpm smoke` as well; its
+owner token is read privately from that fixture, not pasted into commands.
+Run `node scripts/dev-login-smoke.mjs` to exercise the actual development gateway:
+it starts an isolated Google-configured fixture with dummy credentials and a Demo
+worker, then verifies login hydration and eight seconds without reloads or repeated
+auth checks. No Google authorization request or model call is made.
 `test:isolation` uses a temporary, resource-limited Docker container and no network
 inside it; the first run may download the Node test image.
 
@@ -151,8 +157,13 @@ No real Vercel/Supabase deployment or identity-provider login was performed here
 
 ## Workers, secrets and isolation
 
-Settings can download a new per-worker credential; copy it securely to the machine,
-`chmod 600` it, and run `pnpm worker --credential /private/worker.json`. The existing
+Settings enrollment asks for a name and reachable control URL, then copies a
+private agent handoff with that worker's credential and complete setup
+instructions. The UI says **Paste to agent**; paste into a coding agent on the new device.
+A Markdown download is optional, and blocked clipboard access exposes manual copy
+without another enrollment. The agent writes
+`~/.config/meta-harness/worker.json` with mode 600, verifies connectivity and
+guides interactive provider/browser setup. Keep the Markdown private too. The existing
 `pnpm worker:enroll` CLI remains available on the control host. Revocation rejects
 new requests and existing attempt/tool grants. Workers connect outbound and expose
 no shell, Docker socket, CDP listener or machine-administration endpoint.
@@ -286,10 +297,18 @@ Restore. A revision conflict requires reading the newer record before resubmitti
 it never silently overwrites a concurrent agent update. No data reset or schema
 migration is needed for these controls.
 
-Settings → Workers now documents installation step by step. Its repository URL
-is an instruction aid; enrollment stores the separate control URL you provide.
-Use a reachable HTTPS address for another machine and transfer its credential
-outside git. Worker credentials grant no owner/database administration access.
+Settings → Workers copies an agent-led installation prompt using this project's
+GitHub `main` branch. The control URL is the separate address you provide at
+enrollment; use a reachable HTTPS address for another machine. The guide includes
+the scoped credential, device/provider login, optional existing-Chrome extension
+pairing, managed-browser compatibility and agent-only Pi operation. Keep both the
+guide and resulting credential outside git. Worker credentials grant no
+owner/database administration access. JSON enrollment remains the default API
+response for existing clients; Settings requests `format: "markdown"`.
+
+Run `HARNESS_URL=http://127.0.0.1:3199 pnpm smoke:worker-enrollment` against an
+isolated fixture stack for a headless agent-browser check of the two-field form,
+clipboard copying, blocked-clipboard recovery, optional Markdown download and worker authentication using its embedded credential.
 
 ## Agent models and document uploads
 
@@ -402,3 +421,20 @@ an unsent draft. It failed before the endpoint change and passes afterward.
 It must run separately from another dev/build process in this checkout. The
 other browser smoke scripts also run headlessly on macOS; they use the harness's
 private Chromium cache, with no browser window taking focus.
+
+
+The header account menu shows the current Google owner profile and Sign out.
+Profile data comes from `/api/auth/profile` after owner authentication and is not
+cached. Sign-out revokes the application's session; it does not sign the user out
+of Google across other applications. Google cookie/profile/revocation behavior
+uses signed fixtures in `scripts/google-auth.test.mjs`. For isolated headless UI
+verification, run this on an isolated local token-auth test stack:
+
+```sh
+HARNESS_URL=http://localhost:3192 \
+HARNESS_SMOKE_DATA_DIR=/absolute/account-menu-fixture \
+node scripts/account-menu-smoke.mjs
+```
+
+This UI fixture uses a real legacy owner-cookie logout and never touches the
+personal session.

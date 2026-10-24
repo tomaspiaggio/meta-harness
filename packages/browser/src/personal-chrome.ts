@@ -2,7 +2,6 @@ import { chromeConnectionInstructions } from "@harness/core/browser";
 
 export { chromeConnectionInstructions } from "@harness/core/browser";
 
-import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -26,10 +25,7 @@ export function browserBackend(): BrowserBackend {
     configured === "extension"
   )
     return configured;
-  return process.platform === "darwin" &&
-    existsSync("/Applications/Google Chrome.app")
-    ? "extension"
-    : "managed";
+  return "managed";
 }
 
 export function personalChromeDirectory(): string {

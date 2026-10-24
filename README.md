@@ -100,6 +100,9 @@ apps/worker               polling, leases, shutdown, runtime construction
 packages/core             plain functions, contracts, execution policy
 packages/storage          async SQLite / Prisma-Postgres and object adapters
 packages/runtimes         Demo, Codex CLI, Claude CLI / optional SDK adapters
+packages/mcp              cold, bounded upstream MCP Streamable HTTP adapter
+
+packages/integrations     bounded Google resource OAuth and read-only HTTP adapters
 packages/browser          on-demand Patchright and encrypted takeover transport
 packages/checkpoints      portable file manifests and encrypted payload transport
 ```
@@ -146,16 +149,21 @@ Decisions can be edited or deleted in their tab. Delete records a withdrawal;
 use **Show withdrawn decisions → Restore** to bring one back. Earlier revisions
 remain stored, and stale edits are rejected.
 
-Settings includes a step-by-step worker installation guide, from cloning this
-repository through provider login, credential transfer and checking Online status.
-When enrolling another machine, set its reachable HTTPS control URL: localhost
-points to that worker, not your Mac.
-The guide defaults to this repository's `main` branch at
-[tomaspiaggio/meta-harness](https://github.com/tomaspiaggio/meta-harness), so you can
-copy the commands to a Pi or hand the guide to its coding agent. Enroll the Pi in
-Settings and securely transfer its downloaded credential before starting
-`pnpm worker --credential ~/.config/meta-harness/worker.json`; worker machines do
-not run `pnpm dev` or need direct database access.
+In **Settings → Workers**, enter only a device name and a reachable HTTPS control
+URL, then click **Enroll worker**. Enrollment copies a private setup prompt and shows
+**Paste to agent**. Paste it into a coding agent on the new device. The prompt
+contains that worker's scoped credential; a Markdown download is also available. It handles the terminal setup and walks you through any
+interactive provider and website login. The guide covers cloning
+this repository's `main` branch, Node/pnpm, credential storage, model-free
+connectivity checks, provider authentication, optional browser capability, startup
+and Online verification. Headless Pi workers can run agents without an extension.
+Keep the prompt or downloaded file private and out of git. If clipboard access is
+blocked, use Copy setup or the selectable text without enrolling again.
+
+The control URL must be reachable from that new machine: localhost points to the
+worker itself, not your Mac. Worker machines do not run `pnpm dev` or need direct
+database access. The legacy JSON enrollment response remains available to CLI/API
+clients; the Settings UI requests the Markdown download.
 
 Choose the default agent and its model in **Settings → Default agent and model**.
 Each agent remembers its own default model. New conversations inherit these
@@ -171,6 +179,17 @@ retains its selection until submission and can select the same file again. Image
 become native image input; PDFs and other documents are delivered as tool-readable
 files. File delivery does not guarantee that every model/runtime can extract a
 particular PDF. Limits are eight files, 10 MiB per file and 5 MiB per image.
+
+## Integration tool collections
+
+Open **Settings → Integrations → Add MCP server** to discover a reachable HTTP
+MCP tool collection, then review and save the tools each workspace may use.
+Connections grant nothing until bound. The same registry and gateway support
+native API adapters. Credentials use existing server-side secret references;
+changing a connection or tool schema requires reviewing workspace access again.
+Calls run on demand in the control process; native Claude/Codex loops and workers
+receive only the existing scoped harness gateway. No extra daemon starts.
+See [supported MCP transport, authentication and fixture verification](docs/mcp-connections-plan.md#shipped-http-slice-2026-10-23).
 
 ## Persistence and recovery
 
@@ -369,11 +388,32 @@ For private-network exposure, set `HARNESS_BIND_HOST` to the listening interface
 and terminate HTTPS with a tailnet proxy. Network binding enables administrator
 authentication automatically and starts an allowlisted gateway in the launcher
 process. Next.js and internal Workflow callbacks remain on a separate loopback
-port. Network-mode development does not proxy HMR WebSockets; use loopback
-`pnpm dev` for editing and `pnpm start` for private-network use. `/login` accepts the token in
-`<HARNESS_DATA_DIR>/admin-token` and issues an HttpOnly session cookie. The launcher creates
-that file on network startup; do not publish it or put it in git. Worker credentials are separate and cannot administer tasks.
-The default loopback-only development flow needs no login.
+port. Development forwards same-origin Next.js HMR through the gateway; production
+rejects HMR upgrades. Use `pnpm dev` for editing and `pnpm start` for everyday
+private-network use with lower memory usage. The login page
+uses Google or the configured hosted identity provider; it never asks users to
+paste an administrator token. Until Google is configured, it shows a disabled
+Google button and an explicit setup-pending message. Existing local administrator
+credentials remain available to legacy automation and isolated test fixtures;
+the launcher keeps `<HARNESS_DATA_DIR>/admin-token` private. Selecting Google mode
+disables that legacy owner access. Worker credentials are separate and cannot
+administer tasks. The default loopback-only development flow needs no login.
+
+For a short walkthrough, see [Google login credentials](docs/google-login-setup.md).
+
+For Google owner login, set `HARNESS_AUTH=google`, `HARNESS_PUBLIC_URL`,
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `BETTER_AUTH_SECRET` (32+ random
+characters), and `HARNESS_OWNER_EMAILS` to the allowed verified Google email(s).
+The login page shows **Continue with Google**. Other accounts and unverified email
+claims are denied; legacy access-token login is disabled in this mode. It works
+with local SQLite on the Pi as well as PostgreSQL and needs no additional service.
+Register `<HARNESS_PUBLIC_URL>/api/auth/callback/google` in Google Cloud Console.
+Use HTTPS outside localhost. Google mode keeps an allowlisted gateway even behind
+a loopback reverse proxy, so internal Workflow routes stay private.
+
+See [Pi, Headscale, HTTPS and Google setup](deploy/pi-headscale.md) for DNS, OAuth
+configuration, a data-preserving move from this Mac, systemd startup and worker
+reconnection. MagicDNS resolves names; HTTPS certificates are configured separately.
 
 This is a trusted-worker prototype, not a multi-tenant sandbox: native tools run
 as the worker's OS user. Worker secrets are omitted from provider subprocess
@@ -419,31 +459,26 @@ Run `pnpm test:security` after a build to exercise the authenticated network gat
 See [private deployment preparation](deploy/README.md) for Linux service templates
 and the remaining real-hardware acceptance gates.
 
-### Signed-in Chrome without repeated approval
+### Managed browser and live view
 
-Mac workers with Chrome installed default to the Meta Harness Browser extension.
-The extension reuses existing site logins in background tabs, driven by Patchright.
-It reconnects to the paired local worker without Chrome remote-debugging prompts.
-Chrome can still display its debugging indicator on controlled tabs.
+Workers use a dedicated persistent Patchright profile by default, independent of
+personal Chrome. Run `pnpm browser:install` on supported hosts, or configure a
+compatible system Chromium with `HARNESS_BROWSER_EXECUTABLE` (for example,
+`/usr/bin/chromium` on the tested Pi). Use `HARNESS_BROWSER_BACKEND=managed` when
+upgrading a worker previously configured for the extension. No extension pairing
+or remote-debugging permission dialog is part of this flow.
 
-One-time setup on the browser host:
+Open a conversation's browser to watch without taking control. The existing
+launcher relays an encrypted CDP screencast over a persistent WebSocket; frames
+and interactive input do not go through the database command queue. Click Take
+control or Sign in, then click/type/paste directly in the live page. Esc releases
+control without submitting a message. Continue task explicitly resumes a login
+wait. Closing a read-only view also sends no message.
 
-1. Run `pnpm --filter @harness/browser-extension build`.
-2. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**,
-   and select `apps/browser-extension/dist` from this checkout.
-3. Start the worker, then run `pnpm browser:pair` in the same checkout/environment.
-4. Click the Meta Harness Browser extension icon. Paste the pairing code there
-   and choose **Connect**. Keep the code out of chat and git.
-
-The relay is local to the browser host. Other agent workers use it through the
-harness browser gateway. For a paired browser on another supported platform, set
-`HARNESS_BROWSER_BACKEND=extension` on that worker. For a separate managed headless
-browser, use `HARNESS_BROWSER_BACKEND=managed` and `pnpm browser:install`.
-
-No personal cookies/profile databases are exported by the extension backend.
-Cleanup closes owned tabs and leaves the user's Chrome running. Connection status
-and installation steps appear in Settings. The legacy `personal-chrome` backend
-is an explicit diagnostic option; it uses Chrome's per-connection approval path.
+Each host keeps its own browser login state. A different host may need manual
+login/MFA through takeover; personal Chrome credentials are not copied. Agent
+browser actions retain bounded step summaries and screenshots, excluding manual
+login input and frames. Browser processes start on demand and close after idle.
 
 Browser reads now include accessibility information with form values omitted.
 For Sheets CRM work, `browser_action` supports `sheet_read` with a `gid` and bounded
@@ -452,6 +487,15 @@ not evidence that its cells were read.
 
 The agreed next step is a host-independent browser-resource model: compatible
 workers on the Mac, Pi or Sandbox may host browsers independently of agent
-execution. Extension-backed existing profiles and managed browsers use Patchright
-behind the same gateway. Explicit resource bindings and placement are planned;
+execution. Dedicated managed browsers use Patchright behind the same gateway. Explicit resource bindings and placement are planned;
 see [Browser resources across workers](docs/browser-connection-options.md).
+
+## Google Workspace read tools
+
+Settings → Integrations supports separate Google account connections and explicit
+workspace tool grants for Gmail, Drive, Docs, Sheets and Calendar events. The
+existing control/API process performs bounded reads through the common harness MCP
+gateway; Claude/Codex retain their native loops. Owner sign-in grants no Google
+data scopes. Configure separate resource OAuth and encrypted refresh-token storage
+using [Google integration operations](docs/google-integrations.md). Drafts, edits and
+sending remain unavailable; fixture tests need no real Google account or model.

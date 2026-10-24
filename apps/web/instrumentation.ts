@@ -7,6 +7,8 @@ export async function register() {
   const { getWorld } = await import("workflow/runtime");
   const world = await getWorld();
   await world.start?.();
+  // Owner access is validated per request. Local installs must still serve
+  // the public login/readiness page while Google setup is incomplete.
   const { hosted, hostedConfiguration } = await import("./server/hosted-auth");
   if (hosted()) {
     hostedConfiguration();

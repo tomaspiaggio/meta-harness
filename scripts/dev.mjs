@@ -21,17 +21,20 @@ const env = {
   WORKFLOW_TARGET_WORLD: process.env.WORKFLOW_TARGET_WORLD ?? "local",
   WORKFLOW_LOCAL_DATA_DIR: join(directory, "workflow"),
   NEXT_TELEMETRY_DISABLED: "1",
+  HARNESS_BROWSER_STREAM_URL: `http://127.0.0.1:${process.env.PORT ?? 3000}`,
 };
 const bindHost = process.env.HARNESS_BIND_HOST ?? "127.0.0.1";
 const network = !["127.0.0.1", "localhost", "::1"].includes(bindHost);
+// Keep Workflow callbacks private behind a loopback HTTPS proxy as well.
+const gatewayEnabled = true; // Live browser WebSockets terminate in this existing launcher.
 let privatePort = Number(process.env.PORT ?? 3000);
 let gateway;
-if (network) {
+if (gatewayEnabled) {
   const probe = createServer();
   await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
   privatePort = probe.address().port;
   await new Promise((resolve) => probe.close(resolve));
-  gateway = createGateway(privatePort);
+  gateway = createGateway(privatePort, { development: !production });
   await new Promise((resolve, reject) => {
     gateway.once("error", reject);
     gateway.listen(Number(process.env.PORT ?? 3000), bindHost, resolve);
@@ -105,7 +108,7 @@ for (const [name, cwd, args] of [
     env: {
       ...env,
       PORT: String(privatePort),
-      ...(network
+      ...(gatewayEnabled
         ? { WORKFLOW_LOCAL_BASE_URL: `http://127.0.0.1:${privatePort}` }
         : {}),
     },
