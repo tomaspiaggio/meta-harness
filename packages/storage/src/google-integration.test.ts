@@ -104,7 +104,7 @@ test("native Google uses the same model schema/projection and fenced receipt dis
           }),
       }),
     );
-    const descriptors = await integrationToolDescriptors(store, "tech");
+    const descriptors = (await integrationToolDescriptors(store, "tech")).filter((tool) => tool.name !== "integration_catalog");
     assert.equal(descriptors.length, 2);
     descriptors.sort(
       (a, b) =>
@@ -180,7 +180,7 @@ test("native Google uses the same model schema/projection and fenced receipt dis
       ),
       /disabled/,
     );
-    assert.equal((await integrationToolDescriptors(store, "tech")).length, 1);
+    assert.equal((await integrationToolDescriptors(store, "tech")).length, 2);
     const account = (await store.listIntegrationConnections()).find(
       (c) => c.id === "fixture-personal",
     );
