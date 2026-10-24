@@ -8,7 +8,13 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 export type IntegrationSetupProps = { onCreated: () => void };
-export function Integrations({ setup }: { setup?: React.ReactNode }) {
+export function Integrations({
+  setup,
+  connectionSetup,
+}: {
+  setup?: React.ReactNode;
+  connectionSetup?: (connection: IntegrationConnection) => React.ReactNode;
+}) {
   const [state, setState] = useState<{
     connections: IntegrationConnection[];
     definitions: IntegrationDefinition[];
@@ -71,6 +77,47 @@ export function Integrations({ setup }: { setup?: React.ReactNode }) {
                 {connection.enabled ? "Enabled" : "Disabled"} ·{" "}
                 {definition?.tools.length ?? 0} tools
               </p>
+              <form
+                className="flex flex-wrap items-center gap-2"
+                key={connection.revision}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const form = new FormData(event.currentTarget);
+                  void action({
+                    action: "connection",
+                    expectedRevision: connection.revision,
+                    connection: {
+                      ...connection,
+                      label: String(form.get("label") ?? ""),
+                      enabled: form.get("enabled") === "on",
+                      revision: crypto.randomUUID(),
+                    },
+                  });
+                }}
+              >
+                <label>
+                  Label{" "}
+                  <input
+                    name="label"
+                    defaultValue={connection.label}
+                    maxLength={100}
+                    required
+                    className="rounded border p-1"
+                  />
+                </label>
+                <label>
+                  <input
+                    name="enabled"
+                    type="checkbox"
+                    defaultChecked={connection.enabled}
+                  />{" "}
+                  Enabled
+                </label>
+                <Button type="submit" variant="outline">
+                  Save connection
+                </Button>
+              </form>
+              {connectionSetup?.(connection)}
               <Button
                 variant="outline"
                 onClick={() =>
@@ -94,6 +141,18 @@ export function Integrations({ setup }: { setup?: React.ReactNode }) {
                 }
               >
                 Disable connection
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  void action({
+                    action: "delete",
+                    connectionId: connection.id,
+                    expectedRevision: connection.revision,
+                  })
+                }
+              >
+                Delete connection
               </Button>
               {state.workspaces.map((workspace) => {
                 const old = state.bindings.find(
