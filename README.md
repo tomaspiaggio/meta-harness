@@ -384,6 +384,8 @@ the launcher keeps `<HARNESS_DATA_DIR>/admin-token` private. Selecting Google mo
 disables that legacy owner access. Worker credentials are separate and cannot
 administer tasks. The default loopback-only development flow needs no login.
 
+For a short walkthrough, see [Google login credentials](docs/google-login-setup.md).
+
 For Google owner login, set `HARNESS_AUTH=google`, `HARNESS_PUBLIC_URL`,
 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `BETTER_AUTH_SECRET` (32+ random
 characters), and `HARNESS_OWNER_EMAILS` to the allowed verified Google email(s).
