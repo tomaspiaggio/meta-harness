@@ -659,14 +659,28 @@ export async function browserTool(
     };
   }
   if (
-    !["navigate", "click", "fill", "read", "sheet_read", "screenshot"].includes(
-      action,
-    )
+    ![
+      "navigate",
+      "click",
+      "fill",
+      "type",
+      "press",
+      "hover",
+      "scroll",
+      "select",
+      "wait",
+      "snapshot",
+      "read",
+      "sheet_read",
+      "screenshot",
+    ].includes(action)
   )
     throw new HarnessError("Unsupported browser action.");
-  // Page loads are GETs and safe to repeat; only clicks and fills can change
-  // external state, so only they go through the operation ledger.
-  const mutating = ["click", "fill"].includes(action);
+  // Page loads, scrolling and reads are safe to repeat; only input that can
+  // change external state goes through the operation ledger.
+  const mutating = ["click", "fill", "type", "press", "select"].includes(
+    action,
+  );
   const operationKey = mutating
     ? requiredText(args.operation_id, "Stable operation_id", 100)
     : crypto.randomUUID();
@@ -735,7 +749,7 @@ export async function browserTool(
     }
     const result = JSON.parse(command.result ?? "{}");
     const image =
-      !["read", "sheet_read"].includes(action) &&
+      !["read", "sheet_read", "snapshot"].includes(action) &&
       typeof result.image === "string"
         ? result.image
         : undefined;

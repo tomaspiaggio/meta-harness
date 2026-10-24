@@ -126,3 +126,26 @@ encrypted with the view's ECDH key over the live stream. The worker types it int
 the matching visible field (or the focused one) and presses Enter. Values are
 never written to the database, workflow state, logs, model history or the
 conversation; a local fixture run confirmed the password appeared in none of them.
+
+## Acting like a person instead of by selector (2026-10-24)
+
+Selector-only `click(selector)`/`fill(selector)` failed on real sites (for example
+Google's email field). Agents now look at the returned 1280x800 screenshot and
+say where to act with one of: a plain-language `description`, `x`/`y` read from
+the screenshot, a `ref` from `snapshot` (Playwright `ariaSnapshot({mode:"ai"})`,
+resolved with `aria-ref=`), or a CSS `selector` as a last resort. Clicks, hover,
+scroll and typing use real mouse and keyboard events; nothing is injected, so
+canvas and Trusted-Types pages behave like any other page. New actions: `type`,
+`press`, `hover`, `scroll`, `select`, `wait`, `snapshot`. `click`, `type`, `fill`,
+`press` and `select` use the operation ledger; the rest are repeatable.
+
+Description targeting follows Autonoma's quarita: a vision grounding model
+returns a 0–1000 normalized box and the worker clicks its center. It is optional
+and off unless a worker sets `HARNESS_GROUNDING_API_KEY` (OpenRouter;
+`HARNESS_GROUNDING_MODEL` defaults to `qwen/qwen3-vl-32b-instruct`). Without it,
+Codex and Claude read coordinates from the screenshot or use refs. Verified
+locally with Codex: snapshot → type into ref → click Next on Google sign-in
+reached the passkey/password step.
+
+On phones, tapping the streamed page while in control focuses an invisible text
+field so the keyboard opens; typed text, Backspace, Enter and Tab are forwarded.

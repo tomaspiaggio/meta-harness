@@ -29,6 +29,7 @@ export function BrowserSteps({
   onWatch?: () => void;
 }) {
   const [open, setOpen] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const viewed = open === null ? null : steps[open];
   useEffect(() => {
     if (open === null) return;
@@ -44,70 +45,111 @@ export function BrowserSteps({
   }, [open, steps.length]);
   if (!steps.length) return null;
   const last = steps[steps.length - 1];
+  const lastImage = steps.findLastIndex((step) => step.image);
   return (
     <section
       aria-label="Browser activity"
       className="my-4 rounded-xl border bg-card"
     >
-      <header className="flex items-center gap-2 border-b px-3 py-2 text-xs">
-        <span className="font-medium">Browser activity</span>
-        <span className="min-w-0 flex-1 truncate text-muted-foreground">
-          {steps.length} step{steps.length === 1 ? "" : "s"} · last:{" "}
-          {last.label}
-        </span>
+      <div className="flex items-center gap-3 p-2 text-xs">
+        <button
+          type="button"
+          className="shrink-0 overflow-hidden rounded-md border bg-muted"
+          aria-label={`View latest step: ${last.label}`}
+          onClick={() => setOpen(lastImage >= 0 ? lastImage : steps.length - 1)}
+        >
+          {lastImage >= 0 ? (
+            // biome-ignore lint/performance/noImgElement: inline data URL
+            <img
+              src={`data:image/jpeg;base64,${steps[lastImage].image}`}
+              alt=""
+              className="aspect-[16/10] w-24 object-cover"
+            />
+          ) : (
+            <span className="flex aspect-[16/10] w-24 items-center justify-center text-[10px] text-muted-foreground">
+              No preview
+            </span>
+          )}
+        </button>
+        <div className="min-w-0 flex-1">
+          <p className="font-medium">Browser activity</p>
+          <p
+            className={
+              last.error || last.status === "failed"
+                ? "truncate text-destructive"
+                : "truncate text-muted-foreground"
+            }
+          >
+            {last.label} ·{" "}
+            {last.login
+              ? "Sign-in needed"
+              : (statusLabel[last.status] ?? last.status)}
+          </p>
+        </div>
         {onWatch && (
           <Button size="sm" variant="outline" className="h-7" onClick={onWatch}>
-            <Eye /> Watch live
+            <Eye /> <span className="hidden sm:inline">Watch live</span>
           </Button>
         )}
-      </header>
-      <ol
-        className="flex snap-x gap-3 overflow-x-auto p-3"
-        aria-label="Browser steps, oldest first"
-      >
-        {steps.map((step, index) => (
-          <li key={step.id} className="w-44 shrink-0 snap-start text-xs">
-            <button
-              type="button"
-              className="block w-full overflow-hidden rounded-lg border bg-muted text-left"
-              aria-label={`View step ${index + 1}: ${step.label}`}
-              onClick={() => setOpen(index)}
-            >
-              {step.image ? (
-                // biome-ignore lint/performance/noImgElement: inline data URL
-                <img
-                  src={`data:image/jpeg;base64,${step.image}`}
-                  alt=""
-                  className="aspect-[16/10] w-full object-cover"
-                />
-              ) : (
-                <span className="flex aspect-[16/10] items-center justify-center p-2 text-center text-[11px] text-muted-foreground">
-                  {step.login
-                    ? "Sign-in page (private)"
-                    : step.status === "pending" || step.status === "running"
-                      ? "In progress…"
-                      : "No preview"}
-                </span>
-              )}
-            </button>
-            <p className="mt-1.5 line-clamp-2 font-medium">
-              {index + 1}. {step.label}
-            </p>
-            <p
-              className={
-                step.error || step.status === "failed"
-                  ? "text-destructive"
-                  : "text-muted-foreground"
-              }
-            >
-              {step.login
-                ? "Sign-in needed"
-                : (statusLabel[step.status] ?? step.status)}{" "}
-              · {time(step.createdAt)}
-            </p>
-          </li>
-        ))}
-      </ol>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "Hide" : `All ${steps.length}`}
+        </Button>
+      </div>
+      {expanded && (
+        <ol
+          className="flex snap-x gap-3 overflow-x-auto border-t p-3"
+          aria-label="Browser steps, oldest first"
+        >
+          {steps.map((step, index) => (
+            <li key={step.id} className="w-44 shrink-0 snap-start text-xs">
+              <button
+                type="button"
+                className="block w-full overflow-hidden rounded-lg border bg-muted text-left"
+                aria-label={`View step ${index + 1}: ${step.label}`}
+                onClick={() => setOpen(index)}
+              >
+                {step.image ? (
+                  // biome-ignore lint/performance/noImgElement: inline data URL
+                  <img
+                    src={`data:image/jpeg;base64,${step.image}`}
+                    alt=""
+                    className="aspect-[16/10] w-full object-cover"
+                  />
+                ) : (
+                  <span className="flex aspect-[16/10] items-center justify-center p-2 text-center text-[11px] text-muted-foreground">
+                    {step.login
+                      ? "Sign-in page (private)"
+                      : step.status === "pending" || step.status === "running"
+                        ? "In progress…"
+                        : "No preview"}
+                  </span>
+                )}
+              </button>
+              <p className="mt-1.5 line-clamp-2 font-medium">
+                {index + 1}. {step.label}
+              </p>
+              <p
+                className={
+                  step.error || step.status === "failed"
+                    ? "text-destructive"
+                    : "text-muted-foreground"
+                }
+              >
+                {step.login
+                  ? "Sign-in needed"
+                  : (statusLabel[step.status] ?? step.status)}{" "}
+                · {time(step.createdAt)}
+              </p>
+            </li>
+          ))}
+        </ol>
+      )}
       {viewed && open !== null && (
         <div
           role="dialog"

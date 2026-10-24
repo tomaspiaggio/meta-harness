@@ -68,6 +68,8 @@ export function BrowserPanel({
   const [typed, setTyped] = useState("");
   const [dismissed, setDismissed] = useState(false);
   const canvas = useRef<HTMLCanvasElement>(null);
+  // Phones only open a keyboard for a focused text field, never for a canvas.
+  const keyboard = useRef<HTMLTextAreaElement>(null);
   const socket = useRef<WebSocket | null>(null);
   const key = useRef<CryptoKey | null>(null);
   const queue = useRef(Promise.resolve());
@@ -682,7 +684,13 @@ export function BrowserPanel({
                   pointer(event, "mousePressed");
                 }
               }}
-              onPointerUp={(event) => pointer(event, "mouseReleased")}
+              onPointerUp={(event) => {
+                pointer(event, "mouseReleased");
+                // Focus inside the tap so iOS/Android show the keyboard; typed
+                // characters are forwarded to whatever the tap focused remotely.
+                if (controlling && event.pointerType !== "mouse")
+                  keyboard.current?.focus({ preventScroll: true });
+              }}
               onPointerMove={(event) => {
                 if (controlling && Date.now() - hoverAt.current > 35) {
                   hoverAt.current = Date.now();
@@ -733,6 +741,32 @@ export function BrowserPanel({
                 }
               }}
             />
+            {controlling && (
+              <textarea
+                ref={keyboard}
+                aria-label="Phone keyboard for the remote page"
+                autoCapitalize="off"
+                autoCorrect="off"
+                autoComplete="off"
+                spellCheck={false}
+                rows={1}
+                className="pointer-events-none absolute bottom-0 left-0 h-8 w-full resize-none opacity-0"
+                style={{ fontSize: 16 }}
+                onInput={(event) => {
+                  const value = event.currentTarget.value;
+                  event.currentTarget.value = "";
+                  if (value) input({ type: "text", text: value });
+                }}
+                onKeyDown={(event) => {
+                  // Keys that produce no text still need to reach the page.
+                  if (["Backspace", "Enter", "Tab"].includes(event.key)) {
+                    event.preventDefault();
+                    input({ type: "key", event: "down", key: event.key });
+                    input({ type: "key", event: "up", key: event.key });
+                  }
+                }}
+              />
+            )}
             {!hasFrame && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-white">
                 {phase === "Disconnected"

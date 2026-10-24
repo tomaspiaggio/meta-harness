@@ -368,6 +368,9 @@ try {
       "Close browser view",
     );
     await evaluate(
+      `[...document.querySelectorAll('[aria-label="Browser activity"] button[aria-expanded]')].forEach((button) => button.getAttribute("aria-expanded") === "false" && button.click());true`,
+    );
+    await evaluate(
       `document.querySelector('[aria-label="Browser steps, oldest first"]').scrollIntoView({block:"start"});true`,
     );
     await until(

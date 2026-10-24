@@ -127,7 +127,8 @@ export function safeBrowserUrl(value: string): string {
 }
 
 import { redactFormValues } from "./accessibility";
-import { installCursor, showClick } from "./cursor";
+import { performAction, pointerActions } from "./actions";
+import { installCursor } from "./cursor";
 import { browserDisplay } from "./display";
 import { BrowserDownloads } from "./downloads";
 import { ExtensionRelay, extensionPairing } from "./extension-relay";
@@ -673,30 +674,7 @@ export class BrowserHost {
       );
     let targetLabel = "";
     let point: { x: number; y: number } | undefined;
-    if (["click", "fill"].includes(command.action)) {
-      const target = page.locator(String(args.selector)).first();
-      await target.scrollIntoViewIfNeeded().catch(() => {});
-      const box = await target.boundingBox().catch(() => null);
-      if (box) {
-        point = {
-          x: Math.round(box.x + box.width / 2),
-          y: Math.round(box.y + box.height / 2),
-        };
-        await showClick(page, point);
-      }
-      targetLabel = await target.evaluate((element) =>
-        (
-          element.getAttribute("aria-label") ||
-          element.getAttribute("placeholder") ||
-          element.getAttribute("title") ||
-          element.getAttribute("name") ||
-          (element.tagName === "INPUT" ? "field" : element.textContent) ||
-          "element"
-        )
-          .trim()
-          .slice(0, 100),
-      );
-    }
+    let snapshot: string | undefined;
     if (command.action === "navigate")
       await page.goto(
         await validateBrowserUrl(
@@ -705,23 +683,13 @@ export class BrowserHost {
         ),
         { waitUntil: "domcontentloaded", timeout: 20000 },
       );
-    else if (command.action === "click")
-      await page.locator(String(args.selector)).first().click();
-    else if (command.action === "fill") {
-      const locator = page.locator(String(args.selector)).first();
-      const [type, autocomplete] = await Promise.all([
-        locator.getAttribute("type"),
-        locator.getAttribute("autocomplete"),
-      ]);
-      if (
-        type === "password" ||
-        /password|one-time-code/i.test(autocomplete ?? "")
-      )
-        throw new Error(
-          "This field requires manual login. Request browser takeover.",
-        );
-      await locator.fill(String(args.text ?? "").slice(0, 4000));
-    } else if (
+    else if (pointerActions.includes(command.action))
+      ({
+        targetLabel = "",
+        point,
+        snapshot,
+      } = await performAction(page, command.action, args));
+    else if (
       !["screenshot", "read", "sheet_read", "status"].includes(command.action)
     )
       throw new Error("Unsupported browser action.");
@@ -730,6 +698,9 @@ export class BrowserHost {
       title: await page.title(),
       ...(targetLabel ? { targetLabel } : {}),
       ...(point ? { point } : {}),
+      ...(snapshot
+        ? { snapshot: redactFormValues(snapshot).slice(0, 20000) }
+        : {}),
     };
     const login = browserLoginState(page.url());
     if (login) {
@@ -765,7 +736,7 @@ export class BrowserHost {
         .first();
       result.text = (await content.innerText()).slice(0, 16000);
       result.accessibility = redactFormValues(
-        await content.ariaSnapshot(),
+        await content.ariaSnapshot({ mode: "ai" }),
       ).slice(0, 16000);
       if (result.loading)
         result.hint =
