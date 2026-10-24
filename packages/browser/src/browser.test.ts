@@ -110,12 +110,23 @@ test("real Chromium: screenshots, encrypted takeover, no model capture during lo
     );
     const concurrent = host.livePage(assignment("manual", {}));
     assert.equal(
-      (await starting).page,
-      (await concurrent).page,
+      (await starting).current(),
+      (await concurrent).current(),
       "Concurrent views must share one persistent-profile launch",
     );
     const navigation = await host.execute(assignment("navigate", { url }));
     assert.equal(typeof navigation.result.image, "string");
+    const pointed = await host.execute(assignment("click", { selector: "h1" }));
+    assert.ok(pointed.result.point, "Clicks record where the agent clicked");
+    const page = (await host.livePage(assignment("manual", {}))).current();
+    assert.deepEqual(
+      await page.evaluate(() => [
+        /HeadlessChrome/.test(navigator.userAgent),
+        Boolean(document.getElementById("__harness-cursor")),
+      ]),
+      [false, true],
+      "Headless pages report an ordinary user agent and draw the agent cursor",
+    );
     assert.match(
       String((await host.execute(assignment("read", {}))).result.text),
       /173/,
@@ -193,7 +204,7 @@ test("real Chromium: screenshots, encrypted takeover, no model capture during lo
     );
     const live = await host.livePage(assignment("manual", {}));
     assert(live.downloads);
-    await live.page.evaluate((url) => {
+    await live.current().evaluate((url: string) => {
       const link = document.createElement("a");
       link.href = url;
       link.click();

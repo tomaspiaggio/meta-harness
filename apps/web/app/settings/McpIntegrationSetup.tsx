@@ -31,9 +31,10 @@ export function McpIntegrationSetup() {
   return (
     <details className="rounded-lg border bg-background/40">
       <summary className="cursor-pointer px-4 py-3 font-serif text-lg leading-tight select-none">
-        MCP server
+        Other services (MCP)
         <span className="ml-2 font-sans text-xs text-muted-foreground">
-          Add a remote HTTP tool collection
+          Connect any service that offers an MCP URL (for example Linear or
+          Notion)
         </span>
       </summary>
       <form

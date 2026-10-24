@@ -28,7 +28,8 @@ import {
   type PendingFile,
   uploadAttachment,
 } from "./attachment-input";
-import { BrowserPanel } from "./browser-panel";
+import { BrowserPanel, type BrowserStep } from "./browser-panel";
+import { BrowserSteps } from "./browser-steps";
 import { MarkdownMessage } from "./markdown";
 import { ModelPicker } from "./model-picker";
 import { ScheduleCard } from "./schedule-card";
@@ -120,6 +121,7 @@ function Conversation() {
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [dragging, setDragging] = useState(false);
   const [browserOpen, setBrowserOpen] = useState(false);
+  const [browserSteps, setBrowserSteps] = useState<BrowserStep[]>([]);
   const draftSession = useRef<{ location: string; id: string } | null>(null);
   const routeKey = `${workspaceId}:${sessionId ?? ""}`;
   const currentLocation = useRef(routeKey);
@@ -154,6 +156,7 @@ function Conversation() {
     setFiles([]);
     setPrompt("");
     setBrowserOpen(false);
+    setBrowserSteps([]);
   }, [routeKey]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: initialize defaults after the composer location resets
   useEffect(() => {
@@ -547,6 +550,10 @@ function Conversation() {
                           "Waiting for an eligible worker…")}
                   </p>
                 )}
+                <BrowserSteps
+                  steps={browserSteps.filter((step) => step.turnId === turn.id)}
+                  onWatch={() => setBrowserOpen(true)}
+                />
                 {turn.model && (
                   <p className="mb-2 text-xs text-muted-foreground">
                     {turn.model}
@@ -580,6 +587,7 @@ function Conversation() {
               sessionId={sessionId}
               open={browserOpen}
               onOpenChange={setBrowserOpen}
+              onSteps={setBrowserSteps}
               needsLogin={state.inputRequests?.some(
                 (request) =>
                   request.sessionId === sessionId &&
@@ -605,6 +613,31 @@ function Conversation() {
                   refreshTree();
                 }}
               />
+            ))}
+          {state.inputRequests
+            ?.filter(
+              (request) =>
+                request.sessionId === sessionId &&
+                request.kind === "browser-login",
+            )
+            .slice(0, 1)
+            .map((request) => (
+              <div
+                key={request.id}
+                className="my-4 grid gap-3 rounded-lg border border-warning bg-warning/5 p-4 text-sm"
+              >
+                <p className="font-medium">
+                  Sign-in needed — the agent is paused
+                </p>
+                <p className="text-muted-foreground">{request.message}</p>
+                <Button
+                  size="sm"
+                  className="justify-self-start"
+                  onClick={() => setBrowserOpen(true)}
+                >
+                  <Globe2 /> Open browser to sign in
+                </Button>
+              </div>
             ))}
           {state.inputRequests
             ?.filter(

@@ -29,8 +29,29 @@ export { browserBackend } from "./personal-chrome";
 export function managedBrowserExecutable(): string | undefined {
   if (process.env.HARNESS_BROWSER_EXECUTABLE)
     return process.env.HARNESS_BROWSER_EXECUTABLE;
-  if (process.platform === "linux")
+  if (process.platform === "linux" && managedBrowserChannel() === "chromium")
     return ["/usr/bin/chromium", "/usr/bin/chromium-browser"].find(existsSync);
+}
+
+const installedChrome: Partial<Record<NodeJS.Platform, string>> = {
+  darwin: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  linux: "/opt/google/chrome/chrome",
+};
+/**
+ * Google rejects sign-in from Chrome for Testing and from a user agent that
+ * announces HeadlessChrome. An installed stable Chrome is preferred; an explicit
+ * executable or HARNESS_BROWSER_CHANNEL=chromium keeps the bundled build.
+ */
+export function managedBrowserChannel(): "chrome" | "chromium" {
+  const requested = process.env.HARNESS_BROWSER_CHANNEL;
+  if (requested === "chrome" || requested === "chromium") return requested;
+  if (process.env.HARNESS_BROWSER_EXECUTABLE) return "chromium";
+  const chrome = installedChrome[process.platform];
+  return chrome && existsSync(chrome) ? "chrome" : "chromium";
+}
+/** Remove the headless marker; the rest of the user agent stays truthful. */
+export function visibleUserAgent(value: string): string {
+  return value.replace(/HeadlessChrome\//, "Chrome/");
 }
 
 type Context = {
@@ -43,6 +64,7 @@ type Context = {
   userKey?: string;
   display?: Awaited<ReturnType<typeof browserDisplay>>;
   downloads?: BrowserDownloads;
+  listeners: Set<(page: Page) => void>;
 };
 function privateAddress(address: string): boolean {
   if (address.includes(":"))
@@ -96,6 +118,8 @@ export async function validateBrowserUrl(
 export function safeBrowserUrl(value: string): string {
   try {
     const url = new URL(value);
+    // about:blank and other opaque URLs have a "null" origin.
+    if (!["http:", "https:"].includes(url.protocol)) return "about:blank";
     return `${url.origin}${url.pathname}`;
   } catch {
     return "about:blank";
@@ -103,6 +127,7 @@ export function safeBrowserUrl(value: string): string {
 }
 
 import { redactFormValues } from "./accessibility";
+import { installCursor, showClick } from "./cursor";
 import { browserDisplay } from "./display";
 import { BrowserDownloads } from "./downloads";
 import { ExtensionRelay, extensionPairing } from "./extension-relay";
@@ -117,6 +142,7 @@ export class BrowserHost {
     { generation: number; promise: Promise<Context> }
   >();
   private attachedBrowser?: Browser;
+  private userAgents = new Map<string, string>();
   private relay?: ExtensionRelay;
   readonly backend: BrowserBackend;
   constructor(
@@ -146,6 +172,7 @@ export class BrowserHost {
   static async available(): Promise<boolean> {
     if (["personal-chrome", "extension"].includes(browserBackend()))
       return true;
+    if (managedBrowserChannel() === "chrome") return true;
     const executable = managedBrowserExecutable();
     if (executable) return existsSync(executable);
     const cache = process.env.PLAYWRIGHT_BROWSERS_PATH;
@@ -210,6 +237,7 @@ export class BrowserHost {
     await this.disconnectIfIdle();
     const { rm } = await import("node:fs/promises");
     await rm(join(this.root, id), { recursive: true, force: true });
+    await rm(join(this.root, `${id}-chrome`), { recursive: true, force: true });
   }
   async close() {
     await Promise.allSettled(
@@ -311,6 +339,7 @@ export class BrowserHost {
         page,
         lastUsed: Date.now(),
         generation: identity.generation,
+        listeners: new Set(),
       };
       this.contexts.set(identity.id, result);
       return result;
@@ -381,7 +410,12 @@ export class BrowserHost {
     if (!/^[a-zA-Z0-9_-]{1,100}$/.test(identity.id))
       throw new Error("Invalid browser identity path.");
     const { chromium } = await import("patchright");
-    const path = join(this.root, identity.id);
+    const channel = managedBrowserChannel();
+    // Chrome must not open a profile written by the newer bundled build.
+    const path = join(
+      this.root,
+      channel === "chrome" ? `${identity.id}-chrome` : identity.id,
+    );
     await mkdir(path, { recursive: true, mode: 0o700 });
     if ((await lstat(path)).isSymbolicLink())
       throw new Error("Browser profile cannot be a symlink.");
@@ -390,24 +424,47 @@ export class BrowserHost {
       process.env.HARNESS_BROWSER_VIRTUAL_DISPLAY === "1"
         ? await browserDisplay()
         : undefined;
-    const context = await chromium
-      .launchPersistentContext(path, {
-        channel: "chromium",
-        headless: display ? false : (this.options.headless ?? true),
+    const headless = display ? false : (this.options.headless ?? true);
+    const launch = (userAgent?: string) =>
+      chromium.launchPersistentContext(path, {
+        channel,
+        headless,
         ...(display ? { env: { ...process.env, ...display.env } } : {}),
-        executablePath: managedBrowserExecutable(),
+        ...(channel === "chromium"
+          ? { executablePath: managedBrowserExecutable() }
+          : {}),
+        ...(userAgent ? { userAgent } : {}),
         viewport: { width: 1280, height: 800 },
         deviceScaleFactor: 1,
         acceptDownloads: true,
         serviceWorkers: "block",
-      })
-      .catch(async (error) => {
-        await display?.close();
-        throw error;
       });
+    let context = await launch(
+      headless ? this.userAgents.get(channel) : undefined,
+    ).catch(async (error) => {
+      await display?.close();
+      throw error;
+    });
+    if (headless && !this.userAgents.has(channel)) {
+      // The version is only known after the first launch; relaunch once per
+      // worker process so every page reports an ordinary Chrome user agent.
+      const page = context.pages()[0] ?? (await context.newPage());
+      const agent = await page.evaluate(() => navigator.userAgent);
+      this.userAgents.set(channel, visibleUserAgent(agent));
+      if (agent !== visibleUserAgent(agent)) {
+        await context.close();
+        context = await launch(this.userAgents.get(channel)).catch(
+          async (error) => {
+            await display?.close();
+            throw error;
+          },
+        );
+      }
+    }
     try {
       context.setDefaultTimeout(10000);
       await this.restrictNetwork(context);
+      await installCursor(context);
       if (identity.stateCipher) {
         const state = openState<{
           cookies: Parameters<BrowserContext["addCookies"]>[0];
@@ -445,7 +502,21 @@ export class BrowserHost {
         page,
         lastUsed: Date.now(),
         generation: identity.generation,
+        listeners: new Set(),
       };
+      // The newest open tab is the active one, as in a person's browser.
+      const activate = (next: Page) => {
+        result.page = next;
+        for (const listener of result.listeners) listener(next);
+      };
+      context.on("page", (opened) => {
+        activate(opened);
+        opened.on("close", () => {
+          const remaining = context.pages().filter((item) => !item.isClosed());
+          const last = remaining.at(-1);
+          if (result.page === opened && last) activate(last);
+        });
+      });
       this.contexts.set(identity.id, result);
       return result;
     } catch (error) {
@@ -467,8 +538,21 @@ export class BrowserHost {
       );
     const context = await this.get(assignment);
     context.lastUsed = Date.now();
+    // A profile reopened after its idle timeout starts blank. Return to the
+    // page that asked for sign-in so the viewer sees the real login screen.
+    const last = assignment.identity.lastUrl;
+    const resume =
+      last && browserLoginState(last) === "rejected"
+        ? "https://accounts.google.com/"
+        : last;
+    if (context.page.url() === "about:blank" && resume)
+      await this.liveNavigate(context.page, resume).catch(() => {});
     return {
-      page: context.page,
+      current: () => context.page,
+      onPage: (listener: (page: Page) => void) => {
+        context.listeners.add(listener);
+        return () => context.listeners.delete(listener);
+      },
       downloads: context.downloads,
       touch: () => {
         context.lastUsed = Date.now();
@@ -588,8 +672,18 @@ export class BrowserHost {
         "Browser input and model capture are paused while the user controls it.",
       );
     let targetLabel = "";
+    let point: { x: number; y: number } | undefined;
     if (["click", "fill"].includes(command.action)) {
       const target = page.locator(String(args.selector)).first();
+      await target.scrollIntoViewIfNeeded().catch(() => {});
+      const box = await target.boundingBox().catch(() => null);
+      if (box) {
+        point = {
+          x: Math.round(box.x + box.width / 2),
+          y: Math.round(box.y + box.height / 2),
+        };
+        await showClick(page, point);
+      }
       targetLabel = await target.evaluate((element) =>
         (
           element.getAttribute("aria-label") ||
@@ -635,10 +729,14 @@ export class BrowserHost {
       url: safeBrowserUrl(page.url()),
       title: await page.title(),
       ...(targetLabel ? { targetLabel } : {}),
+      ...(point ? { point } : {}),
     };
     const login = browserLoginState(page.url());
     if (login) {
       result.login = login;
+      // The requested page, not the login wall, is where takeover resumes:
+      // reopening it lets the site issue a fresh sign-in redirect.
+      if (command.action === "navigate") result.resumeUrl = String(args.url);
       result.status = "needs_login";
       result.hint =
         login === "rejected"

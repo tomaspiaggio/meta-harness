@@ -1,14 +1,15 @@
 "use client";
 import type { BrowserIdentity } from "@harness/core/browser";
-import Image from "next/image";
+import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { BrowserSteps } from "./browser-steps";
 import { ErrorNote } from "./shell";
 
 type View = Omit<BrowserIdentity, "stateCipher" | "userPublicKey">;
-type Step = {
+export type BrowserStep = {
   id: string;
   label: string;
   status: string;
@@ -35,6 +36,7 @@ export function BrowserPanel({
   open,
   onOpenChange,
   needsLogin = false,
+  onSteps,
 }: {
   workspaceId: string;
   sessionId: string;
@@ -42,6 +44,7 @@ export function BrowserPanel({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   needsLogin?: boolean;
+  onSteps?: (steps: BrowserStep[]) => void;
 }) {
   const [browser, setBrowser] = useState<View | null>(null);
   const [host, setHost] = useState("");
@@ -53,8 +56,7 @@ export function BrowserPanel({
     chunks: Uint8Array<ArrayBuffer>[];
     offset: number;
   } | null>(null);
-  const [expandedStep, setExpandedStep] = useState<string | null>(null);
-  const [steps, setSteps] = useState<Step[]>([]);
+  const [steps, setSteps] = useState<BrowserStep[]>([]);
   const stepCursor = useRef("");
   const [error, setError] = useState("");
   const [phase, setPhase] = useState("Connecting");
@@ -63,6 +65,7 @@ export function BrowserPanel({
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [controlling, setControlling] = useState(false);
+  const [typed, setTyped] = useState("");
   const [dismissed, setDismissed] = useState(false);
   const canvas = useRef<HTMLCanvasElement>(null);
   const socket = useRef<WebSocket | null>(null);
@@ -70,7 +73,15 @@ export function BrowserPanel({
   const queue = useRef(Promise.resolve());
   const sequence = useRef(0);
   const pending = useRef(
-    new Map<string, { at: number; resolve: () => void; done: Promise<void> }>(),
+    new Map<
+      string,
+      {
+        at: number;
+        resolve: () => void;
+        done: Promise<void>;
+        settled?: (error?: string) => void;
+      }
+    >(),
   );
   const mounted = useRef(true);
   const generation = useRef(0);
@@ -80,6 +91,16 @@ export function BrowserPanel({
   const visibleRef = useRef(false);
   const wheelHandler = useRef<(event: WheelEvent) => void>(() => {});
   const visible = open || (needsLogin && !dismissed);
+  const site = (() => {
+    try {
+      return new URL(url || browser?.lastUrl || "").hostname.replace(
+        /^www\./,
+        "",
+      );
+    } catch {
+      return "";
+    }
+  })();
   visibleRef.current = visible;
   useEffect(() => {
     if (!needsLogin) setDismissed(false);
@@ -108,9 +129,14 @@ export function BrowserPanel({
     if (!mounted.current) return;
     setBrowser(data.browser);
     setHost(data.host?.name ?? "");
-    if (data.steps) setSteps(data.steps);
+    if (data.steps) {
+      setSteps(data.steps);
+      onStepsRef.current?.(data.steps);
+    }
     stepCursor.current = data.stepCursor ?? "";
   }
+  const onStepsRef = useRef(onSteps);
+  onStepsRef.current = onSteps;
   const loadRef = useRef(load);
   loadRef.current = load;
   useEffect(() => {
@@ -175,7 +201,13 @@ export function BrowserPanel({
         try {
           const message = JSON.parse(event.data);
           if (message.type === "error") {
-            setError(message.error);
+            const receipt = message.id && pending.current.get(message.id);
+            if (receipt) {
+              receipt.resolve();
+              receipt.settled?.(message.error);
+              pending.current.delete(message.id);
+            }
+            if (!receipt?.settled) setError(message.error);
             return;
           }
           if (message.type === "ack") {
@@ -183,6 +215,7 @@ export function BrowserPanel({
             if (receipt) {
               setLatency(Date.now() - receipt.at);
               receipt.resolve();
+              receipt.settled?.();
               pending.current.delete(message.id);
             }
             return;
@@ -305,7 +338,9 @@ export function BrowserPanel({
       setBusy(false);
     }
   }
-  const inputRef = useRef<(value: Record<string, unknown>) => void>(() => {});
+  const inputRef = useRef<
+    (value: Record<string, unknown>, settled?: (error?: string) => void) => void
+  >(() => {});
   const connectRef = useRef(connect);
   connectRef.current = connect;
   useEffect(() => {
@@ -317,9 +352,15 @@ export function BrowserPanel({
     };
   }, [visible]);
 
-  function input(value: Record<string, unknown>) {
+  function input(
+    value: Record<string, unknown>,
+    settled?: (error?: string) => void,
+  ) {
     const ws = socket.current;
-    if (!controlling || phase !== "Live" || !key.current || !ws) return;
+    if (!controlling || phase !== "Live" || !key.current || !ws) {
+      settled?.("Take control of the browser first.");
+      return;
+    }
     const activeKey = key.current;
     queue.current = queue.current
       .then(async () => {
@@ -335,7 +376,7 @@ export function BrowserPanel({
         const done = new Promise<void>((r) => {
           resolve = r;
         });
-        pending.current.set(id, { at: Date.now(), resolve, done });
+        pending.current.set(id, { at: Date.now(), resolve, done, settled });
         ws.send(
           JSON.stringify({
             type: "input",
@@ -457,87 +498,8 @@ export function BrowserPanel({
     target?.addEventListener("wheel", wheel, { passive: false });
     return () => target?.removeEventListener("wheel", wheel);
   }, [visible]);
-  const activity = steps.length > 0 && (
-    <details className="my-3 rounded-xl border bg-card px-4 py-3" open>
-      <summary className="cursor-pointer text-sm">
-        Browser activity · {steps.length} recent steps
-      </summary>
-      <ol className="mt-3 space-y-3" aria-label="Browser steps, oldest first">
-        {steps.map((step, index) => (
-          <li key={step.id} className="min-w-0 rounded-lg border p-3 text-xs">
-            <div className="flex flex-wrap items-baseline gap-2">
-              <span className="text-muted-foreground">{index + 1}.</span>
-              <span className="min-w-0 flex-1 font-medium">{step.label}</span>
-              <time
-                className="whitespace-nowrap text-muted-foreground"
-                dateTime={new Date(step.createdAt).toISOString()}
-              >
-                {new Date(step.createdAt).toLocaleString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  second: "2-digit",
-                })}
-              </time>
-              <span className="whitespace-nowrap text-muted-foreground">
-                {step.login
-                  ? "Sign-in needed"
-                  : ((
-                      {
-                        pending: "Waiting",
-                        running: "Running",
-                        completed: "Done",
-                        failed: "Failed",
-                        unknown_outcome: "Outcome unconfirmed",
-                      } as Record<string, string>
-                    )[step.status] ?? step.status)}
-              </span>
-            </div>
-            {step.target && (
-              <p className="mt-1 break-all text-muted-foreground">
-                {step.target}
-              </p>
-            )}
-            {step.error && (
-              <p className="mt-2 text-destructive">{step.error}</p>
-            )}
-            {step.image ? (
-              <button
-                type="button"
-                className="mt-2 block w-full text-left"
-                aria-label={`Expand screenshot: ${step.label}`}
-                aria-expanded={expandedStep === step.id}
-                onClick={() =>
-                  setExpandedStep(expandedStep === step.id ? null : step.id)
-                }
-              >
-                <Image
-                  src={`data:image/jpeg;base64,${step.image}`}
-                  alt={`After: ${step.label}`}
-                  width={640}
-                  height={400}
-                  unoptimized
-                  className={
-                    expandedStep === step.id
-                      ? "w-full rounded"
-                      : "w-48 max-w-full rounded"
-                  }
-                />
-              </button>
-            ) : (
-              <p className="mt-2 text-muted-foreground">
-                {step.login
-                  ? "Sign-in screenshots are private. Open the live browser to continue."
-                  : step.status === "completed"
-                    ? "Preview unavailable for this earlier step."
-                    : "A preview appears after this step finishes."}
-              </p>
-            )}
-          </li>
-        ))}
-      </ol>
-    </details>
+  const activity = !onSteps && steps.length > 0 && (
+    <BrowserSteps steps={steps} />
   );
   if (!visible || typeof document === "undefined") return activity;
   return (
@@ -556,7 +518,7 @@ export function BrowserPanel({
               }
             }
           }}
-          className="fixed bottom-4 right-4 top-20 z-50 flex w-[calc(100vw-2rem)] max-w-6xl flex-col overflow-hidden rounded-xl border bg-card shadow-2xl lg:left-[18rem] lg:w-auto"
+          className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-card pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] sm:inset-auto sm:bottom-4 sm:right-4 sm:top-20 sm:w-[calc(100vw-2rem)] sm:max-w-6xl sm:rounded-xl sm:border sm:pt-0 sm:pb-0 sm:shadow-2xl lg:left-[18rem] lg:w-auto"
         >
           <div className="flex flex-wrap items-center gap-2 border-b p-3">
             <strong className="text-sm" title={browser?.name}>
@@ -566,12 +528,16 @@ export function BrowserPanel({
             <span
               role="status"
               data-testid="browser-stream-status"
-              className="text-xs"
+              className="flex items-center gap-1.5 text-xs"
             >
+              <span
+                aria-hidden
+                className={`size-2 rounded-full ${phase === "Live" ? "bg-success" : phase === "Disconnected" ? "bg-destructive" : "bg-warning"}`}
+              />
               {phase} · {controlling ? "You have control" : "Watching"}
               {latency !== null && controlling ? ` · ${latency} ms` : ""}
             </span>
-            <div className="ml-auto flex gap-2">
+            <div className="ml-auto flex flex-wrap justify-end gap-2">
               {phase === "Disconnected" && (
                 <Button
                   size="sm"
@@ -589,15 +555,16 @@ export function BrowserPanel({
                   disabled={busy}
                   onClick={() => void release()}
                 >
-                  Release control · Esc
+                  Give control back
                 </Button>
               ) : (
                 <Button
                   size="sm"
+                  variant={needsLogin ? "default" : "outline"}
                   disabled={busy}
                   onClick={() => void connect(true)}
                 >
-                  {needsLogin ? "Sign in" : "Take control"}
+                  {needsLogin ? "1. Take control to sign in" : "Take control"}
                 </Button>
               )}
               {needsLogin && (
@@ -606,30 +573,46 @@ export function BrowserPanel({
                   disabled={busy}
                   onClick={() => void release(true)}
                 >
-                  Continue task
+                  {controlling ? "2. Done — continue task" : "Continue task"}
                 </Button>
               )}
-              {
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    if (controlling)
-                      void release().then(() => {
-                        setDismissed(true);
-                        onOpenChange(false);
-                      });
-                    else {
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label="Close browser view"
+                onClick={() => {
+                  if (controlling)
+                    void release().then(() => {
                       setDismissed(true);
                       onOpenChange(false);
-                    }
-                  }}
-                >
-                  Close browser view
-                </Button>
-              }
+                    });
+                  else {
+                    setDismissed(true);
+                    onOpenChange(false);
+                  }
+                }}
+              >
+                <X />
+                <span className="hidden sm:inline">Close</span>
+              </Button>
             </div>
           </div>
+          {needsLogin && (
+            <div
+              role="note"
+              className="grid gap-1 border-b bg-warning/10 px-3 py-2 text-sm"
+            >
+              <strong className="font-medium">
+                The agent is paused until you sign in
+                {site ? ` to ${site}` : ""}.
+              </strong>
+              <span className="text-xs text-muted-foreground">
+                {controlling
+                  ? `Use “Sign in privately” below, or tap and type on the page.${/google/.test(site) ? " If Google asks for a passkey, tap “Try another way” and use your password." : ""} When you see the signed-in page, press Done — continue task.`
+                  : "Press Take control, complete the login in this browser, then press Continue task. Your password goes only to the site; the agent and conversation never see it."}
+              </span>
+            </div>
+          )}
           {controlling && downloads.length > 0 && (
             <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm">
               <span>Downloads on this worker:</span>
@@ -682,7 +665,7 @@ export function BrowserPanel({
             </div>
           )}
           <div
-            className="relative min-h-0 flex-1 bg-neutral-950"
+            className="relative flex min-h-0 flex-1 items-center justify-center bg-muted sm:bg-neutral-950"
             aria-busy={!hasFrame}
           >
             <canvas
@@ -692,7 +675,7 @@ export function BrowserPanel({
               tabIndex={0}
               aria-label="Remote browser"
               data-ready={hasFrame}
-              className="block h-full w-full touch-none object-contain outline-none focus:ring-2 focus:ring-primary"
+              className="block h-auto max-h-full w-auto max-w-full touch-none outline-none focus:ring-2 focus:ring-primary"
               onPointerDown={(event) => {
                 if (controlling) {
                   event.currentTarget.setPointerCapture(event.pointerId);
@@ -758,15 +741,159 @@ export function BrowserPanel({
               </div>
             )}
           </div>
+          {controlling && <SealedSignIn send={input} />}
+          {controlling && (
+            <form
+              className="flex items-center gap-2 border-t px-3 py-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (typed) input({ type: "text", text: typed });
+                setTyped("");
+              }}
+            >
+              <Input
+                aria-label="Type into the page"
+                placeholder="Tap a field on the page, then type here"
+                value={typed}
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                onChange={(event) => setTyped(event.target.value)}
+                className="h-9 min-w-0 flex-1 text-base sm:text-sm"
+              />
+              <Button size="sm" type="submit" variant="outline">
+                Type
+              </Button>
+              {(["Backspace", "Tab", "Enter"] as const).map((key) => (
+                <Button
+                  key={key}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    input({ type: "key", event: "down", key });
+                    input({ type: "key", event: "up", key });
+                  }}
+                >
+                  {key === "Backspace" ? "⌫" : key}
+                </Button>
+              ))}
+            </form>
+          )}
           <p className="px-3 py-2 text-xs text-muted-foreground">
             {controlling
-              ? "Click and type directly. Paste works here. Esc releases control without sending a message."
-              : "Live, read-only view. Watching and closing this view do not send a message."}
+              ? "You control the browser and the agent is paused. Click and type on the page (paste works). Esc or Give control back returns it without sending a message."
+              : "Live, read-only view of what the agent sees. Watching never interrupts the agent, and closing sends nothing."}
           </p>
         </section>,
         document.body,
       )}
       {activity}
     </>
+  );
+}
+
+const sealedFields = [
+  {
+    field: "username",
+    label: "Email or username",
+    type: "email",
+    autoComplete: "username",
+  },
+  {
+    field: "password",
+    label: "Password",
+    type: "password",
+    autoComplete: "current-password",
+  },
+  {
+    field: "code",
+    label: "Verification code",
+    type: "text",
+    autoComplete: "one-time-code",
+  },
+] as const;
+
+/**
+ * Phone-friendly sign-in. Each value is encrypted with this view's key, typed
+ * into the matching field on the remote page and submitted. It is cleared here
+ * and never stored, logged, or shown to the agent or the conversation.
+ */
+function SealedSignIn({
+  send,
+}: {
+  send: (
+    value: Record<string, unknown>,
+    settled?: (error?: string) => void,
+  ) => void;
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [status, setStatus] = useState<Record<string, string>>({});
+  return (
+    <details className="border-t px-3 py-2 text-sm" open>
+      <summary className="cursor-pointer font-medium">
+        Sign in privately
+        <span className="ml-2 font-normal text-xs text-muted-foreground">
+          Typed straight into the page; never saved or shown to the agent
+        </span>
+      </summary>
+      <div className="mt-2 grid gap-2">
+        {sealedFields.map((item) => (
+          <form
+            key={item.field}
+            className="grid gap-1"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const value = values[item.field] ?? "";
+              if (!value) return;
+              setStatus((current) => ({
+                ...current,
+                [item.field]: "Sending…",
+              }));
+              send({ type: "credential", field: item.field, value }, (error) =>
+                setStatus((current) => ({
+                  ...current,
+                  [item.field]: error ?? "Entered and submitted ✓",
+                })),
+              );
+              setValues((current) => ({ ...current, [item.field]: "" }));
+            }}
+          >
+            <div className="flex gap-2">
+              <Input
+                aria-label={item.label}
+                placeholder={item.label}
+                type={item.type}
+                autoComplete={item.autoComplete}
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                value={values[item.field] ?? ""}
+                onChange={(event) =>
+                  setValues((current) => ({
+                    ...current,
+                    [item.field]: event.target.value,
+                  }))
+                }
+                className="h-9 min-w-0 flex-1"
+              />
+              <Button size="sm" variant="outline" className="h-9">
+                Enter
+              </Button>
+            </div>
+            {status[item.field] && (
+              <p className="text-xs text-muted-foreground" role="status">
+                {status[item.field]}
+              </p>
+            )}
+          </form>
+        ))}
+        <p className="text-xs text-muted-foreground">
+          Go step by step: send the email, wait for the next screen, then the
+          password, then any code. If a site asks for a passkey, tap “Try
+          another way” on the page first.
+        </p>
+      </div>
+    </details>
   );
 }

@@ -385,17 +385,17 @@ try {
       "Activity timeline overflows",
     );
     await evaluate(
-      `document.querySelector('button[aria-label^="Expand screenshot"]').click();true`,
+      `document.querySelector('button[aria-label^="View step"]').click();true`,
     );
     await until(
       () =>
         evaluate(
-          `Boolean(document.querySelector('button[aria-label^="Expand screenshot"][aria-expanded="true"]'))`,
+          `Boolean(document.querySelector('[role="dialog"][aria-label^="Step"] img'))`,
         ),
-      "Screenshot cannot expand",
+      "Screenshot viewer did not open",
     );
     await evaluate(
-      `document.querySelector('button[aria-label^="Expand screenshot"][aria-expanded="true"]').click();true`,
+      `document.querySelector('[role="dialog"] button[aria-label="Close"]').click();true`,
     );
     await cli("screenshot", `/tmp/${browserName}-activity.png`);
     const identity = (
@@ -440,11 +440,19 @@ try {
   await until(
     () =>
       evaluate(
-        '[...document.querySelectorAll("button")].some(button => button.textContent.trim() === "Sign in")',
+        '[...document.querySelectorAll("button")].some(button => button.textContent.trim() === "1. Take control to sign in")',
       ),
     "A login wait did not expose Sign in",
   );
-  await cli("find", "role", "button", "click", "--name", "Sign in", "--exact");
+  await cli(
+    "find",
+    "role",
+    "button",
+    "click",
+    "--name",
+    "1. Take control to sign in",
+    "--exact",
+  );
   await ready();
   await cli("focus", "canvas");
   await cli("press", "Escape");
@@ -461,7 +469,15 @@ try {
     waiting.inputRequests.some((input) => input.kind === "browser-login"),
     "Release silently resolved a login wait",
   );
-  await cli("find", "role", "button", "click", "--name", "Sign in", "--exact");
+  await cli(
+    "find",
+    "role",
+    "button",
+    "click",
+    "--name",
+    "1. Take control to sign in",
+    "--exact",
+  );
   await ready();
   await cli(
     "find",
@@ -469,7 +485,7 @@ try {
     "button",
     "click",
     "--name",
-    "Continue task",
+    "2. Done — continue task",
     "--exact",
   );
   await ready();

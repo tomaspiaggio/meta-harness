@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { GET as callback } from "../../../apps/web/app/api/integrations/google/callback/route";
+import { POST as save } from "../../../apps/web/app/api/integrations/google/client/route";
 import { POST as disconnect } from "../../../apps/web/app/api/integrations/google/disconnect/route";
 import { POST as start } from "../../../apps/web/app/api/integrations/google/start/route";
 import { GET as status } from "../../../apps/web/app/api/integrations/google/status/route";
@@ -181,6 +182,8 @@ test("actual owner resource routes complete signed consent fixtures, reject CSRF
     const body = await result.json();
     assert.deepEqual(body.setup, {
       configured: true,
+      source: "environment",
+      canSave: false,
       missing: [],
       invalid: [],
       expectedRedirectUri:
@@ -241,6 +244,81 @@ test("actual owner resource routes complete signed consent fixtures, reject CSRF
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Settings can save the resource OAuth client without exposing or rotating secrets", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "fixture-google-client-"));
+  const names = [
+    "HARNESS_DATA_DIR",
+    "HARNESS_REQUIRE_AUTH",
+    "HARNESS_BIND_HOST",
+    "HARNESS_GOOGLE_RESOURCE_CLIENT_ID",
+    "HARNESS_GOOGLE_RESOURCE_CLIENT_SECRET",
+    "HARNESS_GOOGLE_RESOURCE_REDIRECT_URI",
+    "HARNESS_GOOGLE_RESOURCE_KEY",
+  ];
+  const previous = Object.fromEntries(
+    names.map((key) => [key, process.env[key]]),
+  );
+  for (const name of names) delete process.env[name];
+  Object.assign(process.env, {
+    HARNESS_DATA_DIR: directory,
+    HARNESS_REQUIRE_AUTH: "0",
+    HARNESS_BIND_HOST: "127.0.0.1",
+  });
+  const { googleResourceConfig } = await import(
+    "../../../apps/web/server/google-integrations"
+  );
+  const { readFile } = await import("node:fs/promises");
+  const post = (body: unknown) =>
+    save(
+      new Request("http://127.0.0.1:3213/api/integrations/google/client", {
+        method: "POST",
+        headers: {
+          host: "127.0.0.1:3213",
+          origin: "http://127.0.0.1:3213",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+  try {
+    const rejected = await post({ clientId: "nope", clientSecret: "x" });
+    assert.equal(rejected.status, 400);
+    const saved = await post({
+      clientId: "1234-abc.apps.googleusercontent.com",
+      clientSecret: "fixture-secret-value",
+    });
+    assert.equal(saved.status, 200);
+    const { setup } = await saved.json();
+    assert.equal(setup.configured, true);
+    assert.equal(setup.source, "settings");
+    assert.equal(
+      setup.redirectUri,
+      "http://127.0.0.1:3213/api/integrations/google/callback",
+    );
+    assert.ok(!JSON.stringify(setup).includes("fixture-secret-value"));
+    const file = await readFile(
+      join(directory, "google-resource-client.json"),
+      "utf8",
+    );
+    assert.ok(!file.includes("fixture-secret-value"), "Secret is sealed");
+    const first = googleResourceConfig();
+    assert.equal(first.clientSecret, "fixture-secret-value");
+    // Replacing the client keeps the token key so stored tokens still decrypt.
+    await post({
+      clientId: "5678-def.apps.googleusercontent.com",
+      clientSecret: "another-secret-value",
+    });
+    const second = googleResourceConfig();
+    assert.equal(second.clientId, "5678-def.apps.googleusercontent.com");
+    assert.deepEqual(second.keys, first.keys);
+  } finally {
+    for (const [key, value] of Object.entries(previous))
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
     await rm(directory, { recursive: true, force: true });
   }
 });
