@@ -77,3 +77,24 @@ privately. The control plane is still on the Mac; moving control to the Pi is a
 separate deployment task. Two final acceptance runs measured 14–16 frames/1.2s
 and 40–42ms input acknowledgement; the Pi independently recorded all five expected
 fixture input events. Explicit login continuation and mobile layout also passed.
+
+
+## Account readiness and downloads follow-up (2026-10-23)
+
+The actual Pi also passed with `HARNESS_BROWSER_VIRTUAL_DISPLAY=1`: private
+Xvfb/xauth, headed system Chromium, encrypted owner input and file retrieval.
+A local Mac run and Pi runs downloaded a credential-shaped fixture containing
+90,000 padding bytes, then retrieved and compared its content through multiple
+64 KiB encrypted chunks. The UI renders chronological, timestamped action history,
+read thumbnails, and compact previews expandable inline. Fixtures explicitly
+release their own completed browser reservations so repeated test runs do not
+wait for the normal two-minute idle timeout. No personal record is removed.
+
+`pnpm check`, browser-enabled tests (96 passed, three optional skips), build,
+isolated Workflow smoke and owner UI acceptance passed. Production control and
+Pi worker were upgraded while idle; the Pi's private config was backed up.
+Real Google sign-in remains unverified: the account rejected the prior headless
+browser. Google explicitly may reject software-automated browsers, and headed
+mode is a compatibility option. No OAuth client secret has been created or
+downloaded by this validation. The real CRM schedule remains paused until an
+authenticated rehearsal verifies its sources; test fixtures do not establish it.

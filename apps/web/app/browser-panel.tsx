@@ -53,6 +53,7 @@ export function BrowserPanel({
     chunks: Uint8Array<ArrayBuffer>[];
     offset: number;
   } | null>(null);
+  const [expandedStep, setExpandedStep] = useState<string | null>(null);
   const [steps, setSteps] = useState<Step[]>([]);
   const stepCursor = useRef("");
   const [error, setError] = useState("");
@@ -502,11 +503,14 @@ export function BrowserPanel({
               <p className="mt-2 text-destructive">{step.error}</p>
             )}
             {step.image ? (
-              <a
-                href={`data:image/jpeg;base64,${step.image}`}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={`Enlarge screenshot: ${step.label}`}
+              <button
+                type="button"
+                className="mt-2 block w-full text-left"
+                aria-label={`Expand screenshot: ${step.label}`}
+                aria-expanded={expandedStep === step.id}
+                onClick={() =>
+                  setExpandedStep(expandedStep === step.id ? null : step.id)
+                }
               >
                 <Image
                   src={`data:image/jpeg;base64,${step.image}`}
@@ -514,9 +518,13 @@ export function BrowserPanel({
                   width={640}
                   height={400}
                   unoptimized
-                  className="mt-2 w-full rounded"
+                  className={
+                    expandedStep === step.id
+                      ? "w-full rounded"
+                      : "w-48 max-w-full rounded"
+                  }
                 />
-              </a>
+              </button>
             ) : (
               <p className="mt-2 text-muted-foreground">
                 {step.login

@@ -681,8 +681,16 @@ Live-view final verification:
 - [x] Enable private worker-local downloads and encrypted owner retrieval; never
   publish credential file contents into model/tool/database history.
 - [x] Add optional authenticated on-demand Linux display for headed Chromium.
-- [ ] Verify full owner UI download with multiple encrypted chunks.
-- [ ] Verify headed display lifecycle and full owner controls on the actual Pi.
+- [x] Verify full owner UI download with multiple encrypted chunks on Mac and Pi.
+- [x] Verify headed display lifecycle and full owner controls on the actual Pi.
 - [ ] Complete real Google sign-in and create/download the OAuth credential.
 - [ ] Rehearse the existing CRM briefing against authenticated sources before
   resuming its paused weekday schedule. Do not send outreach messages.
+
+Browser readiness verification: `pnpm check`, browser-enabled `pnpm test` (96
+passed, three optional tests skipped), `pnpm build`, authenticated isolated
+`pnpm smoke`, and actual Pi headed browser owner-UI acceptance passed. Pi runs
+showed 14–15 frames per 1.2 seconds and 78–146 ms input acknowledgements. A
+90,000-byte payload plus credential-shaped metadata crossed multiple encrypted
+chunks intact. Original worker credentials, caches, profiles and paused real
+schedule were retained. No live Google credential or CRM action was established.

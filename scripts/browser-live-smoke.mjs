@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { basename, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { browserTool } from "../apps/web/server/browser.ts";
+import { BrowserBroker, browserTool } from "../apps/web/server/browser.ts";
 import { HarnessStore } from "../packages/storage/src/application.ts";
 import { browserFixture } from "./browser-live-fixture.mjs";
 
@@ -359,6 +359,45 @@ try {
       () => evaluate('document.body.textContent.includes("Browser activity")'),
       "Activity timeline did not render",
     );
+    await cli(
+      "find",
+      "role",
+      "button",
+      "click",
+      "--name",
+      "Close browser view",
+    );
+    await evaluate(
+      `document.querySelector('[aria-label="Browser steps, oldest first"]').scrollIntoView({block:"start"});true`,
+    );
+    await until(
+      () =>
+        evaluate(
+          `document.querySelectorAll('[aria-label="Browser steps, oldest first"] img').length >= 2`,
+        ),
+      "Timeline thumbnails missing from UI",
+    );
+    assert.equal(
+      await evaluate(
+        "document.documentElement.scrollWidth > window.innerWidth",
+      ),
+      false,
+      "Activity timeline overflows",
+    );
+    await evaluate(
+      `document.querySelector('button[aria-label^="Expand screenshot"]').click();true`,
+    );
+    await until(
+      () =>
+        evaluate(
+          `Boolean(document.querySelector('button[aria-label^="Expand screenshot"][aria-expanded="true"]'))`,
+        ),
+      "Screenshot cannot expand",
+    );
+    await evaluate(
+      `document.querySelector('button[aria-label^="Expand screenshot"][aria-expanded="true"]').click();true`,
+    );
+    await cli("screenshot", `/tmp/${browserName}-activity.png`);
     const identity = (
       await api(`browser?workspace=${workspace.id}&session=${session.id}`)
     ).browser;
@@ -470,6 +509,8 @@ try {
       framesIn1_2s: next - frames,
       inputAckMs: latency,
       screenshot: `/tmp/${browserName}.png`,
+      activityScreenshot: `/tmp/${browserName}-activity.png`,
+      encryptedDownload: true,
       sessionId: session.id,
       workspaceId: workspace.id,
     }),
@@ -496,6 +537,18 @@ try {
       }).catch(() => {});
   }
   await cli("close").catch(() => {});
+  if (workspace) {
+    const cleanup = new HarnessStore(join(directory, "harness.sqlite"));
+    await cleanup.ready;
+    try {
+      const broker = new BrowserBroker(cleanup);
+      const browser = await broker.forWorkspace(workspace.id);
+      if (browser?.workerId && browser.mode === "agent")
+        await broker.release(browser.workerId, browser.id, browser.generation);
+    } finally {
+      await cleanup.close();
+    }
+  }
   fixture.closeAllConnections();
   await new Promise((resolve) => fixture.close(resolve));
 }
