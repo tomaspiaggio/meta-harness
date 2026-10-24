@@ -187,6 +187,38 @@ try {
   const latency = Number(status.match(/(\d+) ms/)?.[1]);
   assert(latency < 1000, `Input acknowledgement too slow: ${status}`);
   await cli("screenshot", `/tmp/${browserName}.png`);
+  // Fetch a two-chunk credential-shaped file through the encrypted owner stream.
+  // Intercept the final Blob in this isolated UI so no real Downloads folder is used.
+  await evaluate(
+    `(()=>{const original=URL.createObjectURL;URL.createObjectURL=function(blob){window.__fixtureDownload=blob.text();return original.call(this,blob)};return true})()`,
+  );
+  await clickPage(120, 670);
+  await until(
+    () =>
+      evaluate(
+        'document.body.textContent.includes("Download fixture-oauth.json")',
+      ),
+    "Worker download never appeared",
+  );
+  await cli(
+    "find",
+    "role",
+    "button",
+    "click",
+    "--name",
+    "Download fixture-oauth.json",
+    "--exact",
+  );
+  await until(
+    () => evaluate("Boolean(window.__fixtureDownload)"),
+    "Encrypted file did not reach the owner",
+  );
+  assert(
+    await evaluate(
+      'window.__fixtureDownload.then(text=>{const value=JSON.parse(text);return value.client_secret==="fixture-secret-only"&&value.padding.length===90000})',
+    ),
+    "Downloaded credential fixture was truncated or changed",
+  );
   await cli("press", "Escape");
   await until(
     () =>
@@ -264,6 +296,11 @@ try {
       store,
     );
     assert(output.result, "Agent read has no result");
+    assert.equal(
+      output.image,
+      undefined,
+      "Read previews must not spend model vision tokens",
+    );
     const screenshot = await browserTool(
       {
         workerId: driver.id,
@@ -294,8 +331,25 @@ try {
       `browser?workspace=${workspace.id}&session=${session.id}`,
     );
     assert(
-      activity.steps.some((step) => step.label === "screenshot" && step.image),
+      activity.steps.some(
+        (step) => step.label === "Captured screenshot" && step.image,
+      ),
       "No browser action screenshot in activity",
+    );
+    assert(
+      activity.steps.some(
+        (step) => step.label.startsWith("Read ") && step.image,
+      ),
+      "Page read has no history preview",
+    );
+    assert.deepEqual(
+      activity.steps.map((step) => step.createdAt),
+      [...activity.steps.map((step) => step.createdAt)].sort((a, b) => a - b),
+      "History is not chronological",
+    );
+    assert(
+      activity.steps.every((step) => !step.label.includes("http")),
+      "Raw URLs should be details, not action labels",
     );
     assert(
       !JSON.stringify(activity.steps).includes("fixture-only-passwor"),

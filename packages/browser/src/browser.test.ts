@@ -37,7 +37,15 @@ test("real Chromium: screenshots, encrypted takeover, no model capture during lo
   timeout: 60000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "harness-browser-"));
-  const server = createServer((_request, response) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/download") {
+      response.setHeader(
+        "Content-Disposition",
+        'attachment; filename="fixture-oauth.json"',
+      );
+      response.end('{"client_secret":"fixture-secret-only"}');
+      return;
+    }
     response.setHeader("Content-Type", "text/html");
     response.end(
       '<html><body><h1>Fixture tickets $173</h1><input style="position:absolute;left:20px;top:80px;width:200px;height:40px" id="password" type="password" autocomplete="current-password"><button onclick="localStorage.setItem(\'loggedIn\',\'yes\');document.cookie=\'fixture=logged-in; SameSite=Lax\'">Login</button></body></html>',
@@ -178,6 +186,32 @@ test("real Chromium: screenshots, encrypted takeover, no model capture during lo
     identity.generation++;
     identity.userPublicKey = null;
     const returned = await host.execute(assignment("read", {}));
+    assert.equal(
+      typeof returned.result.image,
+      "string",
+      "Reads retain owner thumbnails",
+    );
+    const live = await host.livePage(assignment("manual", {}));
+    assert(live.downloads);
+    await live.page.evaluate((url) => {
+      const link = document.createElement("a");
+      link.href = url;
+      link.click();
+    }, `${url}/download`);
+    let items = await live.downloads.list();
+    for (let attempt = 0; !items.length && attempt < 100; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      items = await live.downloads.list();
+    }
+    assert.equal(items[0]?.name, "fixture-oauth.json");
+    const chunk = await live.downloads.chunk(items[0].id, 0);
+    assert.equal(
+      Buffer.from(chunk.bytes, "base64").toString(),
+      '{"client_secret":"fixture-secret-only"}',
+    );
+    assert.equal(chunk.done, true);
+    await assert.rejects(live.downloads.chunk("../../profile", 0));
+    await assert.rejects(live.downloads.chunk(items[0].id, -1));
     assert.ok(returned.stateCipher);
     assert.doesNotMatch(String(returned.result.text), /private-password/);
     const state = openState<{ cookies: unknown[]; origins: unknown[] }>(

@@ -52,3 +52,53 @@ export function browserCommandNotStarted(
     return false;
   }
 }
+
+/** Known account walls are input requests, never evidence of an empty CRM. */
+export function browserLoginState(
+  value: string,
+): "required" | "rejected" | null {
+  try {
+    const url = new URL(value);
+    if (url.hostname === "accounts.google.com")
+      return url.pathname.includes("/rejected") ? "rejected" : "required";
+    if (
+      url.hostname.endsWith(".linkedin.com") &&
+      /^\/(login|checkpoint|uas)(\/|$)/.test(url.pathname)
+    )
+      return "required";
+  } catch {}
+  return null;
+}
+
+export function browserActivityLabel(
+  action: string,
+  value: unknown,
+  target?: string,
+): string {
+  let destination = "page";
+  try {
+    const host = new URL(String(value)).hostname;
+    destination =
+      host === "docs.google.com"
+        ? "Google Docs / Sheets"
+        : host === "calendar.google.com"
+          ? "Google Calendar"
+          : host === "accounts.google.com"
+            ? "Google sign-in"
+            : host === "linkedin.com" || host.endsWith(".linkedin.com")
+              ? "LinkedIn"
+              : host;
+  } catch {}
+  return (
+    (
+      {
+        navigate: `Opened ${destination}`,
+        click: target ? `Clicked “${target}”` : "Clicked an element",
+        fill: target ? `Filled “${target}”` : "Filled a field",
+        read: `Read ${destination}`,
+        sheet_read: "Read spreadsheet cells",
+        screenshot: "Captured screenshot",
+      } as Record<string, string>
+    )[action] ?? "Browser action"
+  );
+}

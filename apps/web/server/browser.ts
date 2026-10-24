@@ -717,7 +717,21 @@ export async function browserTool(
       throw new HarnessError(command.error ?? "Browser action failed.", 409);
     }
     const result = JSON.parse(command.result ?? "{}");
-    const image = typeof result.image === "string" ? result.image : undefined;
+    const image =
+      !["read", "sheet_read"].includes(action) &&
+      typeof result.image === "string"
+        ? result.image
+        : undefined;
+    if (result.status === "needs_login")
+      await store.requestInput(
+        `${browser.id}:${grant.turnId}`,
+        session.id,
+        grant.turnId,
+        "browser-login",
+        result.login === "rejected"
+          ? "Google rejected this browser. Sign-in has not completed; open the browser to resolve access before continuing."
+          : "Sign in to the workspace browser, then choose Continue task.",
+      );
     delete result.image;
     if (mutating)
       await store.operationOutcome(id, "succeeded", JSON.stringify(result));

@@ -12,7 +12,7 @@ export async function liveBrowser(
   publicKey: string,
   send: (message: Record<string, unknown>) => void,
 ) {
-  const { page, touch } = await host.livePage(assignment);
+  const { page, touch, downloads } = await host.livePage(assignment);
   const peer = browserPeer(publicKey);
   const cdp = await page.context().newCDPSession(page);
   let closed = false;
@@ -54,7 +54,24 @@ export async function liveBrowser(
     (await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 65 }))
       .data,
   );
-  const heartbeat = setInterval(touch, 1000);
+  let catalog = "";
+  const heartbeat = setInterval(() => {
+    touch();
+    if (downloads && assignment.identity.mode === "human")
+      void downloads
+        .list()
+        .then((items) => {
+          const value = JSON.stringify(items);
+          if (!closed && value !== catalog) {
+            catalog = value;
+            send({
+              type: "downloads",
+              data: encryptBytes(peer.key, Buffer.from(value)),
+            });
+          }
+        })
+        .catch(() => {});
+  }, 1000);
   heartbeat.unref();
   return {
     async input(value: { iv: string; ciphertext: string }) {
@@ -64,7 +81,13 @@ export async function liveBrowser(
         Buffer.from(decryptBytes(peer.key, value)).toString("utf8"),
       );
       touch();
-      if (input.type === "pointer") {
+      if (input.type === "download" && downloads) {
+        const chunk = await downloads.chunk(input.id, input.offset);
+        send({
+          type: "download",
+          data: encryptBytes(peer.key, Buffer.from(JSON.stringify(chunk))),
+        });
+      } else if (input.type === "pointer") {
         if (
           ![
             "mousePressed",

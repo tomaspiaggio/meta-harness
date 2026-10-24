@@ -670,3 +670,19 @@ Live-view final verification:
   explicit Continue task producing one turn, and phone-width layout passed.
 - [x] `pnpm check`, browser-enabled `pnpm test` (94 passed, 3 optional integrations
   skipped), `pnpm build`, authenticated isolated `pnpm smoke` and live UI smoke pass.
+
+2026-10-23 — browser schedule readiness:
+
+- [x] Readable single-column activity, chronological timestamps, wrapped targets,
+  named click/fill targets, explicit missing-preview and failed-step feedback.
+- [x] Capture read thumbnails for owner history without adding model vision input;
+  omit login-wall captures and preserve encrypted human-only streaming.
+- [x] Turn known account walls into durable input requests instead of empty reads.
+- [x] Enable private worker-local downloads and encrypted owner retrieval; never
+  publish credential file contents into model/tool/database history.
+- [x] Add optional authenticated on-demand Linux display for headed Chromium.
+- [ ] Verify full owner UI download with multiple encrypted chunks.
+- [ ] Verify headed display lifecycle and full owner controls on the actual Pi.
+- [ ] Complete real Google sign-in and create/download the OAuth credential.
+- [ ] Rehearse the existing CRM briefing against authenticated sources before
+  resuming its paused weekday schedule. Do not send outreach messages.

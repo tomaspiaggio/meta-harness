@@ -1,7 +1,10 @@
 export const maxDuration = 60;
 
 import { HarnessError, requiredText } from "@harness/core";
-import type { BrowserIdentity } from "@harness/core/browser";
+import {
+  type BrowserIdentity,
+  browserActivityLabel,
+} from "@harness/core/browser";
 import { BrowserBroker } from "../../../server/browser";
 import { flushDispatch } from "../../../server/dispatcher";
 import { failure, jsonBody, localRequest } from "../../../server/http";
@@ -39,7 +42,7 @@ export async function GET(request: Request) {
         ? await store
             .databaseConnection()
             .prepare(
-              "SELECT browser_commands.id, action, arguments, browser_commands.status, result FROM browser_commands JOIN turns ON turns.id = browser_commands.turnId WHERE browserId = ? AND turns.sessionId = ? AND action != 'manual' ORDER BY browser_commands.createdAt DESC LIMIT 12",
+              "SELECT browser_commands.id, action, arguments, browser_commands.status, result, browser_commands.createdAt, browser_commands.turnId, browser_commands.error FROM browser_commands JOIN turns ON turns.id = browser_commands.turnId WHERE browserId = ? AND turns.sessionId = ? AND action != 'manual' ORDER BY browser_commands.createdAt DESC, browser_commands.id DESC LIMIT 24",
             )
             .all(browser.id, sessionId)
         : [];
@@ -50,24 +53,21 @@ export async function GET(request: Request) {
         args = JSON.parse(String(row.arguments));
         result = JSON.parse(String(row.result ?? "{}")) ?? {};
       } catch {}
-      let label = String(row.action);
-      if (row.action === "navigate") {
-        try {
-          const url = new URL(String(args.url));
-          label = `Opened ${url.origin}${url.pathname}`;
-        } catch {
-          label = "Opened page";
-        }
-      }
-      if (row.action === "click")
-        label = `Clicked ${String(args.selector ?? "element").slice(0, 100)}`;
-      if (row.action === "fill")
-        label = `Typed into ${String(args.selector ?? "field").slice(0, 100)}`;
-      if (row.action === "read") label = "Read page";
+      const target = String(result.url ?? args.url ?? "");
+      const label = browserActivityLabel(
+        String(row.action),
+        target,
+        typeof result.targetLabel === "string" ? result.targetLabel : undefined,
+      );
       return {
         id: row.id,
         status: row.status,
         label,
+        createdAt: row.createdAt,
+        turnId: row.turnId,
+        target,
+        ...(row.error ? { error: String(row.error) } : {}),
+        ...(result.login ? { login: result.login } : {}),
         ...(typeof result.image === "string" ? { image: result.image } : {}),
       };
     });
@@ -98,10 +98,18 @@ export async function POST(request: Request) {
     const broker = new BrowserBroker(store);
     const workspaceId = requiredText(body.workspaceId, "Workspace ID", 100);
     await store.getWorkspace(workspaceId);
+    const session =
+      typeof body.sessionId === "string"
+        ? await store.getSession(body.sessionId)
+        : null;
+    if (session && session.workspaceId !== workspaceId)
+      throw new HarnessError("Session is outside this workspace.", 403);
     if (body.action === "enable") {
       // Compatibility for older tabs; there is no longer a workspace opt-in.
       return Response.json({
-        browser: visible(await broker.ensure(workspaceId)),
+        browser: visible(
+          await broker.ensure(workspaceId, session?.ownerWorkerId ?? undefined),
+        ),
       });
     }
     const identity = await broker.ensure(workspaceId);

@@ -447,3 +447,30 @@ are outside this deletion operation. Published shared decisions remain canonical
 source session/turn links are detached, and the workspace ID remains historical
 provenance. A persistent bootstrap marker prevents deleted default workspaces
 from being recreated after a restart.
+
+## Browser account walls, activity and downloads
+
+Known Google and LinkedIn sign-in walls return `needs_login` and create a durable
+input request. They do not return page text/images to the agent or imply that CRM
+or calendar data was checked. Google may reject an automated browser even when
+manual control works; Patchright does not establish account compatibility.
+
+Agent actions keep timestamped owner history with short action labels, target
+URLs and post-action thumbnails (including reads). Read thumbnails are retained
+for the UI without adding model vision input. Human frames and keystrokes remain
+on the ephemeral encrypted stream; sign-in pages have no history thumbnail.
+
+Managed browsers accept downloads into a private per-profile directory. Up to four
+completed files of at most 8 MiB each are retained; transfers time out after one
+minute. These are retention/retrieval limits, not a hard temporary disk quota while
+Chromium receives a file. File contents are excluded from tool results, database
+records and attachments. An owner with current manual control can retrieve a file
+through authenticated, generation-checked encrypted stream requests in 64 KiB
+chunks. A download is local to its browser worker, not automatically replicated.
+
+Linux workers may enable `HARNESS_BROWSER_VIRTUAL_DISPLAY=1` with Xvfb and xauth
+installed. Each active managed profile gets an authenticated private display and
+headed Chromium. Display processes are created on demand and terminated with the
+owned browser. This never attaches to the user's desktop or disables account
+security. Headless mode remains the default elsewhere; a headed display is a
+compatibility option, not a promise that Google permits automation.

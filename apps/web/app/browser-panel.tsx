@@ -8,7 +8,17 @@ import { Input } from "@/components/ui/input";
 import { ErrorNote } from "./shell";
 
 type View = Omit<BrowserIdentity, "stateCipher" | "userPublicKey">;
-type Step = { id: string; label: string; status: string; image?: string };
+type Step = {
+  id: string;
+  label: string;
+  status: string;
+  image?: string;
+  createdAt: number;
+  turnId: string;
+  target: string;
+  error?: string;
+  login?: string;
+};
 const decode = (s: string): Uint8Array<ArrayBuffer> =>
   Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const encode = (bytes: Uint8Array) => {
@@ -35,6 +45,14 @@ export function BrowserPanel({
 }) {
   const [browser, setBrowser] = useState<View | null>(null);
   const [host, setHost] = useState("");
+  const [downloads, setDownloads] = useState<
+    { id: string; name: string; size: number }[]
+  >([]);
+  const downloading = useRef<{
+    id: string;
+    chunks: Uint8Array<ArrayBuffer>[];
+    offset: number;
+  } | null>(null);
   const [steps, setSteps] = useState<Step[]>([]);
   const stepCursor = useRef("");
   const [error, setError] = useState("");
@@ -119,6 +137,8 @@ export function BrowserPanel({
     pending.current.clear();
     key.current = null;
     sequence.current = 0;
+    downloading.current = null;
+    setDownloads([]);
     setHasFrame(false);
     try {
       if (!crypto.subtle)
@@ -163,6 +183,45 @@ export function BrowserPanel({
               setLatency(Date.now() - receipt.at);
               receipt.resolve();
               pending.current.delete(message.id);
+            }
+            return;
+          }
+          if (["downloads", "download"].includes(message.type) && streamKey) {
+            const decrypted = await crypto.subtle.decrypt(
+              { name: "AES-GCM", iv: decode(message.data.iv) },
+              streamKey,
+              decode(message.data.ciphertext),
+            );
+            const value = JSON.parse(new TextDecoder().decode(decrypted));
+            if (message.type === "downloads") setDownloads(value);
+            else {
+              const active = downloading.current;
+              if (
+                !active ||
+                active.id !== value.id ||
+                active.offset !== value.offset ||
+                value.size > 8 * 1024 * 1024
+              )
+                return;
+              const bytes = decode(value.bytes);
+              active.chunks.push(bytes);
+              active.offset += bytes.length;
+              if (value.done) {
+                const url = URL.createObjectURL(
+                  new Blob(active.chunks, { type: "application/octet-stream" }),
+                );
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = value.name;
+                link.click();
+                setTimeout(() => URL.revokeObjectURL(url), 10000);
+                downloading.current = null;
+              } else
+                inputRef.current({
+                  type: "download",
+                  id: active.id,
+                  offset: active.offset,
+                });
             }
             return;
           }
@@ -245,6 +304,7 @@ export function BrowserPanel({
       setBusy(false);
     }
   }
+  const inputRef = useRef<(value: Record<string, unknown>) => void>(() => {});
   const connectRef = useRef(connect);
   connectRef.current = connect;
   useEffect(() => {
@@ -290,6 +350,8 @@ export function BrowserPanel({
         setError("Input was not sent. Reconnect before trying again."),
       );
   }
+  inputRef.current = input;
+
   async function release(resume = false) {
     setBusy(true);
     try {
@@ -399,22 +461,70 @@ export function BrowserPanel({
       <summary className="cursor-pointer text-sm">
         Browser activity · {steps.length} recent steps
       </summary>
-      <ol className="mt-3 grid gap-3 sm:grid-cols-2">
-        {steps.map((step) => (
-          <li key={step.id} className="rounded-lg border p-2 text-xs">
-            <div className="mb-2 flex justify-between gap-2">
-              <span>{step.label}</span>
-              <span className="text-muted-foreground">{step.status}</span>
+      <ol className="mt-3 space-y-3" aria-label="Browser steps, oldest first">
+        {steps.map((step, index) => (
+          <li key={step.id} className="min-w-0 rounded-lg border p-3 text-xs">
+            <div className="flex flex-wrap items-baseline gap-2">
+              <span className="text-muted-foreground">{index + 1}.</span>
+              <span className="min-w-0 flex-1 font-medium">{step.label}</span>
+              <time
+                className="whitespace-nowrap text-muted-foreground"
+                dateTime={new Date(step.createdAt).toISOString()}
+              >
+                {new Date(step.createdAt).toLocaleString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}
+              </time>
+              <span className="whitespace-nowrap text-muted-foreground">
+                {step.login
+                  ? "Sign-in needed"
+                  : ((
+                      {
+                        pending: "Waiting",
+                        running: "Running",
+                        completed: "Done",
+                        failed: "Failed",
+                        unknown_outcome: "Outcome unconfirmed",
+                      } as Record<string, string>
+                    )[step.status] ?? step.status)}
+              </span>
             </div>
-            {step.image && (
-              <Image
-                src={`data:image/jpeg;base64,${step.image}`}
-                alt={step.label}
-                width={320}
-                height={200}
-                unoptimized
-                className="w-full rounded"
-              />
+            {step.target && (
+              <p className="mt-1 break-all text-muted-foreground">
+                {step.target}
+              </p>
+            )}
+            {step.error && (
+              <p className="mt-2 text-destructive">{step.error}</p>
+            )}
+            {step.image ? (
+              <a
+                href={`data:image/jpeg;base64,${step.image}`}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`Enlarge screenshot: ${step.label}`}
+              >
+                <Image
+                  src={`data:image/jpeg;base64,${step.image}`}
+                  alt={`After: ${step.label}`}
+                  width={640}
+                  height={400}
+                  unoptimized
+                  className="mt-2 w-full rounded"
+                />
+              </a>
+            ) : (
+              <p className="mt-2 text-muted-foreground">
+                {step.login
+                  ? "Sign-in screenshots are private. Open the live browser to continue."
+                  : step.status === "completed"
+                    ? "Preview unavailable for this earlier step."
+                    : "A preview appears after this step finishes."}
+              </p>
             )}
           </li>
         ))}
@@ -512,6 +622,28 @@ export function BrowserPanel({
               }
             </div>
           </div>
+          {controlling && downloads.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm">
+              <span>Downloads on this worker:</span>
+              {downloads.map((item) => (
+                <Button
+                  key={item.id}
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    downloading.current = {
+                      id: item.id,
+                      chunks: [],
+                      offset: 0,
+                    };
+                    input({ type: "download", id: item.id, offset: 0 });
+                  }}
+                >
+                  Download {item.name}
+                </Button>
+              ))}
+            </div>
+          )}
           <form
             className="flex items-center gap-2 border-b px-3 py-2"
             onSubmit={(event) => {

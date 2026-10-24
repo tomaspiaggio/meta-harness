@@ -116,7 +116,11 @@ export function browserStreamRelay(server, privatePort) {
             }
             const view = viewers.get(message.viewId);
             if (!view || view.auth.workerId !== auth.workerId) return;
-            if (["frame", "error", "ack"].includes(message.type))
+            if (
+              ["frame", "error", "ack", "downloads", "download"].includes(
+                message.type,
+              )
+            )
               send(view.ws, message);
           });
           ws.on("close", () => {

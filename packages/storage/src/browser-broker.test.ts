@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import type { BrowserAssignment } from "@harness/core/browser";
 import { BrowserBroker, browserTool } from "../../../apps/web/server/browser";
 import { HarnessStore } from "./application";
 
@@ -101,6 +102,29 @@ test("browser host loss prefers the task worker, fences old commands and keeps l
     };
     const status = await browserTool(grant, { action: "status" }, store);
     assert.equal((status.result as { workerId: string }).workerId, pi.id);
+    const reading = browserTool(grant, { action: "read" }, store);
+    let loginCommand: BrowserAssignment | undefined;
+    for (let attempt = 0; !loginCommand && attempt < 100; attempt++) {
+      loginCommand = (await broker.poll(pi.id)).assignments[0];
+      if (!loginCommand) await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert(loginCommand);
+    await broker.complete(
+      pi.id,
+      loginCommand.command.id,
+      loginCommand.identity.generation,
+      {
+        status: "needs_login",
+        login: "rejected",
+        url: "https://accounts.google.com/v3/signin/rejected",
+      },
+    );
+    const readResult = await reading;
+    assert.equal(
+      (readResult.result as { status: string }).status,
+      "needs_login",
+    );
+    // Repeated model requests use the same pending input, rather than spawning turns.
     await browserTool(grant, { action: "needs_login" }, store);
     const requests = await store.inputsForSession(session.id);
     assert.equal(requests.length, 1);

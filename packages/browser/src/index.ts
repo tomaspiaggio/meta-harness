@@ -3,7 +3,11 @@ import { existsSync } from "node:fs";
 import { lstat, mkdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import type { BrowserAssignment, BrowserIdentity } from "@harness/core/browser";
+import {
+  type BrowserAssignment,
+  type BrowserIdentity,
+  browserLoginState,
+} from "@harness/core/browser";
 import type { Browser, BrowserContext, Page } from "patchright";
 import {
   browserPeer,
@@ -37,6 +41,8 @@ type Context = {
   generation: number;
   peer?: ReturnType<typeof browserPeer>;
   userKey?: string;
+  display?: Awaited<ReturnType<typeof browserDisplay>>;
+  downloads?: BrowserDownloads;
 };
 function privateAddress(address: string): boolean {
   if (address.includes(":"))
@@ -97,6 +103,8 @@ export function safeBrowserUrl(value: string): string {
 }
 
 import { redactFormValues } from "./accessibility";
+import { browserDisplay } from "./display";
+import { BrowserDownloads } from "./downloads";
 import { ExtensionRelay, extensionPairing } from "./extension-relay";
 import { readGoogleSheet } from "./sheets";
 
@@ -216,7 +224,13 @@ export class BrowserHost {
   private async release(context: Context) {
     // Never close a user's default browser context. We own only this tab.
     if (context.attached) await context.page.close().catch(() => {});
-    else await context.context.close();
+    else {
+      try {
+        await context.context.close();
+      } finally {
+        await context.display?.close();
+      }
+    }
   }
   private async disconnectIfIdle() {
     if (!this.contexts.size && this.attachedBrowser) {
@@ -371,48 +385,74 @@ export class BrowserHost {
     await mkdir(path, { recursive: true, mode: 0o700 });
     if ((await lstat(path)).isSymbolicLink())
       throw new Error("Browser profile cannot be a symlink.");
-    const context = await chromium.launchPersistentContext(path, {
-      channel: "chromium",
-      headless: this.options.headless ?? true,
-      executablePath: managedBrowserExecutable(),
-      viewport: { width: 1280, height: 800 },
-      deviceScaleFactor: 1,
-      acceptDownloads: false,
-      serviceWorkers: "block",
-    });
-    context.setDefaultTimeout(10000);
-    await this.restrictNetwork(context);
-    if (identity.stateCipher) {
-      const state = openState<{
-        cookies: Parameters<BrowserContext["addCookies"]>[0];
-        origins: {
-          origin: string;
-          localStorage: { name: string; value: string }[];
-        }[];
-      }>(assignment.stateKey, identity.stateCipher);
-      await context.addCookies(state.cookies);
-      await context.addInitScript((origins) => {
-        const state = origins.find(
-          (entry) =>
-            entry.origin ===
-            (globalThis as unknown as { location: { origin: string } }).location
-              .origin,
-        );
-        if (state)
-          for (const item of state.localStorage)
-            localStorage.setItem(item.name, item.value);
-      }, state.origins);
+    const display =
+      process.platform === "linux" &&
+      process.env.HARNESS_BROWSER_VIRTUAL_DISPLAY === "1"
+        ? await browserDisplay()
+        : undefined;
+    const context = await chromium
+      .launchPersistentContext(path, {
+        channel: "chromium",
+        headless: display ? false : (this.options.headless ?? true),
+        ...(display ? { env: { ...process.env, ...display.env } } : {}),
+        executablePath: managedBrowserExecutable(),
+        viewport: { width: 1280, height: 800 },
+        deviceScaleFactor: 1,
+        acceptDownloads: true,
+        serviceWorkers: "block",
+      })
+      .catch(async (error) => {
+        await display?.close();
+        throw error;
+      });
+    try {
+      context.setDefaultTimeout(10000);
+      await this.restrictNetwork(context);
+      if (identity.stateCipher) {
+        const state = openState<{
+          cookies: Parameters<BrowserContext["addCookies"]>[0];
+          origins: {
+            origin: string;
+            localStorage: { name: string; value: string }[];
+          }[];
+        }>(assignment.stateKey, identity.stateCipher);
+        await context.addCookies(state.cookies);
+        await context.addInitScript((origins) => {
+          const state = origins.find(
+            (entry) =>
+              entry.origin ===
+              (globalThis as unknown as { location: { origin: string } })
+                .location.origin,
+          );
+          if (state)
+            for (const item of state.localStorage)
+              localStorage.setItem(item.name, item.value);
+        }, state.origins);
+      }
+      const downloads = new BrowserDownloads(join(path, "harness-downloads"));
+      const watch = (page: Page) =>
+        page.on("download", (download) => {
+          void downloads.receive(download).catch(() => {});
+        });
+      context.pages().forEach(watch);
+      context.on("page", watch);
+      const page = context.pages()[0] ?? (await context.newPage());
+      const result: Context = {
+        attached: false,
+        display,
+        downloads,
+        context,
+        page,
+        lastUsed: Date.now(),
+        generation: identity.generation,
+      };
+      this.contexts.set(identity.id, result);
+      return result;
+    } catch (error) {
+      await context.close().catch(() => {});
+      await display?.close();
+      throw error;
     }
-    const page = context.pages()[0] ?? (await context.newPage());
-    const result: Context = {
-      attached: false,
-      context,
-      page,
-      lastUsed: Date.now(),
-      generation: identity.generation,
-    };
-    this.contexts.set(identity.id, result);
-    return result;
   }
   async liveNavigate(page: Page, url: string) {
     await page.goto(
@@ -429,6 +469,7 @@ export class BrowserHost {
     context.lastUsed = Date.now();
     return {
       page: context.page,
+      downloads: context.downloads,
       touch: () => {
         context.lastUsed = Date.now();
       },
@@ -546,6 +587,22 @@ export class BrowserHost {
       throw new Error(
         "Browser input and model capture are paused while the user controls it.",
       );
+    let targetLabel = "";
+    if (["click", "fill"].includes(command.action)) {
+      const target = page.locator(String(args.selector)).first();
+      targetLabel = await target.evaluate((element) =>
+        (
+          element.getAttribute("aria-label") ||
+          element.getAttribute("placeholder") ||
+          element.getAttribute("title") ||
+          element.getAttribute("name") ||
+          (element.tagName === "INPUT" ? "field" : element.textContent) ||
+          "element"
+        )
+          .trim()
+          .slice(0, 100),
+      );
+    }
     if (command.action === "navigate")
       await page.goto(
         await validateBrowserUrl(
@@ -577,8 +634,17 @@ export class BrowserHost {
     const result: Record<string, unknown> = {
       url: safeBrowserUrl(page.url()),
       title: await page.title(),
+      ...(targetLabel ? { targetLabel } : {}),
     };
-    if (command.action === "sheet_read")
+    const login = browserLoginState(page.url());
+    if (login) {
+      result.login = login;
+      result.status = "needs_login";
+      result.hint =
+        login === "rejected"
+          ? "Google rejected this browser. The requested source was not read. Human sign-in in a supported browser is required; do not weaken account security."
+          : "Account sign-in is required. The requested source was not read. Request manual takeover and wait.";
+    } else if (command.action === "sheet_read")
       Object.assign(
         result,
         await readGoogleSheet(page, args, this.options.allowTestLoopback),
@@ -609,7 +675,10 @@ export class BrowserHost {
       if (/^https:\/\/docs\.google\.com\/spreadsheets\/d\//.test(page.url()))
         result.hint =
           "Google Sheets cells may be canvas-rendered. Use sheet_read with the current gid and a bounded row range to read actual cell values. A successful page open alone does not verify cell contents.";
-    } else
+    }
+    // History thumbnails belong to agent actions only; login pages and all human
+    // frames stay out of the model and persisted activity history.
+    if (!login)
       result.image = (
         await page.screenshot({ type: "jpeg", quality: 65 })
       ).toString("base64");
