@@ -66,6 +66,18 @@ export function BrowserPanel({
   const [busy, setBusy] = useState(false);
   const [controlling, setControlling] = useState(false);
   const [typed, setTyped] = useState("");
+  const [notice, setNotice] = useState("");
+  const [picker, setPicker] = useState<{
+    label: string;
+    x: number;
+    y: number;
+    options: {
+      value: string;
+      label: string;
+      selected: boolean;
+      disabled: boolean;
+    }[];
+  } | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const canvas = useRef<HTMLCanvasElement>(null);
   // Phones only open a keyboard for a focused text field, never for a canvas.
@@ -222,14 +234,24 @@ export function BrowserPanel({
             }
             return;
           }
-          if (["downloads", "download"].includes(message.type) && streamKey) {
+          if (
+            ["downloads", "download", "notice", "select"].includes(
+              message.type,
+            ) &&
+            streamKey
+          ) {
             const decrypted = await crypto.subtle.decrypt(
               { name: "AES-GCM", iv: decode(message.data.iv) },
               streamKey,
               decode(message.data.ciphertext),
             );
             const value = JSON.parse(new TextDecoder().decode(decrypted));
-            if (message.type === "downloads") setDownloads(value);
+            if (message.type === "notice")
+              setNotice(
+                `The page showed ${value.kind === "alert" ? "an alert" : `a ${value.kind}`} (${value.kind === "alert" ? "acknowledged" : "cancelled"} automatically): ${value.message}`,
+              );
+            else if (message.type === "select") setPicker(value);
+            else if (message.type === "downloads") setDownloads(value);
             else {
               const active = downloading.current;
               if (
@@ -766,6 +788,61 @@ export function BrowserPanel({
                   }
                 }}
               />
+            )}
+            {notice && (
+              <div
+                role="status"
+                className="absolute inset-x-2 top-2 flex items-start gap-2 rounded-md bg-background/95 p-2 text-xs shadow"
+              >
+                <span className="min-w-0 flex-1">{notice}</span>
+                <button
+                  type="button"
+                  aria-label="Dismiss notice"
+                  onClick={() => setNotice("")}
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+            )}
+            {picker && (
+              <div
+                role="dialog"
+                aria-label={picker.label}
+                className="absolute inset-x-0 bottom-0 max-h-[70%] overflow-y-auto rounded-t-xl border-t bg-card p-3 text-sm shadow-2xl"
+              >
+                <div className="mb-2 flex items-center justify-between">
+                  <strong>{picker.label}</strong>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setPicker(null)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+                <ul className="grid gap-1">
+                  {picker.options.map((option) => (
+                    <li key={`${option.value}:${option.label}`}>
+                      <button
+                        type="button"
+                        disabled={option.disabled}
+                        className={`w-full rounded-md px-3 py-2 text-left hover:bg-accent disabled:opacity-40 ${option.selected ? "bg-accent font-medium" : ""}`}
+                        onClick={() => {
+                          input({
+                            type: "choose",
+                            x: picker.x,
+                            y: picker.y,
+                            value: option.value,
+                          });
+                          setPicker(null);
+                        }}
+                      >
+                        {option.label || option.value || "(empty)"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
             {!hasFrame && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-white">

@@ -118,9 +118,15 @@ export function browserStreamRelay(server, privatePort, otherUpgrade) {
             const view = viewers.get(message.viewId);
             if (!view || view.auth.workerId !== auth.workerId) return;
             if (
-              ["frame", "error", "ack", "downloads", "download"].includes(
-                message.type,
-              )
+              [
+                "frame",
+                "error",
+                "ack",
+                "downloads",
+                "download",
+                "notice",
+                "select",
+              ].includes(message.type)
             )
               send(view.ws, message);
           });

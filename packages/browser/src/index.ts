@@ -65,6 +65,8 @@ type Context = {
   display?: Awaited<ReturnType<typeof browserDisplay>>;
   downloads?: BrowserDownloads;
   listeners: Set<(page: Page) => void>;
+  notices?: NativeNotice[];
+  noticeListeners?: Set<(value: NativeNotice) => void>;
 };
 function privateAddress(address: string): boolean {
   if (address.includes(":"))
@@ -132,6 +134,7 @@ import { installCursor } from "./cursor";
 import { browserDisplay } from "./display";
 import { BrowserDownloads } from "./downloads";
 import { ExtensionRelay, extensionPairing } from "./extension-relay";
+import { type NativeNotice, tameNativeUi } from "./native";
 import { readGoogleSheet } from "./sheets";
 
 export class BrowserActionNotStarted extends Error {}
@@ -488,10 +491,18 @@ export class BrowserHost {
         }, state.origins);
       }
       const downloads = new BrowserDownloads(join(path, "harness-downloads"));
-      const watch = (page: Page) =>
+      const notices: NativeNotice[] = [];
+      const noticeListeners = new Set<(value: NativeNotice) => void>();
+      const watch = (page: Page) => {
         page.on("download", (download) => {
           void downloads.receive(download).catch(() => {});
         });
+        void tameNativeUi(page, (value) => {
+          notices.push(value);
+          notices.splice(0, Math.max(0, notices.length - 5));
+          for (const listener of noticeListeners) listener(value);
+        });
+      };
       context.pages().forEach(watch);
       context.on("page", watch);
       const page = context.pages()[0] ?? (await context.newPage());
@@ -504,6 +515,8 @@ export class BrowserHost {
         lastUsed: Date.now(),
         generation: identity.generation,
         listeners: new Set(),
+        notices,
+        noticeListeners,
       };
       // The newest open tab is the active one, as in a person's browser.
       const activate = (next: Page) => {
@@ -554,6 +567,10 @@ export class BrowserHost {
         context.listeners.add(listener);
         return () => context.listeners.delete(listener);
       },
+      onNotice: (listener: (value: NativeNotice) => void) => {
+        context.noticeListeners?.add(listener);
+        return () => context.noticeListeners?.delete(listener);
+      },
       downloads: context.downloads,
       touch: () => {
         context.lastUsed = Date.now();
@@ -576,6 +593,7 @@ export class BrowserHost {
     }
     const args = JSON.parse(command.arguments) as Record<string, unknown>;
     const page = context.page;
+    const actionStarted = Date.now();
     context.lastUsed = Date.now();
     if (command.action === "manual") {
       if (
@@ -675,6 +693,7 @@ export class BrowserHost {
     let targetLabel = "";
     let point: { x: number; y: number } | undefined;
     let snapshot: string | undefined;
+    let dropdown: unknown;
     if (command.action === "navigate")
       await page.goto(
         await validateBrowserUrl(
@@ -688,6 +707,7 @@ export class BrowserHost {
         targetLabel = "",
         point,
         snapshot,
+        dropdown,
       } = await performAction(page, command.action, args));
     else if (
       !["screenshot", "read", "sheet_read", "status"].includes(command.action)
@@ -698,6 +718,17 @@ export class BrowserHost {
       title: await page.title(),
       ...(targetLabel ? { targetLabel } : {}),
       ...(point ? { point } : {}),
+      ...(dropdown ? { dropdown } : {}),
+      ...(context.notices?.some((notice) => notice.at >= actionStarted)
+        ? {
+            dialogs: context.notices
+              .filter((notice) => notice.at >= actionStarted)
+              .map(
+                (notice) =>
+                  `${notice.kind} ${notice.kind === "alert" ? "acknowledged" : "cancelled"}: ${notice.message}`,
+              ),
+          }
+        : {}),
       ...(snapshot
         ? { snapshot: redactFormValues(snapshot).slice(0, 20000) }
         : {}),

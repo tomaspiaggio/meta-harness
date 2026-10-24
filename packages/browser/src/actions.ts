@@ -1,6 +1,7 @@
 import type { Locator, Page } from "patchright";
 import { showClick } from "./cursor";
 import { locate } from "./grounding";
+import { chooseAt, selectAt } from "./native";
 
 export const VIEWPORT = { width: 1280, height: 800 };
 type Point = { x: number; y: number };
@@ -121,7 +122,12 @@ export async function performAction(
   page: Page,
   action: string,
   args: Record<string, unknown>,
-): Promise<{ targetLabel?: string; point?: Point; snapshot?: string }> {
+): Promise<{
+  targetLabel?: string;
+  point?: Point;
+  snapshot?: string;
+  dropdown?: unknown;
+}> {
   if (action === "snapshot")
     return {
       snapshot: await page.ariaSnapshot({ mode: "ai", timeout: 10000 }),
@@ -188,12 +194,22 @@ export async function performAction(
     await showClick(page, target.point);
     await page.mouse.move(target.point.x, target.point.y);
   } else if (action === "select") {
-    if (!target.locator)
-      throw new Error(
-        "select needs a ref or selector for the <select> element.",
-      );
-    await target.locator.selectOption(String(args.value ?? args.text ?? ""));
+    const value = String(args.value ?? args.text ?? "");
+    if (target.locator) await target.locator.selectOption(value);
+    else await chooseAt(page, target.point.x, target.point.y, value);
   } else {
+    // A native dropdown popup never appears in screenshots; return its
+    // options so the agent can use select instead of a blind click.
+    const dropdown = await selectAt(page, target.point.x, target.point.y);
+    if (dropdown)
+      return {
+        targetLabel: target.label,
+        point: target.point,
+        dropdown: {
+          ...dropdown,
+          hint: "This is a dropdown. Call select with the same target and one option value.",
+        },
+      };
     await showClick(page, target.point);
     await page.mouse.click(target.point.x, target.point.y, {
       button: args.button === "right" ? "right" : "left",

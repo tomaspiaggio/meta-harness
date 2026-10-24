@@ -41,6 +41,11 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
 - [x] Phone keyboard: tapping the streamed page in control focuses a hidden field,
       so the keyboard opens and keystrokes reach the remote page. Needs a check on
       the real iPhone.
+- [x] Native browser UI that never shows in the stream no longer traps anyone:
+      passkey sheets are replaced by a silent virtual authenticator (Google's
+      "Try another way" → password works), alert/confirm/prompt are handled
+      automatically and reported, and native dropdowns open as an option sheet
+      for the person (and return their options to the agent). Verified locally.
 - [ ] Optional: enable visual grounding (decide which OpenRouter key to use).
 
 ## Settings

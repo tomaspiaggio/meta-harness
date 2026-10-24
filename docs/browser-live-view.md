@@ -149,3 +149,15 @@ reached the passkey/password step.
 
 On phones, tapping the streamed page while in control focuses an invisible text
 field so the keyboard opens; typed text, Backspace, Enter and Tab are forwarded.
+
+## Native browser UI (2026-10-24)
+
+Passkey sheets, JavaScript dialogs and `<select>` popups are drawn by the browser,
+not the page, so they never appear in screencast frames or screenshots but still
+capture input. Each managed page gets a silent CDP WebAuthn virtual
+authenticator (no credentials, UI disabled), so passkey requests fail fast and
+sites offer their other sign-in methods. Alerts/beforeunload are accepted and
+confirm/prompt dismissed; the message is reported to the agent (`dialogs`) and
+to an open live view. A person's tap on a `<select>` returns its options to the
+viewer as an option sheet; the choice is applied with `selectOption`. An agent's
+click on a dropdown returns its options instead of opening it.

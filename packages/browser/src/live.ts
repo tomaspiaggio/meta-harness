@@ -5,6 +5,7 @@ import WebSocket from "ws";
 import { browserPeer, decryptBytes, encryptBytes } from "./crypto";
 import type { BrowserHost } from "./index";
 import { safeBrowserUrl } from "./index";
+import { chooseAt, selectAt } from "./native";
 
 /** A failure whose message is safe and useful to show the person. */
 export class LiveInputError extends Error {}
@@ -44,7 +45,8 @@ export async function liveBrowser(
   publicKey: string,
   send: (message: Record<string, unknown>) => void,
 ) {
-  const { touch, downloads, current, onPage } = await host.livePage(assignment);
+  const { touch, downloads, current, onPage, onNotice } =
+    await host.livePage(assignment);
   const peer = browserPeer(publicKey);
   let page = current();
   let cdp = await page.context().newCDPSession(page);
@@ -98,6 +100,14 @@ export async function liveBrowser(
     );
   };
   await start();
+  const sendSealed = (type: string, value: unknown) =>
+    send({
+      type,
+      data: encryptBytes(peer.key, Buffer.from(JSON.stringify(value))),
+    });
+  const stopNotices = onNotice((value) => {
+    if (!closed) sendSealed("notice", value);
+  });
   // Follow popups and new tabs (for example OAuth sign-in windows), so the
   // viewer always sees the page the agent or person is working in.
   const unsubscribe = onPage((next) => {
@@ -144,7 +154,23 @@ export async function liveBrowser(
           type: "download",
           data: encryptBytes(peer.key, Buffer.from(JSON.stringify(chunk))),
         });
+      } else if (
+        input.type === "choose" &&
+        typeof input.value === "string" &&
+        Number.isFinite(input.x) &&
+        Number.isFinite(input.y)
+      ) {
+        await chooseAt(page, input.x, input.y, input.value);
       } else if (input.type === "pointer") {
+        // Native select popups are invisible in the stream: offer the options
+        // to the viewer instead of opening the page's dropdown.
+        if (input.event === "mousePressed" && input.button === "left") {
+          const select = await selectAt(page, input.x, input.y);
+          if (select) {
+            sendSealed("select", { ...select, x: input.x, y: input.y });
+            return;
+          }
+        }
         if (
           ![
             "mousePressed",
@@ -209,6 +235,7 @@ export async function liveBrowser(
       if (closed) return;
       closed = true;
       unsubscribe();
+      stopNotices();
       clearInterval(heartbeat);
       await cdp.send("Page.stopScreencast").catch(() => {});
       await cdp.detach().catch(() => {});
