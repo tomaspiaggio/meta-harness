@@ -125,7 +125,32 @@ test("actual owner resource routes complete signed consent fixtures, reject CSRF
         { "sec-fetch-site": "cross-site" },
       ),
     );
-    assert.equal(wrong.headers.get("location"), "/settings?google=failed");
+    assert.equal(
+      wrong.headers.get("location"),
+      "/settings?google=failed&reason=consent",
+    );
+    assert.equal(tokenCalls, 0);
+    const cancelled = await callback(
+      request(
+        `callback?error=access_denied&state=${state}`,
+        undefined,
+        browser,
+        { "sec-fetch-site": "cross-site" },
+      ),
+    );
+    assert.equal(
+      cancelled.headers.get("location"),
+      "/settings?google=failed&reason=cancelled",
+    );
+    const signedOut = await callback(
+      request(`callback?code=fixture-code&state=${state}`, undefined, flow, {
+        "sec-fetch-site": "cross-site",
+      }),
+    );
+    assert.equal(
+      signedOut.headers.get("location"),
+      "/settings?google=failed&reason=signed_out",
+    );
     assert.equal(tokenCalls, 0);
     const completed = await callback(
       request(`callback?code=fixture-code&state=${state}`, undefined, browser, {
@@ -148,12 +173,24 @@ test("actual owner resource routes complete signed consent fixtures, reject CSRF
           ),
         )
       ).headers.get("location"),
-      "/settings?google=failed",
+      "/settings?google=failed&reason=consent",
     );
     assert.equal(tokenCalls, 1);
     const result = await status(request("status", undefined, owner));
     assert.equal(result.status, 200);
-    const account = (await result.json()).connections[0];
+    const body = await result.json();
+    assert.deepEqual(body.setup, {
+      configured: true,
+      missing: [],
+      invalid: [],
+      expectedRedirectUri:
+        "http://127.0.0.1:3212/api/integrations/google/callback",
+      redirectUri: "http://127.0.0.1:3212/api/integrations/google/callback",
+      openAt: null,
+      reusesOwnerClient: false,
+    });
+    const account = body.connections[0];
+    assert.equal(account.workspaceGrants, 0);
     assert.equal(account.accountEmail, "fixture@example.test");
     assert.equal(account.status, "ready");
     assert.deepEqual(
@@ -166,6 +203,17 @@ test("actual owner resource routes complete signed consent fixtures, reject CSRF
     assert.ok(stored);
     assert.ok(!JSON.stringify(stored).includes("fixture-route-refresh-secret"));
     delete process.env.HARNESS_GOOGLE_RESOURCE_KEY;
+    const unconfigured = await (
+      await status(request("status", undefined, owner))
+    ).text();
+    const diagnosis = JSON.parse(unconfigured).setup;
+    assert.equal(diagnosis.configured, false);
+    assert.deepEqual(diagnosis.missing, ["HARNESS_GOOGLE_RESOURCE_KEY"]);
+    assert.ok(
+      !unconfigured.includes(variables.HARNESS_GOOGLE_RESOURCE_CLIENT_SECRET) &&
+        !unconfigured.includes(variables.HARNESS_GOOGLE_RESOURCE_CLIENT_ID),
+      "diagnosis names settings without exposing values",
+    );
     const disconnected = await disconnect(
       request(
         "disconnect",

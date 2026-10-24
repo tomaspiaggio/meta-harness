@@ -23,7 +23,7 @@ const env = {
   NEXT_TELEMETRY_DISABLED: "1",
   HARNESS_BROWSER_STREAM_URL: `http://127.0.0.1:${process.env.PORT ?? 3000}`,
 };
-const bindHost = process.env.HARNESS_BIND_HOST ?? "127.0.0.1";
+const bindHost = process.env.HARNESS_BIND_HOST ?? "0.0.0.0";
 const network = !["127.0.0.1", "localhost", "::1"].includes(bindHost);
 // Keep Workflow callbacks private behind a loopback HTTPS proxy as well.
 const gatewayEnabled = true; // Live browser WebSockets terminate in this existing launcher.

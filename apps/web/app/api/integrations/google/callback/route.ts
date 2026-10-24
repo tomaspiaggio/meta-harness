@@ -10,11 +10,19 @@ import { authorizeAdmin } from "../../../../../server/security";
 import { getStore } from "../../../../../server/store";
 export async function GET(request: Request) {
   let target = "/settings?google=failed";
+  // A fixed reason vocabulary only: provider bodies, codes and errors never reach the URL.
+  let reason = "signed_out";
   try {
     // Google redirects are intentionally cross-site. Authenticate the owner and verify flow state instead of same-origin fetch checks.
     await authorizeAdmin(request);
+    reason = "not_configured";
     const config = googleResourceConfig();
     const url = new URL(request.url);
+    if (url.searchParams.get("error") === "access_denied") {
+      reason = "cancelled";
+      throw new HarnessError("Google consent was cancelled.", 403);
+    }
+    reason = "mismatch";
     const flow = cookie(request, "harness_google_resource");
     if (
       !flow ||
@@ -28,6 +36,7 @@ export async function GET(request: Request) {
         "Google consent was cancelled or did not match this control plane.",
         403,
       );
+    reason = "consent";
     const state = url.searchParams.get("state") ?? "";
     const code = url.searchParams.get("code") ?? "";
     const broker = await googleBroker();
@@ -47,6 +56,7 @@ export async function GET(request: Request) {
     await invalidateGoogleBindings(connection.id, connection.revision);
     target = "/settings?google=connected";
   } catch {
+    target = `/settings?google=failed&reason=${reason}`;
     // Neither provider response bodies, authorization codes nor token errors enter logs/URLs.
   }
   return new Response(null, {

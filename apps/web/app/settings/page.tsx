@@ -33,6 +33,12 @@ async function api(path: string, method = "GET", body?: unknown) {
     headers: { "Content-Type": "application/json" },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
+  if (response.status === 401) {
+    // Match the shell and conversation views: an expired session goes to login
+    // instead of rendering every panel with its own sign-in error.
+    location.assign("/login");
+    throw new Error("Sign in to continue.");
+  }
   const result = await response.json();
   if (!response.ok) throw new Error(result.error ?? "Request failed.");
   return result;
@@ -203,7 +209,7 @@ function Settings() {
             Default agent
             <select
               aria-label="Default agent"
-              className="rounded border bg-background p-2"
+              className="w-full min-w-0 rounded border bg-background p-2"
               disabled={!defaultsLoaded || busy}
               value={defaults.provider}
               onChange={(event) =>
@@ -261,7 +267,7 @@ function Settings() {
             <select
               value={workspace}
               onChange={(event) => setWorkspace(event.target.value)}
-              className="rounded border bg-background p-2"
+              className="w-full min-w-0 rounded border bg-background p-2"
             >
               {tree.workspaces.map((item) => (
                 <option key={item.id} value={item.id}>
@@ -280,7 +286,7 @@ function Settings() {
                   capacity: event.target.value as ResourcePolicy["capacity"],
                 })
               }
-              className="rounded border bg-background p-2"
+              className="w-full min-w-0 rounded border bg-background p-2"
             >
               <option value="personal">Wait for my machines</option>
               <option value="fallback">
@@ -300,7 +306,7 @@ function Settings() {
               placeholder="America/Los_Angeles"
             />
           </label>
-          <div className="grid gap-2 rounded border p-3 text-sm">
+          <div className="grid gap-2 rounded border p-3 text-sm [&_code]:break-all">
             <strong>Managed browser on each worker</strong>
             <p>
               Patchright runs a dedicated persistent browser profile. It does
@@ -551,7 +557,7 @@ function Settings() {
             aria-label="Session to connect"
             value={session}
             onChange={(event) => setSession(event.target.value)}
-            className="rounded border bg-background p-2"
+            className="w-full min-w-0 rounded border bg-background p-2"
           >
             <option value="">Choose a session</option>
             {tree.sessions.map((item) => (

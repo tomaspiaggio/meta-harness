@@ -32,13 +32,24 @@ HARNESS_GOOGLE_RESOURCE_KEY_ID=primary
 HARNESS_GOOGLE_RESOURCE_KEY=32-random-bytes-encoded-as-base64url
 ```
 
-Generate a dedicated encryption key using Node `randomBytes(32).toString("base64url")`
+On the control host, `pnpm google:resource-env` writes these values into the
+project-root `.env` (mode 600) without echoing them: it prompts for the client ID
+and secret on a hidden prompt (or reads `--client-json <downloaded web client JSON>`),
+derives the redirect URI from `HARNESS_PUBLIC_URL`, and generates
+`HARNESS_GOOGLE_RESOURCE_KEY` only when none exists. It never replaces an existing
+key, because that would make stored refresh tokens undecryptable, and it never
+touches owner sign-in settings. Restart the control server afterwards. To manage
+the key elsewhere, generate one using Node `randomBytes(32).toString("base64url")`
 in your own secret-management workflow. The key is never derived from owner login,
 a worker/tool grant or a connection label. Missing/invalid key configuration fails
 closed. Back it up separately from the database and restrict access to both.
 
-Open **Settings → Integrations → Google Workspace accounts**, name the account,
-select read groups and choose Add Google account. Google performs account selection
+Settings → Integrations → **Google Workspace** shows three steps: configure,
+connect an account, grant a workspace. Until configuration is complete it lists the
+missing or invalid variable **names** (never values or lengths) and the exact
+callback URL to register for the origin you are browsing. Signing in to the harness
+is never treated as Gmail/Drive authorization. Name the account, select read groups
+and choose Continue to Google. Google performs account selection
 and consent. Return to Settings, verify the actual account email/granted groups,
 then explicitly select tools and enable access for each workspace. Connections grant
 no workspace access automatically. Reconnect requires the same verified Google
@@ -49,7 +60,12 @@ Resource authorization uses expiring owner-session/browser-bound single-use hash
 state, encrypted PKCE verifiers, nonce and signed Google ID-token verification
 (issuer, audience, azp, subject, verified email, expiry). No token/code/provider error
 body is returned to the model, logged or appended to a callback redirect. The
-callback returns only `google=connected` or `google=failed` to Settings.
+callback returns `google=connected`, or `google=failed` with one fixed `reason`:
+`cancelled` (consent declined), `signed_out` (owner session missing on return),
+`not_configured`, `mismatch` (flow cookie/origin/callback mismatch or expired
+window) or `consent` (state, owner binding, token exchange, ID token, offline access
+or scope verification failed). Settings maps these to guidance and removes them
+from the address bar.
 
 ## Read scopes and limits
 

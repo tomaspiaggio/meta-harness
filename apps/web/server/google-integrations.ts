@@ -60,13 +60,103 @@ export function googleResourceConfig(): GoogleOAuthConfig {
       );
     }
   }
-  const url = new URL(redirectUri);
-  if (url.pathname !== "/api/integrations/google/callback")
+  let url: URL;
+  try {
+    url = new URL(redirectUri);
+  } catch {
+    throw new HarnessError(
+      "HARNESS_GOOGLE_RESOURCE_REDIRECT_URI is not a valid URL.",
+      503,
+    );
+  }
+  if (url.pathname !== GOOGLE_RESOURCE_CALLBACK)
     throw new HarnessError(
       "Register the exact /api/integrations/google/callback redirect URI.",
       503,
     );
   return { clientId, clientSecret, redirectUri, keyId, keys };
+}
+const GOOGLE_RESOURCE_CALLBACK = "/api/integrations/google/callback";
+export type GoogleResourceSetup = {
+  configured: boolean;
+  // Names only. Values, lengths and prefixes of secrets never leave the process.
+  missing: string[];
+  invalid: string[];
+  expectedRedirectUri: string;
+  redirectUri: string | null;
+  // Set when this page is open on another origin; consent must start there.
+  openAt: string | null;
+  reusesOwnerClient: boolean;
+};
+// Non-secret readiness for Settings. Owner sign-in never implies resource consent.
+export function googleResourceSetup(request: Request): GoogleResourceSetup {
+  const env = process.env;
+  const missing = [
+    "HARNESS_GOOGLE_RESOURCE_CLIENT_ID",
+    "HARNESS_GOOGLE_RESOURCE_CLIENT_SECRET",
+    "HARNESS_GOOGLE_RESOURCE_REDIRECT_URI",
+    "HARNESS_GOOGLE_RESOURCE_KEY",
+  ].filter((name) => !env[name]);
+  const invalid: string[] = [];
+  if (
+    env.HARNESS_GOOGLE_RESOURCE_KEY &&
+    !/^[A-Za-z0-9_-]{43}$/.test(env.HARNESS_GOOGLE_RESOURCE_KEY)
+  )
+    invalid.push("HARNESS_GOOGLE_RESOURCE_KEY");
+  // Behind the launcher gateway request.url names the private Next port; the
+  // browser-facing origin is the configured owner origin or the Host header.
+  const url = new URL(request.url);
+  const host = request.headers.get("host");
+  let origin = host ? `${url.protocol}//${host}` : url.origin;
+  if (googleAuthEnabled())
+    try {
+      origin = googleOwnerConfig().origin;
+    } catch {
+      // Owner setup readiness is reported separately; keep the Host origin.
+    }
+  const expectedRedirectUri = `${origin}${GOOGLE_RESOURCE_CALLBACK}`;
+  let redirectUri: string | null = null;
+  let openAt: string | null = null;
+  if (env.HARNESS_GOOGLE_RESOURCE_REDIRECT_URI) {
+    try {
+      const configured = new URL(env.HARNESS_GOOGLE_RESOURCE_REDIRECT_URI);
+      redirectUri = configured.href;
+      if (
+        configured.pathname !== GOOGLE_RESOURCE_CALLBACK ||
+        configured.search ||
+        configured.hash
+      )
+        invalid.push("HARNESS_GOOGLE_RESOURCE_REDIRECT_URI");
+      else if (configured.host !== host?.toLowerCase())
+        openAt = configured.origin;
+    } catch {
+      invalid.push("HARNESS_GOOGLE_RESOURCE_REDIRECT_URI");
+    }
+  }
+  if (
+    env.HARNESS_GOOGLE_RESOURCE_KEY_ID &&
+    !/^[A-Za-z0-9_-]{1,40}$/.test(env.HARNESS_GOOGLE_RESOURCE_KEY_ID)
+  )
+    invalid.push("HARNESS_GOOGLE_RESOURCE_KEY_ID");
+  let configured = !missing.length && !invalid.length;
+  if (configured)
+    try {
+      googleResourceConfig();
+    } catch {
+      configured = false;
+      invalid.push("HARNESS_GOOGLE_RESOURCE_PREVIOUS_KEYS");
+    }
+  return {
+    configured,
+    missing,
+    invalid,
+    expectedRedirectUri,
+    redirectUri,
+    openAt,
+    reusesOwnerClient:
+      !!env.HARNESS_GOOGLE_RESOURCE_CLIENT_ID &&
+      env.HARNESS_GOOGLE_RESOURCE_CLIENT_ID === env.GOOGLE_CLIENT_ID,
+  };
 }
 export async function googleBroker() {
   const store = await getStore();
