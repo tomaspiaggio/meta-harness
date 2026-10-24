@@ -64,6 +64,11 @@ function fixture(respond: (url: URL) => unknown, connections: string[] = []) {
 }
 test("Google definitions expose eight strict bounded readonly tools and finite sheet ranges", () => {
   assert.equal(googleDefinition.tools.length, 8);
+  const search = googleDefinition.tools.find(
+    (tool) => tool.id === "gmail.search",
+  );
+  assert.ok(search);
+  assert.deepEqual(search.inputSchema.required, ["query"]);
   assert.ok(
     googleDefinition.tools.every(
       (tool) =>
@@ -398,4 +403,72 @@ test("Calendar lists timed/all-day recurring occurrences with bounded interval, 
     call("calendar.list_events", { ...args, timeMin: "2026-10-23" }),
     /Invalid Google/,
   );
+});
+
+test("Drive text export, Sheets metadata and successful-body token redaction preserve source limits", async () => {
+  const { call, calls } = fixture((url) => {
+    if (url.pathname.endsWith("/export"))
+      return new Response("External fixture-access-token-secret content\n");
+    if (url.hostname === "sheets.googleapis.com")
+      return {
+        spreadsheetId: "sheet",
+        properties: { title: "Spreadsheet" },
+        sheets: [
+          { properties: { title: "Allowed", sheetId: 1 } },
+          { properties: { title: "Private", sheetId: 2 } },
+        ],
+      };
+    return {
+      id: "doc",
+      name: "Document",
+      mimeType: "application/vnd.google-apps.document",
+    };
+  });
+  const exported = await call("drive.get_file", {
+    fileId: "doc",
+    representation: "text",
+  });
+  assert.ok(JSON.stringify(exported).includes("[REDACTED]"));
+  assert.ok(!JSON.stringify(exported).includes("fixture-access-token-secret"));
+  assert.equal(calls[1].searchParams.get("mimeType"), "text/plain");
+  const metadata = await call(
+    "sheets.metadata",
+    { spreadsheetId: "sheet" },
+    { sheetRanges: { sheet: ["Allowed!A1:B2"] } },
+  );
+  assert.ok(JSON.stringify(metadata).includes("Allowed"));
+  assert.ok(!JSON.stringify(metadata).includes("Private"));
+  assert.equal(calls.at(-1)?.searchParams.get("includeGridData"), "false");
+});
+
+test("read cancellation and missing consent fail before API dispatch", async () => {
+  let calls = 0;
+  const adapter = createGoogleAdapter({
+    pageKey: new Uint8Array(32),
+    access: {
+      async withAccess() {
+        throw new Error("missing fixture consent");
+      },
+    },
+    fetch: async () => {
+      calls++;
+      throw new Error("must not fetch");
+    },
+  });
+  const tool = googleDefinition.tools.find(
+    (value) => value.id === "gmail.search",
+  );
+  assert.ok(tool);
+  await assert.rejects(
+    adapter.execute({
+      connection,
+      tool,
+      arguments: { query: "fixture" },
+      constraints: {},
+      workspaceId: "tech",
+      signal: AbortSignal.abort(),
+    }),
+    /not configured/,
+  );
+  assert.equal(calls, 0);
 });

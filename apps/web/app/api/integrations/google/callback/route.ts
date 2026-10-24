@@ -19,7 +19,9 @@ export async function GET(request: Request) {
     if (
       !flow ||
       !/^[A-Za-z0-9_-]{43}$/.test(flow) ||
-      url.origin + url.pathname !== config.redirectUri ||
+      request.headers.get("host")?.toLowerCase() !==
+        new URL(config.redirectUri).host ||
+      url.pathname !== new URL(config.redirectUri).pathname ||
       url.searchParams.has("error")
     )
       throw new HarnessError(

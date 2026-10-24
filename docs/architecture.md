@@ -395,3 +395,16 @@ are outside this deletion operation. Published shared decisions remain canonical
 source session/turn links are detached, and the workspace ID remains historical
 provenance. A persistent bootstrap marker prevents deleted default workspaces
 from being recreated after a restart.
+
+## Native resource integration execution
+
+Google Workspace read/search uses the same integration definitions, account
+connections, revisioned workspace bindings, tool descriptors and operation receipts
+as other collections. The control/API process composes engine-independent adapters
+from `packages/integrations`; no provider loop, browser dependency or new resident
+service is introduced. Google resource OAuth is separate from owner identity login,
+and encrypted refresh tokens remain in the control-process broker. Account-scoped
+leases serialize refresh rotation without replaying HTTP within database transaction
+retries. Explicit Gmail label, file, sheet range and calendar allowlists supplement
+provider scopes. See [Google operations](google-integrations.md) for the scope map,
+recovery process and real-provider deployment gates. Eve remains a reference only.

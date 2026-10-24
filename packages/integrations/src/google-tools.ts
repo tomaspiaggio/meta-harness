@@ -87,6 +87,7 @@ export const googleDefinition: IntegrationDefinition = {
   tools: (Object.keys(toolSchemas) as GoogleToolId[]).map((toolId) => {
     const inputSchema = z.toJSONSchema(toolSchemas[toolId], {
       target: "draft-7",
+      io: "input",
     }) as JsonObject;
     return {
       id: toolId,
@@ -106,7 +107,8 @@ export function parseGoogleArguments(
   value: unknown,
 ): JsonObject {
   const schema = toolSchemas[toolId as GoogleToolId];
-  if (!schema) throw new HarnessError("Unknown Google tool.", 404);
+  if (!Object.hasOwn(toolSchemas, toolId) || !schema)
+    throw new HarnessError("Unknown Google tool.", 404);
   const result = schema.safeParse(value);
   if (!result.success) throw new HarnessError("Invalid Google tool arguments.");
   if (toolId === "calendar.list_events") {

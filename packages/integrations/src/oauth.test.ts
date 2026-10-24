@@ -110,6 +110,7 @@ async function setup() {
       .sign(keys.privateKey);
     return Response.json({
       access_token: ACCESS,
+      refresh_token_expires_in: 3600,
       token_type: "Bearer",
       scope: scopes,
       id_token: token,
@@ -215,6 +216,7 @@ test("resource OAuth is offline incremental PKCE with hashed single-use owner-bo
     await assert.rejects(f.complete(url), /already used/);
     const stored = await f.repository.getCredential("work");
     assert.ok(stored);
+    assert.ok(stored.refreshExpiresAt && stored.refreshExpiresAt > Date.now());
     assert.ok(!JSON.stringify(stored).includes(REFRESH));
     assert.ok(!JSON.stringify(stored).includes(ACCESS));
     assert.equal(f.broker.cipher.open(stored.cipher, "refresh:work"), REFRESH);
@@ -415,5 +417,36 @@ test("dedicated authenticated encryption supports explicit key rotation and reje
           keys: { v2: config.keys.v1 },
         }).open(rotated, "refresh:work"),
       /cannot be decrypted/,
+    );
+  }));
+
+test("expired refresh authorization is fenced before any provider request", () =>
+  fixture(async (f) => {
+    await f.complete(await f.begin());
+    await f.repository.locked("work", async () => {
+      const value = await f.repository.getCredential("work");
+      assert.ok(value);
+      await f.repository.saveCredential(
+        {
+          ...value,
+          refreshExpiresAt: Date.now() - 1,
+          revision: value.revision + 1,
+        },
+        value.revision,
+      );
+    });
+    await assert.rejects(
+      f.broker.withAccess(
+        "work",
+        [GOOGLE_SCOPES.gmail],
+        AbortSignal.timeout(1000),
+        async () => assert.fail("expired"),
+      ),
+      /Reconnect/,
+    );
+    assert.equal(f.counts().refreshRequests, 0);
+    assert.equal(
+      (await f.repository.getCredential("work"))?.status,
+      "reconnect",
     );
   }));

@@ -18,7 +18,10 @@ export async function POST(request: Request) {
   try {
     const body = await jsonBody(request);
     const config = googleResourceConfig();
-    if (new URL(request.url).origin !== new URL(config.redirectUri).origin)
+    if (
+      request.headers.get("host")?.toLowerCase() !==
+      new URL(config.redirectUri).host
+    )
       throw new HarnessError(
         "Open this control plane at its registered Google redirect origin.",
         403,
@@ -27,7 +30,8 @@ export async function POST(request: Request) {
       !Array.isArray(body.groups) ||
       !body.groups.length ||
       body.groups.some(
-        (group) => typeof group !== "string" || !(group in GOOGLE_SCOPES),
+        (group) =>
+          typeof group !== "string" || !Object.hasOwn(GOOGLE_SCOPES, group),
       )
     )
       throw new HarnessError(

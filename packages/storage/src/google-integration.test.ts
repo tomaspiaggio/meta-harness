@@ -104,7 +104,9 @@ test("native Google uses the same model schema/projection and fenced receipt dis
           }),
       }),
     );
-    const descriptors = (await integrationToolDescriptors(store, "tech")).filter((tool) => tool.name !== "integration_catalog");
+    const descriptors = (
+      await integrationToolDescriptors(store, "tech")
+    ).filter((tool) => tool.name !== "integration_catalog");
     assert.equal(descriptors.length, 2);
     descriptors.sort(
       (a, b) =>
@@ -116,10 +118,9 @@ test("native Google uses the same model schema/projection and fenced receipt dis
       (tool) => tool.id === "sheets.read_range",
     );
     assert.ok(definition);
-    assert.deepEqual(
-      descriptors[0].inputSchema.properties.arguments,
-      definition.inputSchema,
-    );
+    const properties = descriptors[0].inputSchema.properties;
+    assert.ok("arguments" in properties);
+    assert.deepEqual(properties.arguments, definition.inputSchema);
     assert.ok(descriptors[0].description.includes(definition.description));
     assert.deepEqual(await integrationToolDescriptors(store, "business"), []);
     const args = {

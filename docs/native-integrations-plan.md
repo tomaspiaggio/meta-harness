@@ -1,6 +1,7 @@
 # Native email and Google Workspace tools
 
-Status: implementation design; no runtime changes. Baseline: `origin/main` at
+Status: M1–M2 read slice implemented with controlled fixtures, including Calendar
+events added for daily reviews. Drafts/writes remain deferred. Baseline: `origin/main` at
 `f297ee6`. Worktree: `meta-harness-integrations`; branch: `feat/native-integrations`.
 
 ## Problem and result
@@ -115,6 +116,7 @@ start with explicit file IDs if reliable folder enforcement is not implemented.
 | 1 | `drive.search`, `drive.get_file` | Typed metadata, paged query, MIME-aware content/export with byte limits |
 | 1 | `docs.read` | Structured document sections/text and revision metadata, with explicit truncation |
 | 1 | `sheets.metadata`, `sheets.read_range` | File/tab IDs, explicit A1 ranges, bounded rows/columns, raw/formatted/formula representation |
+| 1 | `calendar.list_events` | Explicit calendar/timezone and at most 31 days, bounded pages, expanded recurring events |
 | 2 | `gmail.create_draft`, `gmail.update_draft` | Exact recipients, subject, body and optional reply threading; receipt with draft/message IDs, never send |
 | 3 | `docs.edit`, `sheets.write_range` | Validated narrow edits, revision/precondition where available, exact changed region and follow-up read |
 | 3 | `drive.create_file`, `gmail.send_draft` | Explicit capability enablement, stable IDs/receipts, known provider-specific reconciliation |
@@ -173,16 +175,16 @@ execution interrupted by host loss is never automatically replayed.
 
 ## Checklist and validation
 
-- [ ] M1: adopt common integration ports/registry/bindings; add Google authorization
+- [x] M1: adopt common integration ports/registry/bindings; add Google authorization
   metadata, encrypted credentials, token broker, adapter-specific migrations and
   owner-only resource OAuth routes with fixtures.
-- [ ] M2 (first shipped slice): Settings account/binding UI and phase-1 read/search,
+- [x] M2 (first shipped slice): Settings account/binding UI and phase-1 read/search,
   including Sheets range reads, through bounded HTTP adapters in the existing API
   process/gateway. Include source receipts and scoped OAuth setup documentation.
 - [ ] M3 (later): drafts with operation fencing/reconciliation and scope upgrade.
 - [ ] M4 (later): selected writes/send after fixture-tested provider semantics and
   explicit workspace capabilities; document unimplemented destructive operations.
-- [ ] Test OAuth CSRF/state replay, wrong owner/account, redirect mismatch, missing
+- [x] Test OAuth CSRF/state replay, wrong owner/account, redirect mismatch, missing
   refresh token, concurrent rotation, revoked grants and sanitized failures.
 - [ ] Test workspace/file/range denial, stale binding/schema, duplicate calls,
   stale outcome writes, transport retry after success, timeout after external effect,
@@ -194,9 +196,27 @@ execution interrupted by host loss is never automatically replayed.
 - [ ] Verify SQLite/Postgres parity, export/import and workspace deletion. Account
   disconnect blocks every binding for that connection without deleting remote
   mail/files; unbinding one workspace preserves other workspaces' access.
-- [ ] Run `pnpm check`, `pnpm test`, `pnpm build` and `pnpm smoke` on an isolated
+- [x] Run `pnpm check`, `pnpm test`, `pnpm build` and `pnpm smoke` on an isolated
   local stack. No real account/model calls by default; any later live validation is
   intentionally selected and records external compatibility/deployment gates.
+
+## Implementation evidence
+
+The shared foundation is merged as an actual ancestor, not duplicated. Native code
+is in `packages/integrations`, Google persistence extends `packages/storage`, and
+resource setup/routes compose in `apps/web`. See [operations and scope mapping](google-integrations.md).
+Validation passed on 2026-10-23: `pnpm check` (all nine packages), `pnpm test`
+(113 tests: 106 pass, seven existing external-service skips), `pnpm build`, and
+`pnpm smoke:google`. The latter starts production on isolated port 3212, verifies
+signed resource OAuth and all eight Google tools through the actual MCP gateway,
+then runs the actual `pnpm smoke` Workflow/worker suite. Owned fixtures stop and
+remove their disposable data on success or failure.
+
+Signed OAuth/JWKS fixtures exercise actual owner resource handlers, and HTTP fixtures
+cover Gmail/Drive/Docs/Sheets/Calendar; gateway tests verify schema projection,
+independent accounts/workspaces, read receipts and duplicate suppression. Later
+mutation failure/reconciliation checks above remain unchecked intentionally. Live
+Google consent, public verification and live PostgreSQL remain external gates.
 
 ## New-session handoff prompt
 

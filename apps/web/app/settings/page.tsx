@@ -14,6 +14,7 @@ import { ModelPicker } from "../model-picker";
 import { ErrorNote, PageHeading, Shell, useTree } from "../shell";
 import { WorkerSetup } from "../worker-setup";
 import { GoogleIntegrationSetup } from "./GoogleIntegrationSetup";
+import { GoogleWorkspaceLimits } from "./GoogleWorkspaceLimits";
 import { Integrations } from "./integrations";
 export default function Page() {
   return (
@@ -363,7 +364,15 @@ function Settings() {
           </Button>
         </CardContent>
       </Card>
-      <Integrations setup={<GoogleIntegrationSetup />} />
+      <Integrations
+        setup={<GoogleIntegrationSetup />}
+        connectionSetup={(connection) =>
+          connection.adapter === "native" &&
+          connection.config.adapterId === "google" ? (
+            <GoogleWorkspaceLimits connectionId={connection.id} />
+          ) : null
+        }
+      />
       <Card>
         <CardHeader>
           <CardTitle>Workers</CardTitle>

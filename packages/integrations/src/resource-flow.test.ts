@@ -165,6 +165,7 @@ test("actual owner resource routes complete signed consent fixtures, reject CSRF
     const stored = await repository.getCredential(account.id);
     assert.ok(stored);
     assert.ok(!JSON.stringify(stored).includes("fixture-route-refresh-secret"));
+    delete process.env.HARNESS_GOOGLE_RESOURCE_KEY;
     const disconnected = await disconnect(
       request(
         "disconnect",

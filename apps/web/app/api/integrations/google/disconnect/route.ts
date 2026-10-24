@@ -1,4 +1,5 @@
 import { HarnessError } from "@harness/core";
+import { disconnectGoogleAccount } from "@harness/integrations/oauth";
 import { GoogleAuthorizationStore } from "@harness/storage/google";
 import {
   googleBroker,
@@ -9,6 +10,12 @@ import { getStore } from "../../../../../server/store";
 export async function POST(request: Request) {
   try {
     const body = await jsonBody(request);
+    if (
+      body.action !== undefined &&
+      body.action !== "disconnect" &&
+      body.action !== "rotate_key"
+    )
+      throw new HarnessError("Unknown Google account action.");
     const store = await getStore();
     const connection = (await store.listIntegrationConnections()).find(
       (value) => value.id === body.connectionId,
@@ -30,7 +37,8 @@ export async function POST(request: Request) {
       if (body.action === "rotate_key")
         await (await googleBroker()).rotateKey(connection.id);
       else
-        await (await googleBroker()).disconnect(
+        await disconnectGoogleAccount(
+          credentials,
           connection.id,
           credential.revision,
         );

@@ -100,6 +100,7 @@ apps/worker               polling, leases, shutdown, runtime construction
 packages/core             plain functions, contracts, execution policy
 packages/storage          async SQLite / Prisma-Postgres and object adapters
 packages/runtimes         Demo, Codex CLI, Claude CLI / optional SDK adapters
+packages/integrations     bounded Google resource OAuth and read-only HTTP adapters
 packages/browser          on-demand Patchright and encrypted takeover transport
 packages/checkpoints      portable file manifests and encrypted payload transport
 ```
@@ -455,3 +456,13 @@ workers on the Mac, Pi or Sandbox may host browsers independently of agent
 execution. Extension-backed existing profiles and managed browsers use Patchright
 behind the same gateway. Explicit resource bindings and placement are planned;
 see [Browser resources across workers](docs/browser-connection-options.md).
+
+## Google Workspace read tools
+
+Settings → Integrations supports separate Google account connections and explicit
+workspace tool grants for Gmail, Drive, Docs, Sheets and Calendar events. The
+existing control/API process performs bounded reads through the common harness MCP
+gateway; Claude/Codex retain their native loops. Owner sign-in grants no Google
+data scopes. Configure separate resource OAuth and encrypted refresh-token storage
+using [Google integration operations](docs/google-integrations.md). Drafts, edits and
+sending remain unavailable; fixture tests need no real Google account or model.

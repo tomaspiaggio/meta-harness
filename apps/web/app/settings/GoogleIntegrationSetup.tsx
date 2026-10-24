@@ -26,6 +26,7 @@ export function GoogleIntegrationSetup() {
   const [configured, setConfigured] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
   const load = useCallback(async () => {
     const response = await fetch("/api/integrations/google/status");
     const value = await response.json();
@@ -34,6 +35,15 @@ export function GoogleIntegrationSetup() {
     setConfigured(value.configured);
   }, []);
   useEffect(() => {
+    const result = new URLSearchParams(window.location.search).get("google");
+    if (result === "connected")
+      setNotice(
+        "Google account connected. Review and save each workspace’s tools before using it.",
+      );
+    if (result === "failed")
+      setNotice(
+        "Google data access was not connected. Try again and grant the selected read scopes and offline access. Existing accounts were preserved.",
+      );
     const refresh = () => {
       void load().catch((e) => setError(e.message));
     };
@@ -89,6 +99,7 @@ export function GoogleIntegrationSetup() {
   return (
     <div className="space-y-3 rounded border p-3">
       <strong>Google Workspace accounts</strong>
+      {notice && <p role="status">{notice}</p>}
       <p>
         Connect data access separately from owner sign-in. Choose read groups,
         then explicitly enable tools for each workspace below. Drafts, editing

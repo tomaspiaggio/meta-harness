@@ -170,7 +170,7 @@ export class GoogleOAuthBroker implements GoogleAccess {
     );
     if (
       !input.groups.length ||
-      input.groups.some((group) => !(group in GOOGLE_SCOPES))
+      input.groups.some((group) => !Object.hasOwn(GOOGLE_SCOPES, group))
     )
       throw new HarnessError("Select one or more Google read groups.");
     const state = randomBytes(32).toString("base64url");
@@ -360,11 +360,7 @@ export class GoogleOAuthBroker implements GoogleAccess {
       const previous = await this.options.store.getCredential(
         saved.connectionId,
       );
-      if (
-        previous &&
-        previous.status !== "disconnected" &&
-        previous.subject !== claims.sub
-      )
+      if (previous?.subject && previous.subject !== claims.sub)
         throw new HarnessError(
           "Reconnect must use the same Google account. Add a separate connection for another account.",
           409,
@@ -507,26 +503,11 @@ export class GoogleOAuthBroker implements GoogleAccess {
     return result;
   }
   async disconnect(connectionId: string, expectedCredentialRevision: number) {
-    return this.options.store.locked(connectionId, async () => {
-      const credential = await this.options.store.getCredential(connectionId);
-      if (!credential) return;
-      if (credential.revision !== expectedCredentialRevision)
-        throw new HarnessError(
-          "Google account changed. Refresh Settings and try again.",
-          409,
-        );
-      // Local disconnect is reliable even while Google is unavailable; provider revocation is an explicit separate owner action.
-      await this.options.store.saveCredential(
-        {
-          ...credential,
-          cipher: "",
-          scopes: [],
-          status: "disconnected",
-          revision: credential.revision + 1,
-        },
-        credential.revision,
-      );
-    });
+    return disconnectGoogleAccount(
+      this.options.store,
+      connectionId,
+      expectedCredentialRevision,
+    );
   }
   async rotateKey(connectionId: string) {
     return this.options.store.locked(connectionId, async () => {
@@ -545,4 +526,31 @@ export class GoogleOAuthBroker implements GoogleAccess {
       );
     });
   }
+}
+
+export async function disconnectGoogleAccount(
+  store: GoogleCredentialStore,
+  connectionId: string,
+  expectedCredentialRevision: number,
+) {
+  return store.locked(connectionId, async () => {
+    const credential = await store.getCredential(connectionId);
+    if (!credential) return;
+    if (credential.revision !== expectedCredentialRevision)
+      throw new HarnessError(
+        "Google account changed. Refresh Settings and try again.",
+        409,
+      );
+    // Local disconnect is reliable even while Google is unavailable; provider revocation is an explicit separate owner action.
+    await store.saveCredential(
+      {
+        ...credential,
+        cipher: "",
+        scopes: [],
+        status: "disconnected",
+        revision: credential.revision + 1,
+      },
+      credential.revision,
+    );
+  });
 }
