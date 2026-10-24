@@ -13,6 +13,8 @@ import { Input } from "@/components/ui/input";
 import { ModelPicker } from "../model-picker";
 import { ErrorNote, PageHeading, Shell, useTree } from "../shell";
 import { WorkerSetup } from "../worker-setup";
+import { GoogleIntegrationSetup } from "./GoogleIntegrationSetup";
+import { GoogleWorkspaceLimits } from "./GoogleWorkspaceLimits";
 import { Integrations } from "./integrations";
 import {
   McpConnectionSettings,
@@ -376,10 +378,12 @@ function Settings() {
         </CardContent>
       </Card>
       <Integrations
-        setup={<McpIntegrationSetup />}
-        connectionSetup={(connection) => (
+        setup={<><GoogleIntegrationSetup /><McpIntegrationSetup /></>}
+        connectionSetup={(connection) => connection.adapter === "mcp" ? (
           <McpConnectionSettings connection={connection} />
-        )}
+        ) : connection.adapter === "native" && connection.config.adapterId === "google" ? (
+          <GoogleWorkspaceLimits connectionId={connection.id} />
+        ) : null}
       />
       <Card>
         <CardHeader>

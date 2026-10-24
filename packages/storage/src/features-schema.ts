@@ -1,5 +1,7 @@
 import { mcpSchema } from "./mcp-schema";
+import { googleSchema } from "./google-schema";
 export const featureSchema = `${mcpSchema}
+${googleSchema}
 CREATE TABLE IF NOT EXISTS deleted_resources (kind TEXT NOT NULL, id TEXT NOT NULL, createdAt INTEGER NOT NULL, PRIMARY KEY(kind,id));
 CREATE TABLE IF NOT EXISTS worker_cleanup (workerId TEXT NOT NULL REFERENCES workers(id), kind TEXT NOT NULL, resourceId TEXT NOT NULL, PRIMARY KEY(workerId,kind,resourceId));
 CREATE TABLE IF NOT EXISTS cleanup_jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, nextAt INTEGER NOT NULL, leaseUntil INTEGER, error TEXT);

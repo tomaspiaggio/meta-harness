@@ -9,6 +9,7 @@
     "./application": "./src/application.ts",
     "./database": "./src/database.ts",
     "./objects": "./src/objects.ts",
+    "./google": "./src/google.ts",
     "./mcp": "./src/mcp.ts"
   },
   "scripts": {

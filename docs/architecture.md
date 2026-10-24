@@ -506,3 +506,16 @@ upstream OAuth and durable protocol tasks remain later capabilities. Eve remains
 an architectural reference and is not a runtime dependency. See the
 [integration contract](integration-contract.md) and
 [HTTP compatibility matrix](mcp-connections-plan.md#shipped-http-slice-2026-10-23).
+
+## Native resource integration execution
+
+Google Workspace read/search uses the same integration definitions, account
+connections, revisioned workspace bindings, tool descriptors and operation receipts
+as other collections. The control/API process composes engine-independent adapters
+from `packages/integrations`; no provider loop, browser dependency or new resident
+service is introduced. Google resource OAuth is separate from owner identity login,
+and encrypted refresh tokens remain in the control-process broker. Account-scoped
+leases serialize refresh rotation without replaying HTTP within database transaction
+retries. Explicit Gmail label, file, sheet range and calendar allowlists supplement
+provider scopes. See [Google operations](google-integrations.md) for the scope map,
+recovery process and real-provider deployment gates. Eve remains a reference only.

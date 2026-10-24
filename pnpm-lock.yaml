@@ -56,6 +56,9 @@ importers:
       '@harness/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@harness/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@harness/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
@@ -236,6 +239,19 @@ importers:
       prisma:
         specifier: 7.10.1
         version: 7.10.1(@types/node@24.19.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@5.9.3)
+
+  packages/integrations:
+    dependencies:
+      '@harness/core':
+        specifier: workspace:*
+        version: link:../core
+      jose:
+        specifier: 6.2.13
+        version: 6.2.13
+      zod:
+        specifier: 4.3.6
+        version: 4.3.6
+
 
 packages:
 
