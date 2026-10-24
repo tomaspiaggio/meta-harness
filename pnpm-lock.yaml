@@ -56,6 +56,9 @@ importers:
       '@harness/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@harness/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@harness/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -181,6 +184,18 @@ importers:
       cron-parser:
         specifier: 5.10.2
         version: 5.10.2
+
+  packages/integrations:
+    dependencies:
+      '@harness/core':
+        specifier: workspace:*
+        version: link:../core
+      jose:
+        specifier: 6.2.13
+        version: 6.2.13
+      zod:
+        specifier: 4.3.6
+        version: 4.3.6
 
   packages/runtimes:
     dependencies:
