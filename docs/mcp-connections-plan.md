@@ -1,6 +1,6 @@
 # Workspace MCP connections
 
-Status: implementation design; no runtime changes. Baseline: `origin/main` at
+Status: M1–M2 implemented and verified with isolated fixtures; live vendor compatibility remains external. Baseline: `origin/main` at
 `f297ee6`. Worktree: `meta-harness-mcp`; branch: `feat/mcp-connections`.
 
 ## Problem and result
@@ -154,22 +154,22 @@ Bound/redact persisted results; tool text is untrusted external data, not policy
 
 ## Implementation checklist and verification
 
-- [ ] M1: adopt the common integration foundation/ports; implement MCP discovery
+- [x] M1: adopt the common integration foundation/ports; implement MCP discovery
   and adapter-specific snapshots/migrations with scope/revision/export coverage.
   Preserve the shared owner/workspace binding semantics and existing policies.
-- [ ] M2 (first shipped slice): HTTP fixture server, discovery/bind UI, gateway
+- [x] M2 (first shipped slice): HTTP fixture server, discovery/bind UI, gateway
   list/call, bounded control-process adapter and existing operation receipts.
   Include setup docs and supported protocol/authentication matrix.
 - [ ] M3 (later): stdio/private-host/local-file execution, explicit placement,
   durable remote commands and executor fencing; lazy child lifecycle and cleanup.
 - [ ] M4 (later): upstream OAuth and prepared-image Sandbox support as needed.
-- [ ] Fixtures: cross-workspace denial, revoked binding during I/O, stale schema,
+- [x] Fixtures: cross-workspace denial, revoked binding during I/O, stale schema,
   duplicate HTTP calls, same-ID argument conflicts, unknown outcomes,
   pre-start retry, stale outcome fencing, cancellation and crash after execution.
-- [ ] Fixtures: malformed/oversized schemas/content, pagination, HTTP redirects,
+- [x] Fixtures: malformed/oversized schemas/content, pagination, HTTP redirects,
   secret redaction and operation ownership. Later remote fixtures additionally
   cover duplicate claims, subprocess exit/hang, idle cleanup and separate hosts.
-- [ ] Run `pnpm check`, `pnpm test`, `pnpm build`; execute `pnpm smoke` against an
+- [x] Run `pnpm check`, `pnpm test`, `pnpm build`; execute `pnpm smoke` against an
   isolated local stack for execution changes. Provider CLI tests use fixtures.
   Do not install services, use real credentials or make live model calls by default.
 
@@ -189,3 +189,65 @@ fixtures, bound HTTP calls in the existing API process, and run all required che
 plus local smoke. Preserve user changes and use stacked PRs when publishing.
 Do not create cloud resources or enable paid capacity for fixture development.
 Record external compatibility gates honestly.
+
+## Shipped HTTP slice (2026-10-23)
+
+The adapter lives in `packages/mcp`; common grants, descriptors and operation
+receipts stay in the shared foundation. The existing control/API process starts
+one cold HTTP session per discovery or call, closes it afterward and has no MCP
+worker/daemon. Secrets resolve only on that process. Definitions and accepted
+bindings use shared records; `mcp_discovery_snapshots` stores bounded descriptors
+and the last explicit test status. Deleting a connection cascades its snapshots.
+
+Settings → Integrations → Add MCP server accepts a label, final endpoint and an
+optional header secret reference. Configure `HARNESS_SECRET_BINDINGS` on the
+control server, e.g. `{"work-mcp":"JOB_SECRET_WORK_MCP"}`; the referenced variable
+contains the entire header value (`Bearer …` for Authorization). The UI stores no
+secret values. Empty header bindings support unauthenticated services.
+Create/discover grants nothing; review selected tools and save access for each
+workspace. Connection or discovery changes invalidate prior accepted revisions.
+A schema change seen at call time rejects before sending tools/call; rediscover
+and review access. Newly added tools never become implicitly allowed.
+
+| Capability | HTTP slice |
+| --- | --- |
+| Protocol | Explicit MCP 2025-06-18 initialization/version negotiation |
+| Transport | Streamable HTTP POST with JSON or SSE responses; session ID/header lifecycle and bounded DELETE cleanup |
+| Auth | Authorization/API-Key/X- header → existing deployment secret reference |
+| Limits | 100 tools, 10 discovery pages, 256 KiB HTTP response, 64 KiB result; gateway 25-second request budget, 10-second socket inactivity timeout |
+| Schema | Validated object input/output schemas and forwarded structured results; at most 2,000 nodes and depth 16; references and regex constraints rejected explicitly |
+| Network | HTTPS public destinations; explicit private approval for reachable private/loopback destinations; private HTTP only; pinned DNS, redirects refused; metadata and harness control origins/ports blocked |
+| Effects | All upstream tools start `unknown`; upstream annotations never confer read permission |
+| Unsupported | Legacy HTTP+SSE, stdio, private-host execution via worker, upstream OAuth, prompts/resources, sampling/elicitation/server requests, resumable tasks/streams |
+
+The control server must reach an explicitly approved private destination directly.
+A Pi/native agent does not resolve the endpoint or receive its credentials. Servers
+on another private host that the control process cannot reach remain a later gate.
+There is no general automatic retry, session restart after a tool failure or
+exactly-once claim. Failed calls after dispatch remain unknown even if a server
+might not have acted. Proven pre-action failures may be explicitly retried with
+the same logical ID and `retry_unstarted`; receipts fence stale physical outcomes.
+Raw upstream error payloads are omitted, and known header credential values are
+redacted from descriptors and results before persistence/model projection.
+
+Compatibility was checked against the official
+[MCP Streamable HTTP transport specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports).
+The bounded adapter implements the HTTP protocol directly and imports no MCP SDK
+into core. Protocol/vendor compatibility beyond fixture servers remains an
+external gate; no live service credentials or model calls were used.
+
+Run `pnpm smoke:mcp` after `pnpm build` with Node 24+ to start its own isolated
+fixture stack on port 3211. It uses temporary directories containing `fixture`,
+an authenticated external MCP fixture and real gateway HTTP calls, then runs the
+normal local workflow smoke and stops only its own processes.
+
+Verification results: `pnpm check`, `pnpm test` (95 pass, seven existing skips),
+`pnpm build`, and `pnpm smoke:mcp` passed. The latter runs the regular local smoke
+as well as actual authenticated gateway requests. Transport fixtures additionally
+cover SSE/JSON, pagination, output schemas, malformed/oversized responses,
+unsupported schema references, redirects, private/metadata policy, cancellation
+and secret-safe JSON redaction. Shared ledger fixtures cover explicit pre-start
+retry, stale physical outcomes and persisted admission across database re-open.
+Upstream disconnect after an executed fixture action covers the ambiguous
+completion window; there is no automatic replay. Real Postgres deployment and
+real MCP vendor credentials remain untested external gates.

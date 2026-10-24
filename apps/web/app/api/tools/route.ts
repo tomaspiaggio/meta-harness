@@ -1,3 +1,4 @@
+import "../../../server/integration-adapters";
 export const maxDuration = 60;
 
 import { createHash } from "node:crypto";
@@ -266,8 +267,24 @@ export async function POST(request: Request) {
           request.signal,
         );
       else throw new HarnessError("Unknown tool.", 404);
+      const external =
+        parameters?.name?.startsWith("integration_") &&
+        result &&
+        typeof result === "object" &&
+        "result" in result
+          ? (result as { result: unknown }).result
+          : undefined;
+      const output =
+        external && typeof external === "object"
+          ? (external as Record<string, unknown>)
+          : undefined;
       return reply({
         content: [{ type: "text", text: JSON.stringify(result) }],
+        ...(output?.structuredContent &&
+        typeof output.structuredContent === "object"
+          ? { structuredContent: output.structuredContent }
+          : {}),
+        ...(output?.isError === true ? { isError: true } : {}),
       });
     } catch (error) {
       return reply({

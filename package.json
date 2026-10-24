@@ -40,7 +40,8 @@
     "smoke:pdf": "node scripts/pdf-upload-smoke.mjs",
     "smoke:models": "node scripts/models-smoke.mjs",
     "smoke:native-tools": "node scripts/native-tools-smoke.mjs",
-    "browser:pair": "node --import tsx scripts/pair-browser.mjs"
+    "browser:pair": "node --import tsx scripts/pair-browser.mjs",
+    "smoke:mcp": "node --import tsx scripts/mcp-smoke.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

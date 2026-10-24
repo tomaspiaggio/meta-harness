@@ -395,3 +395,22 @@ are outside this deletion operation. Published shared decisions remain canonical
 source session/turn links are detached, and the workspace ID remains historical
 provenance. A persistent bootstrap marker prevents deleted default workspaces
 from being recreated after a restart.
+
+## Integration collections
+
+The shared integration definition/connection/workspace-binding registry is
+engine-independent. The authenticated harness gateway derives workspace identity
+from the attempt grant, projects namespaced schemas/descriptions and invokes a
+registered adapter on demand in the control/API process. Native adapters and MCP
+HTTP collections share ownership, revision, explicit tool-subset and receipt
+policy. Known pre-action rejection can be explicitly retried; ambiguous external
+effects cannot. A physical attempt token fences receipt finalization. Active I/O
+rechecks stop and revoked grants and conservatively records unknown outcomes.
+
+The MCP HTTP adapter uses a cold bounded session with DNS-pinned destinations and
+server-side secret references; its protocol/session state does not enter Workflow
+history or native provider environment. Stdio/remote private-host execution,
+upstream OAuth and durable protocol tasks remain later capabilities. Eve remains
+an architectural reference and is not a runtime dependency. See the
+[integration contract](integration-contract.md) and
+[HTTP compatibility matrix](mcp-connections-plan.md#shipped-http-slice-2026-10-23).

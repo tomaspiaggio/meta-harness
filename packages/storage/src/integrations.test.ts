@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import type {
   IntegrationAdapter,
@@ -36,9 +39,14 @@ async function fixture(
   run: (
     store: HarnessStore,
     grant: { workerId: string; turnId: string; generation: number },
+    databasePath: string,
   ) => Promise<void>,
 ) {
-  const store = new HarnessStore(":memory:");
+  const directory = await mkdtemp(
+    join(tmpdir(), "integration-registry-fixture-"),
+  );
+  const databasePath = join(directory, "fixture.sqlite");
+  const store = new HarnessStore(databasePath);
   await store.ready;
   try {
     await store.putIntegrationDefinition(definition);
@@ -89,13 +97,18 @@ async function fixture(
     for (const id of await store.pendingDispatch()) await store.enqueue(id);
     const claim = await store.claimForWorker(worker.id);
     assert.ok(claim);
-    await run(store, {
-      workerId: worker.id,
-      turnId: claim.claim.turn.id,
-      generation: claim.claim.turn.generation,
-    });
+    await run(
+      store,
+      {
+        workerId: worker.id,
+        turnId: claim.claim.turn.id,
+        generation: claim.claim.turn.generation,
+      },
+      databasePath,
+    );
   } finally {
     await store.close();
+    await rm(directory, { recursive: true, force: true });
   }
 }
 test("shared collection ports preserve descriptions and schemas; grants fence receipts and revisions", () =>
@@ -380,4 +393,67 @@ test("proven pre-execution rejection can be explicitly retried and stale physica
       ),
       true,
     );
+  }));
+
+test("admission survives control re-open across a lost completion and prevents duplicate external execution", () =>
+  fixture(async (store, grant, databasePath) => {
+    const sessionId = (await store.getTurn(grant.turnId)).sessionId;
+    const id = `integration:${sessionId}:account-a:crash-window`;
+    await store.operation(
+      grant.workerId,
+      grant.turnId,
+      grant.generation,
+      id,
+      {
+        connectionRevision: "c1",
+        bindingRevision: "b1",
+        integrationRevision: "v1",
+        schemaHash: "schema1",
+        toolId: "search",
+        arguments: { query: "survived" },
+      },
+      { attemptToken: "lost-request", execution: "pending" },
+    );
+    const reopened = new HarnessStore(databasePath);
+    await reopened.ready;
+    try {
+      let calls = 0;
+      registerIntegrationAdapter({
+        id: "fixture",
+        async discover() {
+          return definition;
+        },
+        async execute() {
+          calls++;
+          return null;
+        },
+      });
+      const descriptor = (
+        await integrationToolDescriptors(reopened, "tech")
+      )[0];
+      assert.ok(descriptor);
+      await assert.rejects(
+        callIntegrationTool(
+          reopened,
+          grant,
+          "tech",
+          descriptor.name,
+          {
+            operation_id: "crash-window",
+            arguments: { query: "survived" },
+            retry_unstarted: true,
+          },
+          new AbortController().signal,
+        ),
+        /running/,
+      );
+      assert.equal(calls, 0);
+      assert.ok(
+        (await reopened.unfinishedOperations(sessionId)).some(
+          (o) => o.id === id,
+        ),
+      );
+    } finally {
+      await reopened.close();
+    }
   }));

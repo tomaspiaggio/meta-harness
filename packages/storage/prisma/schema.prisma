@@ -623,6 +623,7 @@ model IntegrationDefinitions {
  @@map("integration_definitions")
 }
 model IntegrationConnections {
+ mcpDiscovery McpDiscoverySnapshots?
  id String @id
  integrationId String
  revision String
@@ -640,4 +641,15 @@ model IntegrationBindings {
  workspace Workspaces @relation(fields:[workspaceId],references:[id],onDelete:Restrict)
  @@id([workspaceId,connectionId])
  @@map("integration_bindings")
+}
+
+model McpDiscoverySnapshots {
+ connectionId String @id
+ revision String?
+ descriptors String?
+ status String
+ error String?
+ testedAt BigInt
+ connection IntegrationConnections @relation(fields:[connectionId],references:[id],onDelete:Cascade)
+ @@map("mcp_discovery_snapshots")
 }

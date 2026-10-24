@@ -100,6 +100,7 @@ apps/worker               polling, leases, shutdown, runtime construction
 packages/core             plain functions, contracts, execution policy
 packages/storage          async SQLite / Prisma-Postgres and object adapters
 packages/runtimes         Demo, Codex CLI, Claude CLI / optional SDK adapters
+packages/mcp              cold, bounded upstream MCP Streamable HTTP adapter
 packages/browser          on-demand Patchright and encrypted takeover transport
 packages/checkpoints      portable file manifests and encrypted payload transport
 ```
@@ -171,6 +172,17 @@ retains its selection until submission and can select the same file again. Image
 become native image input; PDFs and other documents are delivered as tool-readable
 files. File delivery does not guarantee that every model/runtime can extract a
 particular PDF. Limits are eight files, 10 MiB per file and 5 MiB per image.
+
+## Integration tool collections
+
+Open **Settings → Integrations → Add MCP server** to discover a reachable HTTP
+MCP tool collection, then review and save the tools each workspace may use.
+Connections grant nothing until bound. The same registry and gateway support
+native API adapters. Credentials use existing server-side secret references;
+changing a connection or tool schema requires reviewing workspace access again.
+Calls run on demand in the control process; native Claude/Codex loops and workers
+receive only the existing scoped harness gateway. No extra daemon starts.
+See [supported MCP transport, authentication and fixture verification](docs/mcp-connections-plan.md#shipped-http-slice-2026-10-23).
 
 ## Persistence and recovery
 
