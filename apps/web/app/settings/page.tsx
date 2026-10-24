@@ -14,6 +14,10 @@ import { ModelPicker } from "../model-picker";
 import { ErrorNote, PageHeading, Shell, useTree } from "../shell";
 import { WorkerSetup } from "../worker-setup";
 import { Integrations } from "./integrations";
+import {
+  McpConnectionSettings,
+  McpIntegrationSetup,
+} from "./McpIntegrationSetup";
 export default function Page() {
   return (
     <Shell>
@@ -371,7 +375,12 @@ function Settings() {
           </Button>
         </CardContent>
       </Card>
-      <Integrations />
+      <Integrations
+        setup={<McpIntegrationSetup />}
+        connectionSetup={(connection) => (
+          <McpConnectionSettings connection={connection} />
+        )}
+      />
       <Card>
         <CardHeader>
           <CardTitle>Workers</CardTitle>

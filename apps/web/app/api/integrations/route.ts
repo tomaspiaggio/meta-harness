@@ -1,3 +1,4 @@
+import "../../../server/integration-adapters";
 import { randomUUID } from "node:crypto";
 import { HarnessError } from "@harness/core";
 import { failure, localRequest, readJson } from "../../../server/http";
@@ -53,6 +54,14 @@ export async function POST(request: Request) {
         connection,
         AbortSignal.timeout(15000),
       );
+      const latestConnection = (await store.listIntegrationConnections()).find(
+        (c) => c.id === connection.id,
+      );
+      if (latestConnection?.revision !== connection.revision)
+        throw new HarnessError(
+          "Connection changed during discovery. Test its current revision.",
+          409,
+        );
       if (definition.id !== connection.integrationId)
         throw new HarnessError("Adapter returned an unrelated definition.");
       const old = (await store.listIntegrationDefinitions()).find(
