@@ -11,6 +11,9 @@ Use pnpm, TypeScript, and the existing Turborepo packages. Read `README.md` and
 - Start the user-facing control server on `0.0.0.0` so phones and tailnet devices
   can reach it. Keep private Next.js/Workflow listeners on loopback. Isolated
   test fixtures may explicitly bind to loopback.
+- Before starting control, check `.data/control-location.json` if it exists.
+  A database retired by a control-plane migration must stay offline; use the
+  recorded control URL and start a standalone worker instead.
 - Concurrency settings apply only to this harness; do not change machine-wide
   resource limits or terminate unrelated processes.
 - Interrupted native agent execution must not be retried automatically.
