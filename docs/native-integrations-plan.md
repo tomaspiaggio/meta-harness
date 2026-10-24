@@ -7,7 +7,8 @@ Status: implementation design; no runtime changes. Baseline: `origin/main` at
 
 Routine email, Drive, Docs and Sheets work should use bounded direct API operations
 without opening a browser, scraping an editor or requiring a particular Mac.
-Add Settings → Connections → Google accounts and workspace-specific tool bindings.
+Add Google Workspace under Settings → Integrations, with account connections and
+workspace-specific tool bindings. Gmail/Drive/Docs/Sheets are described tool groups.
 Read/search ships first, followed by drafts and explicitly enabled write operations.
 Tools run through the existing authenticated harness MCP gateway; Claude/Codex
 retain their native loops. This feature works without either the browser branch
@@ -30,21 +31,21 @@ or configurable upstream MCP connections. Eve remains a reference only.
   `apps/web`. A new `packages/integrations` can implement engine-independent API
   adapters using bounded HTTP requests; no new orchestrator or agent process.
 
-## Shared narrow tool contract
+## Unified integration contract
 
-Define pure `ToolConnection`, `Capability` and `WorkspaceToolBinding` types with
-IDs/revisions, effect (`read`, `write`, `unknown`), schemas and constraints, plus an
-execution port returning bounded content/receipts from fenced attempt context.
-Use the same small shape proposed for upstream MCP, but implement it locally here;
-no dependency on that branch landing. A future merge should reconcile only this
-contract/registry seam rather than coupling transport or OAuth implementations.
+Follow [the shared integration contract](integration-contract.md). An integration
+is a described collection of tools; a connection configures an account/endpoint.
+Google Workspace supplies Gmail, Drive, Docs and Sheets groups with described,
+schema-defined tools. Optional groups organize discovery without granting future
+tools. MCP collections and future Notion/finance/email providers use this same
+contract; the model does not need a native-vs-MCP calling convention.
 
-Expose `tool_connection_list` and `tool_connection_call` on the harness gateway.
-List supplies this workspace's enabled account/capability descriptors and schemas;
-call takes connection ID, capability ID, arguments and stable operation ID for
-mutations. Native Google capability IDs remain concrete and documented, such as
-`gmail.search` and `sheets.read_range`. Validate each with its own strict schema.
-The dispatch surface can later gain named aliases without changing authorization.
+Build the small shared registry/binding/gateway foundation once. This adapter can
+be developed against its pure ports/fixtures independently and adopt the same
+foundation commit when available. Do not duplicate common tables or invent a
+native-only catalog. Expose enabled namespaced tools through the common gateway,
+preserving descriptions, input/output schemas and effect classification. Retain
+concrete IDs such as gmail.search and sheets.read_range behind that projection.
 
 ## Accounts, credentials and minimal schema
 
@@ -54,16 +55,16 @@ same person/account is selected; never reuse identity tokens or infer API consen
 
 | Record | Minimum values |
 | --- | --- |
-| `integration_connections` | ID, owner, provider=`google`, account subject/email label, enabled, revision, granted scope names, credential reference, status |
-| `integration_workspace_bindings` | Workspace + connection key, revision, capabilities, file/range/account constraints, enabled |
-| `integration_oauth_states` | Hashed single-use state, owner session binding, requested connection/scopes, PKCE verifier reference, expiry |
-| `integration_credentials` | Connection reference, encrypted refresh-token payload/key version, token revision, expiry metadata; never returned in API DTOs |
+| Common foundation records | Integration definition, configured connection and workspace bindings; reused unchanged |
+| `google_account_authorizations` | Connection, verified account subject/email label, granted scope names, credential reference, reconnect status |
+| `google_oauth_states` | Hashed single-use state, owner session binding, requested connection/scopes, PKCE verifier reference, expiry |
+| `google_credentials` | Connection reference, encrypted refresh-token payload/key version, token revision, expiry metadata; never returned in API DTOs |
 
 Use additive SQLite/Prisma migrations and explicit export/import/cleanup handling.
-Reserve integration-specific table/migration names, inspect current main before
-allocating migration IDs, and avoid the MCP branch's namespace. Both features
-stand alone; shared TypeScript descriptors are a tiny merge seam, not a new
-orchestration framework. No command table or remote executor is needed initially.
+Reserve Google-adapter-specific migration/table names. Use the shared definition,
+connection and binding registry from the common foundation, not a second native
+registry. The adapter needs neither MCP transport nor the browser branch. No command
+table or remote executor is needed initially.
 Do not overwrite existing sessions, owner authentication or workspace resources.
 Keep credential ciphertext distinct from ordinary connection metadata and backups
 of its encryption key. Reuse audited encryption primitives where suitable, with a
@@ -172,8 +173,9 @@ execution interrupted by host loss is never automatically replayed.
 
 ## Checklist and validation
 
-- [ ] M1: tiny contract, account/binding repository, encrypted credential
-  store, scoped token broker, migrations and owner-only OAuth routes with fixtures.
+- [ ] M1: adopt common integration ports/registry/bindings; add Google authorization
+  metadata, encrypted credentials, token broker, adapter-specific migrations and
+  owner-only resource OAuth routes with fixtures.
 - [ ] M2 (first shipped slice): Settings account/binding UI and phase-1 read/search,
   including Sheets range reads, through bounded HTTP adapters in the existing API
   process/gateway. Include source receipts and scoped OAuth setup documentation.
@@ -200,11 +202,11 @@ execution interrupted by host loss is never automatically replayed.
 
 Implement `docs/native-integrations-plan.md` in this worktree on
 `feat/native-integrations`. Read AGENTS.md, README.md, docs/architecture.md, applicable
-nested instructions and this plan; inspect git status. Build M1–M2 as the small
+nested instructions, docs/integration-contract.md and this plan; inspect git status. Build M1–M2 as the small
 first shipped slice with fixtures and update checklist evidence. Leave drafts,
 writes and remote execution as later work unless the session requests them.
-Preserve existing native loops, engine
-boundaries and all real data. Do not depend on browser or MCP-configuration branches.
+Use the common integration foundation and identical model-facing tool descriptors
+for MCP/native collections. Preserve existing native loops, engine boundaries and all real data. Do not depend on browser or MCP-configuration branches.
 Use pnpm, bounded control-process HTTP adapters and separate resource OAuth; never
 expose tokens to agents. Run required checks plus local smoke. Preserve user changes
 and use stacked PRs when publishing. Do not create cloud resources or enable paid
