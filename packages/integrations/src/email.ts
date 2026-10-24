@@ -13,11 +13,17 @@ export interface EmailThread {
   messages: EmailMessage[];
   truncated: boolean;
 }
+export interface EmailSearchResult {
+  threads: { id: string; snippet: string }[];
+  nextPageToken?: string;
+  partial: boolean;
+}
 export interface EmailProvider {
   search(
     query: string,
     limit: number,
     signal: AbortSignal,
-  ): Promise<{ threadIds: string[]; partial: boolean }>;
+    pageToken?: string,
+  ): Promise<EmailSearchResult>;
   readThread(id: string, signal: AbortSignal): Promise<EmailThread>;
 }

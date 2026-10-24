@@ -17,6 +17,7 @@ export interface GoogleCredential {
   scopes: string[];
   cipher: string;
   revision: number;
+  refreshExpiresAt?: number | null;
   status: "ready" | "reconnect" | "disconnected";
 }
 export interface GoogleOAuthState {
@@ -317,6 +318,7 @@ export class GoogleOAuthBroker implements GoogleAccess {
           issuer: ["https://accounts.google.com", "accounts.google.com"],
           audience: this.options.config.clientId,
           algorithms: ["RS256"],
+          requiredClaims: ["exp", "iat", "sub", "nonce"],
           currentDate: new Date(this.now()),
         },
       );
@@ -384,6 +386,12 @@ export class GoogleOAuthBroker implements GoogleAccess {
           email: claims.email,
           scopes,
           cipher: this.cipher.seal(refresh, `refresh:${saved.connectionId}`),
+          refreshExpiresAt:
+            typeof result.data.refresh_token_expires_in === "number" &&
+            result.data.refresh_token_expires_in > 0 &&
+            result.data.refresh_token_expires_in <= 315_360_000
+              ? this.now() + result.data.refresh_token_expires_in * 1000
+              : (previous?.refreshExpiresAt ?? null),
           revision: (previous?.revision ?? 0) + 1,
           status: "ready",
         },
@@ -402,13 +410,13 @@ export class GoogleOAuthBroker implements GoogleAccess {
     connectionId: string,
     requiredScopes: string[],
     signal: AbortSignal,
-    action: (accessToken: string) => Promise<T>,
+    action: (accessToken: string, account?: { email: string }) => Promise<T>,
     expectedRevision?: string,
   ): Promise<T> {
     const grant = await this.options.store.locked(connectionId, async () => {
       await this.options.assertConnection(connectionId, expectedRevision);
       const credential = await this.options.store.getCredential(connectionId);
-      if (!credential || credential.status !== "ready")
+      if (credential?.status !== "ready")
         throw new HarnessError(
           "Connect or reconnect this Google account in Settings → Integrations.",
           403,
@@ -418,6 +426,20 @@ export class GoogleOAuthBroker implements GoogleAccess {
           "This Google account is missing the requested read scope. Upgrade access in Settings → Integrations.",
           403,
         );
+      if (
+        credential.refreshExpiresAt &&
+        credential.refreshExpiresAt <= this.now()
+      ) {
+        await this.options.store.saveCredential(
+          {
+            ...credential,
+            revision: credential.revision + 1,
+            status: "reconnect",
+          },
+          credential.revision,
+        );
+        return { error: true as const };
+      }
       const result = await this.tokenRequest(
         {
           refresh_token: this.cipher.open(
@@ -464,6 +486,7 @@ export class GoogleOAuthBroker implements GoogleAccess {
       return {
         error: false as const,
         token: string(result.data.access_token),
+        email: credential.email,
         revision: next.revision,
       };
     });
@@ -473,10 +496,10 @@ export class GoogleOAuthBroker implements GoogleAccess {
         403,
       );
     await this.options.assertConnection(connectionId, expectedRevision);
-    const result = await action(grant.token);
+    const result = await action(grant.token, { email: grant.email });
     await this.options.assertConnection(connectionId, expectedRevision);
     const current = await this.options.store.getCredential(connectionId);
-    if (!current || current.status !== "ready")
+    if (current?.status !== "ready")
       throw new HarnessError(
         "Google access was disconnected while reading.",
         403,

@@ -10,6 +10,17 @@ const id = z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/);
 const limit = z.number().int().min(1).max(50).default(20);
 const pageToken = z.string().min(1).max(4096).optional();
 export const toolSchemas = {
+  "calendar.list_events": z.strictObject({
+    calendarId: z
+      .string()
+      .regex(/^[a-zA-Z0-9@._%#+-]{1,256}$/)
+      .default("primary"),
+    timeMin: z.iso.datetime({ offset: true }),
+    timeMax: z.iso.datetime({ offset: true }),
+    timeZone: z.string().min(1).max(100),
+    limit,
+    pageToken,
+  }),
   "gmail.search": z.strictObject({
     query: z.string().min(1).max(1024),
     limit,
@@ -37,6 +48,7 @@ export const toolSchemas = {
 };
 export type GoogleToolId = keyof typeof toolSchemas;
 export const GOOGLE_SCOPES = {
+  calendar: "https://www.googleapis.com/auth/calendar.events.readonly",
   gmail: "https://www.googleapis.com/auth/gmail.readonly",
   drive: "https://www.googleapis.com/auth/drive.readonly",
   docs: "https://www.googleapis.com/auth/documents.readonly",
@@ -44,6 +56,8 @@ export const GOOGLE_SCOPES = {
 } as const;
 export type GoogleGroup = keyof typeof GOOGLE_SCOPES;
 const descriptions: Record<GoogleToolId, string> = {
+  "calendar.list_events":
+    "List a bounded page of events from one Google calendar in an explicit RFC3339 interval of at most 31 days and an IANA time zone. Recurring events expand to occurrences; cancelled events are omitted. timeMin bounds event end and timeMax bounds event start, so overlapping events are included. Includes timed/all-day start/end and source links; no invitations or calendar changes are made.",
   "gmail.search":
     "Search this Google account's Gmail using Gmail search syntax. Returns one bounded page of thread IDs and snippets; does not download attachments or send mail. Continue only with the returned account/query-bound page token.",
   "gmail.read_thread":
@@ -63,8 +77,8 @@ export const googleDefinition: IntegrationDefinition = {
   id: "google-workspace",
   name: "Google Workspace",
   description:
-    "Read and search email, Drive files, Docs and Sheets through a separately authorized Google account. Drafts, writes and sending are unavailable.",
-  revision: "google-read-v1",
+    "Read and search email, Drive files, Docs, Sheets and Calendar events through a separately authorized Google account. Drafts, writes and sending are unavailable.",
+  revision: "google-read-v2",
   groups: Object.keys(GOOGLE_SCOPES).map((group) => ({
     id: group,
     name: group === "gmail" ? "Gmail" : group[0].toUpperCase() + group.slice(1),
@@ -95,6 +109,25 @@ export function parseGoogleArguments(
   if (!schema) throw new HarnessError("Unknown Google tool.", 404);
   const result = schema.safeParse(value);
   if (!result.success) throw new HarnessError("Invalid Google tool arguments.");
+  if (toolId === "calendar.list_events") {
+    const value = result.data as {
+      timeMin: string;
+      timeMax: string;
+      timeZone: string;
+    };
+    const interval = Date.parse(value.timeMax) - Date.parse(value.timeMin);
+    if (interval <= 0 || interval > 31 * 86_400_000)
+      throw new HarnessError(
+        "Calendar interval must be positive and at most 31 days.",
+      );
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: value.timeZone }).format(0);
+    } catch {
+      throw new HarnessError(
+        "Use an IANA calendar time zone such as America/Los_Angeles.",
+      );
+    }
+  }
   return result.data as JsonObject;
 }
 export interface A1Range {
@@ -139,6 +172,10 @@ export function parseA1(range: string): A1Range {
   return result;
 }
 export const googleConstraintsSchema = z.strictObject({
+  calendarIds: z
+    .array(z.string().regex(/^[a-zA-Z0-9@._%#+-]{1,256}$/))
+    .max(50)
+    .optional(),
   fileIds: z.array(id).max(500).optional(),
   gmailLabelIds: z.array(id).min(1).max(20).optional(),
   sheetRanges: z

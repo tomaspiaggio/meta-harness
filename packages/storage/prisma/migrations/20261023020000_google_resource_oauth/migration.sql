@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS google_account_authorizations (
  "connectionId" TEXT PRIMARY KEY REFERENCES integration_connections(id) ON DELETE CASCADE,
  subject TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', scopes TEXT NOT NULL DEFAULT '[]',
- status TEXT NOT NULL DEFAULT 'disconnected', revision INTEGER NOT NULL DEFAULT 0,
+ status TEXT NOT NULL DEFAULT 'disconnected', revision INTEGER NOT NULL DEFAULT 0, "refreshExpiresAt" INTEGER,
  "lockOwner" TEXT, "lockUntil" INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS google_credentials (

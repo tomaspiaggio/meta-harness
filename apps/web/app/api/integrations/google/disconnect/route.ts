@@ -14,8 +14,7 @@ export async function POST(request: Request) {
       (value) => value.id === body.connectionId,
     );
     if (
-      !connection ||
-      connection.config.adapterId !== "google" ||
+      connection?.config.adapterId !== "google" ||
       connection.revision !== body.expectedRevision
     )
       throw new HarnessError(

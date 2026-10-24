@@ -645,6 +645,7 @@ model IntegrationBindings {
 }
 
 model GoogleAccountAuthorizations {
+ refreshExpiresAt BigInt?
  connectionId String @id
  subject String @default("")
  email String @default("")

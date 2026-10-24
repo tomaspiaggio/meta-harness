@@ -5,7 +5,8 @@ import type {
   JsonObject,
   JsonValue,
 } from "@harness/core/integrations";
-import type { EmailMessage, EmailThread } from "./email";
+import { IntegrationNotStartedError } from "@harness/core/integrations";
+import { GmailEmailProvider } from "./gmail";
 import {
   assertFileAllowed,
   assertRangeAllowed,
@@ -30,7 +31,7 @@ export interface GoogleAccess {
     connectionId: string,
     scopes: string[],
     signal: AbortSignal,
-    action: (accessToken: string) => Promise<T>,
+    action: (accessToken: string, account?: { email: string }) => Promise<T>,
     expectedRevision?: string,
   ): Promise<T>;
 }
@@ -42,90 +43,6 @@ const pick = (value: Record<string, unknown>, keys: string[]) =>
     keys.filter((k) => value[k] !== undefined).map((k) => [k, value[k]]),
   );
 const cleanText = (value: string) => value.replaceAll("\u0000", "");
-function decodePart(part: Record<string, unknown>): string {
-  if (part.filename || part.mimeType !== "text/plain") return "";
-  const data = string(object(part.body).data);
-  if (!/^[A-Za-z0-9_-]*={0,2}$/.test(data)) return "";
-  return cleanText(Buffer.from(data, "base64url").toString("utf8"));
-}
-function messageContent(
-  payload: Record<string, unknown>,
-  budget = 1000,
-): { text: string; attachments: boolean; partial: boolean } {
-  let text = "";
-  let attachments = false;
-  let count = 0;
-  const walk = (part: Record<string, unknown>, depth: number) => {
-    if (count++ >= budget || depth > 20) return;
-    if (part.filename || object(part.body).attachmentId) attachments = true;
-    text += decodePart(part);
-    for (const child of array(part.parts)) walk(object(child), depth + 1);
-  };
-  walk(payload, 0);
-  return {
-    text: text.slice(0, MAX_TEXT),
-    attachments,
-    partial: text.length > MAX_TEXT || count >= budget,
-  };
-}
-export function gmailThread(
-  value: Record<string, unknown>,
-  labels?: string[],
-): EmailThread {
-  const all = array(value.messages);
-  if (
-    labels &&
-    all.some(
-      (item) =>
-        !array(object(item).labelIds).some((label) =>
-          labels.includes(string(label)),
-        ),
-    )
-  )
-    throw new HarnessError(
-      "This thread includes messages outside the workspace label grant.",
-      403,
-    );
-  let remaining = MAX_TEXT;
-  const messages: EmailMessage[] = all.slice(0, 20).map((item) => {
-    const message = object(item);
-    const payload = object(message.payload);
-    const content = messageContent(payload);
-    const text = content.text.slice(0, remaining);
-    remaining -= text.length;
-    return {
-      id: string(message.id),
-      threadId: string(message.threadId),
-      headers: array(payload.headers)
-        .map(object)
-        .filter((header) =>
-          [
-            "from",
-            "to",
-            "cc",
-            "subject",
-            "date",
-            "message-id",
-            "in-reply-to",
-          ].includes(string(header.name).toLowerCase()),
-        )
-        .slice(0, 20)
-        .map((header) => ({
-          name: string(header.name).slice(0, 100),
-          value: string(header.value).slice(0, 1000),
-        })),
-      snippet: string(message.snippet).slice(0, 500),
-      text,
-      truncated: content.partial || text.length < content.text.length,
-      attachmentsOmitted: content.attachments,
-    };
-  });
-  return {
-    id: string(value.id),
-    messages,
-    truncated: all.length > 20 || messages.some((m) => m.truncated),
-  };
-}
 function docsContent(value: Record<string, unknown>) {
   let remaining = MAX_TEXT;
   let truncated = false;
@@ -209,15 +126,25 @@ function boundData(input: Record<string, unknown>): JsonObject {
       return null;
     }
     if (typeof value === "string") {
-      const bytes = Buffer.from(value);
-      const limit = Math.max(0, Math.floor((remaining - 2) / 6));
-      // JSON escaping can expand control characters to six bytes.
-      const result =
-        bytes.length <= limit
-          ? value
-          : bytes.subarray(0, limit).toString("utf8");
-      if (result !== value) truncated = true;
+      const encoded = JSON.stringify(value);
+      if (Buffer.byteLength(encoded) <= remaining - 2) {
+        remaining -= Buffer.byteLength(encoded);
+        return value;
+      }
+      let low = 0;
+      let high = Math.min(value.length, remaining);
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        if (
+          Buffer.byteLength(JSON.stringify(value.slice(0, middle))) <=
+          remaining - 2
+        )
+          low = middle;
+        else high = middle - 1;
+      }
+      const result = value.slice(0, low);
       remaining -= Buffer.byteLength(JSON.stringify(result));
+      truncated = true;
       return result;
     }
     if (
@@ -309,271 +236,334 @@ export function createGoogleAdapter(options: {
       return structuredClone(googleDefinition);
     },
     async execute(input) {
-      const args = parseGoogleArguments(input.tool.id, input.arguments);
-      const constraints = googleConstraints(input.constraints);
-      const group = input.tool.id.split(".")[0] as GoogleGroup;
-      const scope = GOOGLE_SCOPES[group];
-      if (!scope) throw new HarnessError("Unknown Google tool.", 404);
-      const identifier = string(
-        args.fileId ?? args.documentId ?? args.spreadsheetId,
-      );
-      if (identifier) assertFileAllowed(identifier, constraints);
-      if (input.tool.id === "sheets.read_range")
-        assertRangeAllowed(identifier, string(args.range), constraints);
-      // A restricted sheet cannot expose global tab names/grid metadata outside the allowed ranges.
-      if (
-        input.tool.id === "sheets.metadata" &&
-        constraints.sheetRanges &&
-        !constraints.sheetRanges[identifier]
-      )
-        throw new HarnessError(
-          "This spreadsheet is outside the workspace range grant.",
-          403,
+      let started = false;
+      try {
+        const args = parseGoogleArguments(input.tool.id, input.arguments);
+        const constraints = googleConstraints(input.constraints);
+        const group = input.tool.id.split(".")[0] as GoogleGroup;
+        const scope = GOOGLE_SCOPES[group];
+        if (!scope) throw new HarnessError("Unknown Google tool.", 404);
+        const identifier = string(
+          args.fileId ?? args.documentId ?? args.spreadsheetId,
         );
-      const signal = AbortSignal.any([
-        input.signal,
-        AbortSignal.timeout(15_000),
-      ]);
-      const binding = sign(
-        JSON.stringify([
+        if (identifier) assertFileAllowed(identifier, constraints);
+        if (input.tool.id === "sheets.read_range")
+          assertRangeAllowed(identifier, string(args.range), constraints);
+        // A restricted sheet cannot expose global tab names/grid metadata outside the allowed ranges.
+        if (
+          input.tool.id === "sheets.metadata" &&
+          constraints.sheetRanges &&
+          !constraints.sheetRanges[identifier]
+        )
+          throw new HarnessError(
+            "This spreadsheet is outside the workspace range grant.",
+            403,
+          );
+        if (
+          input.tool.id === "calendar.list_events" &&
+          constraints.calendarIds &&
+          !constraints.calendarIds.includes(string(args.calendarId))
+        )
+          throw new HarnessError(
+            "This calendar is outside the workspace grant.",
+            403,
+          );
+        const signal = AbortSignal.any([
+          input.signal,
+          AbortSignal.timeout(15_000),
+        ]);
+        const binding = sign(
+          JSON.stringify([
+            input.connection.id,
+            input.connection.revision,
+            input.workspaceId,
+            input.tool.id,
+            { ...args, pageToken: undefined },
+            input.constraints,
+          ]),
+        );
+        const page = args.pageToken
+          ? uncursor(binding, string(args.pageToken))
+          : undefined;
+        return await options.access.withAccess(
           input.connection.id,
-          input.connection.revision,
-          input.workspaceId,
-          input.tool.id,
-          { ...args, pageToken: undefined },
-          input.constraints,
-        ]),
-      );
-      const page = args.pageToken
-        ? uncursor(binding, string(args.pageToken))
-        : undefined;
-      return options.access.withAccess(
-        input.connection.id,
-        [scope],
-        signal,
-        async (token) => {
-          const get = async (url: URL | string) => {
-            try {
-              return await http(url, {
-                headers: { Authorization: `Bearer ${token}` },
-                signal,
-                redirect: "error",
-              });
-            } catch {
-              throw new HarnessError(
-                signal.aborted
-                  ? "Google read cancelled or timed out."
-                  : "Google read transport failed.",
-                502,
-              );
-            }
-          };
-          const json = async (
-            base: string,
-            params: Record<string, string | undefined> = {},
-          ) => {
-            const url = new URL(base);
-            for (const [key, value] of Object.entries(params))
-              if (value !== undefined) url.searchParams.set(key, value);
-            return googleJson(await get(url));
-          };
-          let data: Record<string, unknown>;
-          let sourceUrl = "";
-          let representation = "metadata";
-          if (input.tool.id === "gmail.search") {
-            const url = new URL(
-              "https://gmail.googleapis.com/gmail/v1/users/me/threads",
-            );
-            url.searchParams.set("q", string(args.query));
-            url.searchParams.set("maxResults", String(args.limit));
-            for (const label of constraints.gmailLabelIds ?? [])
-              url.searchParams.append("labelIds", label);
-            if (page) url.searchParams.set("pageToken", page);
-            const value = await googleJson(await get(url));
-            data = {
-              threads: array(value.threads)
-                .slice(0, Number(args.limit))
-                .map((item) =>
-                  pick(object(item), ["id", "snippet", "historyId"]),
-                ),
-              partial: true,
-              nextPageToken: value.nextPageToken
-                ? cursor(binding, string(value.nextPageToken))
-                : null,
-            };
-            sourceUrl = "https://mail.google.com/mail/u/0/#search";
-          } else if (input.tool.id === "gmail.read_thread") {
-            const value = await json(
-              `https://gmail.googleapis.com/gmail/v1/users/me/threads/${args.threadId}`,
-              { format: "full" },
-            );
-            data = gmailThread(
-              value,
-              constraints.gmailLabelIds,
-            ) as unknown as Record<string, unknown>;
-            representation = "plain_text";
-            sourceUrl = `https://mail.google.com/mail/u/0/#all/${args.threadId}`;
-          } else if (input.tool.id === "drive.search") {
-            const escaped = string(args.query)
-              .replaceAll("\\", "\\\\")
-              .replaceAll("'", "\\'");
-            const value = await json(
-              "https://www.googleapis.com/drive/v3/files",
-              {
-                q: `trashed = false and name contains '${escaped}'`,
-                pageSize: String(args.limit),
-                pageToken: page,
-                supportsAllDrives: "true",
-                includeItemsFromAllDrives: "true",
-                fields: `nextPageToken,incompleteSearch,files(${fileFields})`,
-              },
-            );
-            data = {
-              files: array(value.files)
-                .slice(0, Number(args.limit))
-                .map(object)
-                .filter(
-                  (file) =>
-                    !constraints.fileIds ||
-                    constraints.fileIds.includes(string(file.id)),
-                ),
-              partial: true,
-              incompleteSearch: value.incompleteSearch === true,
-              nextPageToken: value.nextPageToken
-                ? cursor(binding, string(value.nextPageToken))
-                : null,
-            };
-            sourceUrl = "https://drive.google.com/drive/my-drive";
-          } else if (input.tool.id === "drive.get_file") {
-            data = await json(
-              `https://www.googleapis.com/drive/v3/files/${identifier}`,
-              { supportsAllDrives: "true", fields: fileFields },
-            );
-            sourceUrl = `https://drive.google.com/file/d/${identifier}/view`;
-            if (args.representation === "text") {
-              const mime = string(data.mimeType);
-              let url: string;
-              if (mime === "application/vnd.google-apps.document")
-                url = `https://www.googleapis.com/drive/v3/files/${identifier}/export?mimeType=text%2Fplain`;
-              else if (
-                mime.startsWith("text/") ||
-                ["application/json", "application/xml"].includes(mime)
-              )
-                url = `https://www.googleapis.com/drive/v3/files/${identifier}?alt=media&supportsAllDrives=true`;
-              else
+          [scope],
+          signal,
+          async (token, account) => {
+            const get = async (url: URL | string) => {
+              try {
+                started = true;
+                return await http(url, {
+                  headers: { Authorization: `Bearer ${token}` },
+                  signal,
+                  redirect: "error",
+                });
+              } catch {
                 throw new HarnessError(
-                  "This MIME type needs its dedicated read tool; binary and other editor exports are unavailable.",
+                  signal.aborted
+                    ? "Google read cancelled or timed out."
+                    : "Google read transport failed.",
+                  502,
                 );
-              const response = await get(url);
-              if (!response.ok) await googleJson(response);
-              const text = cleanText(
-                await boundedResponse(response, 1_048_576),
+              }
+            };
+            const json = async (
+              base: string,
+              params: Record<string, string | undefined> = {},
+            ) => {
+              const url = new URL(base);
+              for (const [key, value] of Object.entries(params))
+                if (value !== undefined) url.searchParams.set(key, value);
+              return googleJson(await get(url));
+            };
+            let data: Record<string, unknown>;
+            let sourceUrl = "";
+            let representation = "metadata";
+            const gmail = new GmailEmailProvider(
+              async (url) => googleJson(await get(url)),
+              constraints.gmailLabelIds,
+            );
+            if (input.tool.id === "calendar.list_events") {
+              const calendarId = string(args.calendarId);
+              if (
+                constraints.calendarIds &&
+                !constraints.calendarIds.includes(calendarId)
+              )
+                throw new HarnessError(
+                  "This calendar is outside the workspace grant.",
+                  403,
+                );
+              const value = await json(
+                `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
+                {
+                  timeMin: string(args.timeMin),
+                  timeMax: string(args.timeMax),
+                  timeZone: string(args.timeZone),
+                  maxResults: String(args.limit),
+                  pageToken: page,
+                  singleEvents: "true",
+                  showDeleted: "false",
+                  orderBy: "startTime",
+                  fields:
+                    "timeZone,updated,nextPageToken,items(id,status,summary,description,location,htmlLink,start,end,organizer,attendees,recurringEventId,originalStartTime,updated)",
+                },
               );
               data = {
-                ...data,
-                text: text.slice(0, MAX_TEXT),
-                truncated: text.length > MAX_TEXT,
+                calendarId,
+                requestedInterval: {
+                  timeMin: args.timeMin,
+                  timeMax: args.timeMax,
+                },
+                timeZone: string(value.timeZone) || args.timeZone,
+                events: array(value.items)
+                  .slice(0, Number(args.limit))
+                  .map((item) =>
+                    pick(object(item), [
+                      "id",
+                      "status",
+                      "summary",
+                      "description",
+                      "location",
+                      "htmlLink",
+                      "start",
+                      "end",
+                      "organizer",
+                      "attendees",
+                      "recurringEventId",
+                      "originalStartTime",
+                      "updated",
+                    ]),
+                  ),
+                partial: true,
+                nextPageToken: value.nextPageToken
+                  ? cursor(binding, string(value.nextPageToken))
+                  : null,
               };
+              representation = "calendar_events";
+              sourceUrl = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(calendarId)}${account?.email ? `&authuser=${encodeURIComponent(account.email)}` : ""}`;
+            } else if (input.tool.id === "gmail.search") {
+              const value = await gmail.search(
+                string(args.query),
+                Number(args.limit),
+                signal,
+                page,
+              );
+              data = {
+                threads: value.threads,
+                partial: value.partial,
+                nextPageToken: value.nextPageToken
+                  ? cursor(binding, value.nextPageToken)
+                  : null,
+              };
+              sourceUrl = `https://mail.google.com/mail/${account?.email ? `?authuser=${encodeURIComponent(account.email)}` : ""}#search`;
+            } else if (input.tool.id === "gmail.read_thread") {
+              data = (await gmail.readThread(
+                string(args.threadId),
+                signal,
+              )) as unknown as Record<string, unknown>;
               representation = "plain_text";
-            }
-          } else if (input.tool.id === "docs.read") {
-            const value = await json(
-              `https://docs.googleapis.com/v1/documents/${identifier}`,
-              { includeTabsContent: "true" },
-            );
-            data = {
-              documentId: string(value.documentId),
-              title: string(value.title).slice(0, 500),
-              revisionId: string(value.revisionId),
-              ...docsContent(value),
-            };
-            representation = "structured_text";
-            sourceUrl = `https://docs.google.com/document/d/${identifier}/edit`;
-          } else if (input.tool.id === "sheets.metadata") {
-            const value = await json(
-              `https://sheets.googleapis.com/v4/spreadsheets/${identifier}`,
-              {
-                includeGridData: "false",
-                fields:
-                  "spreadsheetId,spreadsheetUrl,properties(title,locale,timeZone),sheets(properties(sheetId,title,index,sheetType,gridProperties))",
-              },
-            );
-            const all = array(value.sheets).map(object);
-            const allowedTabs = constraints.sheetRanges?.[identifier]?.map(
-              (range) => range.slice(0, range.lastIndexOf("!")),
-            );
-            const sheets = all.filter(
-              (sheet) =>
-                !allowedTabs ||
-                allowedTabs.some(
-                  (tab) =>
-                    tab === string(object(sheet.properties).title) ||
-                    tab ===
-                      `'${string(object(sheet.properties).title).replaceAll("'", "''")}'`,
-                ),
-            );
-            data = {
-              spreadsheetId: identifier,
-              properties: value.properties,
-              sheets: sheets.slice(0, 100),
-              truncated: sheets.length > 100,
-              rangeRestricted: !!allowedTabs,
-            };
-            sourceUrl = `https://docs.google.com/spreadsheets/d/${identifier}/edit`;
-          } else {
-            const render = {
-              formatted: "FORMATTED_VALUE",
-              raw: "UNFORMATTED_VALUE",
-              formula: "FORMULA",
-            }[string(args.representation)];
-            const value = await json(
-              `https://sheets.googleapis.com/v4/spreadsheets/${identifier}/values/${encodeURIComponent(string(args.range))}`,
-              {
-                valueRenderOption: render,
-                dateTimeRenderOption: "SERIAL_NUMBER",
-                majorDimension: "ROWS",
-              },
-            );
-            let budget = MAX_TEXT;
-            let truncated = false;
-            const rows = array(value.values);
-            const values = rows.slice(0, 200).map((row) =>
-              array(row)
-                .slice(0, 50)
-                .map((cell) => {
-                  if (typeof cell === "number" || typeof cell === "boolean") {
-                    budget -= String(cell).length;
-                    if (budget < 0) {
-                      truncated = true;
-                      return null;
+              sourceUrl = `https://mail.google.com/mail/${account?.email ? `?authuser=${encodeURIComponent(account.email)}` : ""}#all/${args.threadId}`;
+            } else if (input.tool.id === "drive.search") {
+              const escaped = string(args.query)
+                .replaceAll("\\", "\\\\")
+                .replaceAll("'", "\\'");
+              const value = await json(
+                "https://www.googleapis.com/drive/v3/files",
+                {
+                  q: `trashed = false and name contains '${escaped}'`,
+                  pageSize: String(args.limit),
+                  pageToken: page,
+                  supportsAllDrives: "true",
+                  includeItemsFromAllDrives: "true",
+                  fields: `nextPageToken,incompleteSearch,files(${fileFields})`,
+                },
+              );
+              data = {
+                files: array(value.files)
+                  .slice(0, Number(args.limit))
+                  .map(object)
+                  .filter(
+                    (file) =>
+                      !constraints.fileIds ||
+                      constraints.fileIds.includes(string(file.id)),
+                  ),
+                partial: true,
+                incompleteSearch: value.incompleteSearch === true,
+                nextPageToken: value.nextPageToken
+                  ? cursor(binding, string(value.nextPageToken))
+                  : null,
+              };
+              sourceUrl = "https://drive.google.com/drive/my-drive";
+            } else if (input.tool.id === "drive.get_file") {
+              data = await json(
+                `https://www.googleapis.com/drive/v3/files/${identifier}`,
+                { supportsAllDrives: "true", fields: fileFields },
+              );
+              sourceUrl = `https://drive.google.com/file/d/${identifier}/view`;
+              if (args.representation === "text") {
+                const mime = string(data.mimeType);
+                let url: string;
+                if (mime === "application/vnd.google-apps.document")
+                  url = `https://www.googleapis.com/drive/v3/files/${identifier}/export?mimeType=text%2Fplain`;
+                else if (
+                  mime.startsWith("text/") ||
+                  ["application/json", "application/xml"].includes(mime)
+                )
+                  url = `https://www.googleapis.com/drive/v3/files/${identifier}?alt=media&supportsAllDrives=true`;
+                else
+                  throw new HarnessError(
+                    "This MIME type needs its dedicated read tool; binary and other editor exports are unavailable.",
+                  );
+                const response = await get(url);
+                if (!response.ok) await googleJson(response);
+                const text = cleanText(
+                  await boundedResponse(response, 1_048_576),
+                );
+                data = {
+                  ...data,
+                  text: text.slice(0, MAX_TEXT),
+                  truncated: text.length > MAX_TEXT,
+                };
+                representation = "plain_text";
+              }
+            } else if (input.tool.id === "docs.read") {
+              const value = await json(
+                `https://docs.googleapis.com/v1/documents/${identifier}`,
+                { includeTabsContent: "true" },
+              );
+              data = {
+                documentId: string(value.documentId),
+                title: string(value.title).slice(0, 500),
+                revisionId: string(value.revisionId),
+                ...docsContent(value),
+              };
+              representation = "structured_text";
+              sourceUrl = `https://docs.google.com/document/d/${identifier}/edit`;
+            } else if (input.tool.id === "sheets.metadata") {
+              const value = await json(
+                `https://sheets.googleapis.com/v4/spreadsheets/${identifier}`,
+                {
+                  includeGridData: "false",
+                  fields:
+                    "spreadsheetId,spreadsheetUrl,properties(title,locale,timeZone),sheets(properties(sheetId,title,index,sheetType,gridProperties))",
+                },
+              );
+              const all = array(value.sheets).map(object);
+              const allowedTabs = constraints.sheetRanges?.[identifier]?.map(
+                (range) => range.slice(0, range.lastIndexOf("!")),
+              );
+              const sheets = all.filter(
+                (sheet) =>
+                  !allowedTabs ||
+                  allowedTabs.some(
+                    (tab) =>
+                      tab === string(object(sheet.properties).title) ||
+                      tab ===
+                        `'${string(object(sheet.properties).title).replaceAll("'", "''")}'`,
+                  ),
+              );
+              data = {
+                spreadsheetId: identifier,
+                properties: value.properties,
+                sheets: sheets.slice(0, 100),
+                truncated: sheets.length > 100,
+                rangeRestricted: !!allowedTabs,
+              };
+              sourceUrl = `https://docs.google.com/spreadsheets/d/${identifier}/edit`;
+            } else {
+              const render = {
+                formatted: "FORMATTED_VALUE",
+                raw: "UNFORMATTED_VALUE",
+                formula: "FORMULA",
+              }[string(args.representation)];
+              const value = await json(
+                `https://sheets.googleapis.com/v4/spreadsheets/${identifier}/values/${encodeURIComponent(string(args.range))}`,
+                {
+                  valueRenderOption: render,
+                  dateTimeRenderOption: "SERIAL_NUMBER",
+                  majorDimension: "ROWS",
+                },
+              );
+              let budget = MAX_TEXT;
+              let truncated = false;
+              const rows = array(value.values);
+              const values = rows.slice(0, 200).map((row) =>
+                array(row)
+                  .slice(0, 50)
+                  .map((cell) => {
+                    if (typeof cell === "number" || typeof cell === "boolean") {
+                      budget -= String(cell).length;
+                      if (budget < 0) {
+                        truncated = true;
+                        return null;
+                      }
+                      return cell;
                     }
-                    return cell;
-                  }
-                  const text = string(cell);
-                  const result = text.slice(0, Math.max(0, budget));
-                  budget -= result.length;
-                  if (result.length < text.length) truncated = true;
-                  return result;
-                }),
-            );
-            data = {
-              spreadsheetId: identifier,
-              requestedRange: args.range,
-              range: string(value.range),
-              majorDimension: "ROWS",
-              values,
-              truncated: truncated || rows.length > 200,
-              dateTimeRepresentation: "serial_number",
-            };
-            representation = string(args.representation);
-            sourceUrl = `https://docs.google.com/spreadsheets/d/${identifier}/edit`;
-          }
-          return JSON.parse(
-            JSON.stringify({
+                    const text = string(cell);
+                    const result = text.slice(0, Math.max(0, budget));
+                    budget -= result.length;
+                    if (result.length < text.length) truncated = true;
+                    return result;
+                  }),
+              );
+              data = {
+                spreadsheetId: identifier,
+                requestedRange: args.range,
+                range: string(value.range),
+                majorDimension: "ROWS",
+                values,
+                truncated: truncated || rows.length > 200,
+                dateTimeRepresentation: "serial_number",
+              };
+              representation = string(args.representation);
+              sourceUrl = `https://docs.google.com/spreadsheets/d/${identifier}/edit`;
+            }
+            const serialized = JSON.stringify({
               source: {
                 integrationId: "google-workspace",
                 connectionId: input.connection.id,
                 accountLabel: input.connection.label,
+                accountEmail: account?.email ?? null,
                 toolId: input.tool.id,
                 url: sourceUrl,
                 fetchedAt: new Date(now()).toISOString(),
@@ -581,11 +571,23 @@ export function createGoogleAdapter(options: {
                 untrustedContent: true,
               },
               data: boundData(data),
-            }),
-          ) as JsonValue;
-        },
-        input.connection.revision,
-      );
+            });
+            const escapedToken = JSON.stringify(token).slice(1, -1);
+            return JSON.parse(
+              serialized.replaceAll(escapedToken, "[REDACTED]"),
+            ) as JsonValue;
+          },
+          input.connection.revision,
+        );
+      } catch (error) {
+        if (!started)
+          throw new IntegrationNotStartedError(
+            error instanceof HarnessError
+              ? error.message
+              : "Google read is not configured.",
+          );
+        throw error;
+      }
     },
   };
 }

@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 
-type Group = "gmail" | "drive" | "docs" | "sheets";
+type Group = "gmail" | "drive" | "docs" | "sheets" | "calendar";
 type Account = {
   id: string;
   label: string;
@@ -13,6 +13,7 @@ type Account = {
   grantedGroups: Group[];
 };
 const groups: { id: Group; label: string }[] = [
+  { id: "calendar", label: "Calendar events read" },
   { id: "gmail", label: "Gmail read/search" },
   { id: "drive", label: "Drive read/search" },
   { id: "docs", label: "Docs read" },

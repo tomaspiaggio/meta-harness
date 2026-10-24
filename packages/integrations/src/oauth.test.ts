@@ -143,7 +143,7 @@ async function setup() {
         groups: ["gmail", "sheets"],
       }),
     );
-    nonce = url.searchParams.get("nonce")!;
+    nonce = url.searchParams.get("nonce") ?? "";
     return url;
   };
   const complete = (
@@ -152,7 +152,7 @@ async function setup() {
     callbackUri = config.redirectUri,
   ) =>
     broker.complete({
-      state: url.searchParams.get("state")!,
+      state: url.searchParams.get("state") ?? "",
       code: "fixture-code",
       ownerBinding,
       callbackUri,
@@ -200,7 +200,9 @@ test("resource OAuth is offline incremental PKCE with hashed single-use owner-bo
       .prepare("SELECT * FROM google_oauth_states")
       .all();
     assert.equal(rows.length, 1);
-    assert.ok(!JSON.stringify(rows).includes(url.searchParams.get("state")!));
+    assert.ok(
+      !JSON.stringify(rows).includes(url.searchParams.get("state") ?? ""),
+    );
     assert.ok(!JSON.stringify(rows).includes("fixture-owner-browser-session"));
     await assert.rejects(
       f.complete(url, "another-owner-session"),
@@ -386,7 +388,8 @@ test("credential leases fence concurrent rotations across repository instances; 
 test("dedicated authenticated encryption supports explicit key rotation and rejects cross-account ciphertext", () =>
   fixture(async (f) => {
     await f.complete(await f.begin());
-    const value = (await f.repository.getCredential("work"))!;
+    const value = await f.repository.getCredential("work");
+    assert.ok(value);
     assert.throws(
       () => f.broker.cipher.open(value.cipher, "refresh:personal"),
       /cannot be decrypted/,

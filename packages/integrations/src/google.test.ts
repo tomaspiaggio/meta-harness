@@ -48,19 +48,22 @@ function fixture(respond: (url: URL) => unknown, connections: string[] = []) {
     args: Record<string, unknown>,
     constraints = {},
     account = connection,
-  ) =>
-    adapter.execute({
+  ) => {
+    const tool = googleDefinition.tools.find((tool) => tool.id === id);
+    assert.ok(tool);
+    return adapter.execute({
       connection: account,
-      tool: googleDefinition.tools.find((tool) => tool.id === id)!,
+      tool,
       arguments: args as never,
       constraints,
       workspaceId: "tech",
       signal: new AbortController().signal,
     });
+  };
   return { adapter, calls, call };
 }
-test("Google definitions expose seven strict bounded readonly tools and finite sheet ranges", () => {
-  assert.equal(googleDefinition.tools.length, 7);
+test("Google definitions expose eight strict bounded readonly tools and finite sheet ranges", () => {
+  assert.equal(googleDefinition.tools.length, 8);
   assert.ok(
     googleDefinition.tools.every(
       (tool) =>
@@ -337,5 +340,62 @@ test("Google HTTP failures are sanitized and quota errors do not blindly retry",
   await assert.rejects(
     big.call("gmail.search", { query: "test" }),
     /read limit/,
+  );
+});
+
+test("Calendar lists timed/all-day recurring occurrences with bounded interval, timezone, calendar grants and pagination", async () => {
+  const { call, calls } = fixture(() => ({
+    timeZone: "America/Los_Angeles",
+    items: [
+      {
+        id: "timed",
+        summary: "Review CRM",
+        start: { dateTime: "2026-10-23T09:00:00-07:00" },
+        end: { dateTime: "2026-10-23T09:30:00-07:00" },
+        recurringEventId: "series",
+      },
+      {
+        id: "all-day",
+        start: { date: "2026-10-23" },
+        end: { date: "2026-10-24" },
+      },
+    ],
+    nextPageToken: "calendar-next",
+  }));
+  const args = {
+    calendarId: "primary",
+    timeMin: "2026-10-23T00:00:00-07:00",
+    timeMax: "2026-10-24T00:00:00-07:00",
+    timeZone: "America/Los_Angeles",
+    limit: 20,
+  };
+  const result = (await call("calendar.list_events", args, {
+    calendarIds: ["primary"],
+  })) as { data: { events: unknown[]; nextPageToken: string } };
+  assert.equal(result.data.events.length, 2);
+  assert.equal(calls[0].searchParams.get("singleEvents"), "true");
+  assert.equal(calls[0].searchParams.get("orderBy"), "startTime");
+  assert.equal(calls[0].searchParams.get("showDeleted"), "false");
+  await call(
+    "calendar.list_events",
+    { ...args, pageToken: result.data.nextPageToken },
+    { calendarIds: ["primary"] },
+  );
+  assert.equal(calls[1].searchParams.get("pageToken"), "calendar-next");
+  await assert.rejects(
+    call("calendar.list_events", args, { calendarIds: ["other@example.test"] }),
+    /outside/,
+  );
+  await assert.rejects(
+    call("calendar.list_events", { ...args, timeMax: "2027-01-01T00:00:00Z" }),
+    /31 days/,
+  );
+  await assert.rejects(
+    call("calendar.list_events", { ...args, timeZone: "Invalid/Zone" }),
+    /IANA/,
+  );
+  await assert.rejects(
+    call("calendar.list_events", { ...args, timeMin: "2026-10-23" }),
+    /Invalid Google/,
   );
 });

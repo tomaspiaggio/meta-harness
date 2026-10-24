@@ -31,7 +31,7 @@ export async function POST(request: Request) {
       )
     )
       throw new HarnessError(
-        "Select Gmail, Drive, Docs or Sheets read access.",
+        "Select Gmail, Drive, Docs, Sheets or Calendar read access.",
       );
     const groups = [...new Set(body.groups)] as GoogleGroup[];
     await ensureGoogleDefinition();
@@ -41,8 +41,7 @@ export async function POST(request: Request) {
     );
     if (body.connectionId) {
       if (
-        !connection ||
-        connection.adapter !== "native" ||
+        connection?.adapter !== "native" ||
         connection.integrationId !== googleDefinition.id ||
         connection.config.adapterId !== "google" ||
         connection.revision !== body.expectedRevision
