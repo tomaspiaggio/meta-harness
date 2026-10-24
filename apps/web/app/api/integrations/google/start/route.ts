@@ -23,7 +23,7 @@ export async function POST(request: Request) {
       new URL(config.redirectUri).host
     )
       throw new HarnessError(
-        "Open this control plane at its registered Google redirect origin.",
+        `Open this control plane at ${new URL(config.redirectUri).origin}, the origin of its registered Google redirect URI.`,
         403,
       );
     if (

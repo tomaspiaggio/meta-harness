@@ -29,10 +29,15 @@ export function McpIntegrationSetup() {
     }
   }
   return (
-    <details>
-      <summary>Add MCP server</summary>
+    <details className="rounded-lg border bg-background/40">
+      <summary className="cursor-pointer px-4 py-3 font-serif text-lg leading-tight select-none">
+        MCP server
+        <span className="ml-2 font-sans text-xs text-muted-foreground">
+          Add a remote HTTP tool collection
+        </span>
+      </summary>
       <form
-        className="grid gap-2 py-3"
+        className="grid gap-2 border-t px-4 py-3"
         onSubmit={async (event) => {
           event.preventDefault();
           setBusy(true);
@@ -65,7 +70,10 @@ export function McpIntegrationSetup() {
           }
         }}
       >
-        <label htmlFor="mcp-label">
+        <label
+          htmlFor="mcp-label"
+          className="grid gap-1 text-xs text-muted-foreground"
+        >
           Connection label
           <Input
             id="mcp-label"
@@ -75,7 +83,10 @@ export function McpIntegrationSetup() {
             maxLength={100}
           />
         </label>
-        <label htmlFor="mcp-endpoint">
+        <label
+          htmlFor="mcp-endpoint"
+          className="grid gap-1 text-xs text-muted-foreground"
+        >
           Streamable HTTP endpoint
           <Input
             id="mcp-endpoint"
@@ -86,15 +97,19 @@ export function McpIntegrationSetup() {
             required
           />
         </label>
-        <label>
+        <label className="flex items-center gap-1.5">
           <input
             type="checkbox"
+            className="accent-primary"
             checked={allowPrivate}
             onChange={(e) => setAllowPrivate(e.target.checked)}
-          />{" "}
+          />
           Approve this private or loopback destination from the control server
         </label>
-        <label htmlFor="mcp-header">
+        <label
+          htmlFor="mcp-header"
+          className="grid gap-1 text-xs text-muted-foreground"
+        >
           Authentication header
           <Input
             id="mcp-header"
@@ -103,7 +118,10 @@ export function McpIntegrationSetup() {
             placeholder="Authorization"
           />
         </label>
-        <label htmlFor="mcp-secret">
+        <label
+          htmlFor="mcp-secret"
+          className="grid gap-1 text-xs text-muted-foreground"
+        >
           Server-side secret reference (optional)
           <Input
             id="mcp-secret"
@@ -112,34 +130,47 @@ export function McpIntegrationSetup() {
             placeholder="work-mcp-authorization"
           />
         </label>
-        <p className="text-sm">
+        <p className="text-xs text-muted-foreground">
           Configure HARNESS_SECRET_BINDINGS to map this reference to a
           JOB_SECRET_ environment variable on the control server. Its value is
           the complete header value, including Bearer when required. Enter only
           the reference here.
         </p>
-        <p className="text-sm">
+        <p className="text-xs text-muted-foreground">
           Supports protocol 2025-06-18, JSON and SSE responses, up to 100 tools.
           Each discovered tool starts with unknown effect and requires an
           operation ID. Upstream read-only annotations do not grant access.
           OAuth-only servers and stdio need a later release.
         </p>
-        <Button disabled={busy} type="submit">
+        <Button disabled={busy} type="submit" className="justify-self-start">
           {busy ? "Testing discovery…" : "Test and add MCP connection"}
         </Button>
-        {error && <p role="alert">{error}</p>}
-        {notice && <p role="status">{notice}</p>}
+        {error && (
+          <p
+            role="alert"
+            className="rounded-md bg-danger-soft px-3 py-2 text-danger"
+          >
+            {error}
+          </p>
+        )}
+        {notice && (
+          <p role="status" className="text-primary">
+            {notice}
+          </p>
+        )}
       </form>
-      <Button variant="outline" onClick={() => void refreshHealth()}>
-        Refresh last explicit tests
-      </Button>
-      {health.map((item) => (
-        <p key={item.connectionId}>
-          {item.connectionId}: {item.status} ·{" "}
-          {new Date(item.testedAt).toLocaleString()}
-          {item.error ? ` — ${item.error}` : ""}
-        </p>
-      ))}
+      <div className="space-y-1 px-4 pb-3">
+        <Button size="sm" variant="ghost" onClick={() => void refreshHealth()}>
+          Refresh last explicit tests
+        </Button>
+        {health.map((item) => (
+          <p key={item.connectionId} className="text-xs text-muted-foreground">
+            {item.connectionId}: {item.status} ·{" "}
+            {new Date(item.testedAt).toLocaleString()}
+            {item.error ? ` — ${item.error}` : ""}
+          </p>
+        ))}
+      </div>
     </details>
   );
 }

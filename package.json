@@ -42,6 +42,7 @@
     "smoke:native-tools": "node scripts/native-tools-smoke.mjs",
     "browser:pair": "node --import tsx scripts/pair-browser.mjs",
     "smoke:google": "node --import tsx scripts/google-smoke.mjs",
+    "google:resource-env": "node scripts/google-resource-env.mjs",
     "smoke:mcp": "node --import tsx scripts/mcp-smoke.mjs",
     "smoke:worker-enrollment": "node scripts/worker-enrollment-smoke.mjs",
     "smoke:google-auth": "node --import tsx scripts/google-auth-smoke.mjs",

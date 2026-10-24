@@ -7,6 +7,7 @@ import type {
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 export type IntegrationSetupProps = { onCreated: () => void };
 export function Integrations({
   setup,
@@ -46,7 +47,8 @@ export function Integrations({
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
-      await load();
+      // Google setup progress and workspace limits read the same grants.
+      window.dispatchEvent(new Event("integrations-changed"));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -56,27 +58,52 @@ export function Integrations({
       <CardHeader>
         <CardTitle>Integrations</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <p>
+      <CardContent className="space-y-4 text-sm">
+        <p className="text-muted-foreground">
           Connections are described tool collections. Select tools explicitly
           for each workspace. Reconnect or rediscover requires reviewing changed
           grants.
         </p>
         {setup}
-        {error && <p role="alert">{error}</p>}
+        {error && (
+          <p
+            role="alert"
+            className="rounded-md bg-danger-soft px-3 py-2 text-danger"
+          >
+            {error}
+          </p>
+        )}
+        {state.connections.length > 0 && (
+          <h3 className="pt-2 font-mono text-[11px] tracking-wider text-muted-foreground uppercase">
+            Connections
+          </h3>
+        )}
         {state.connections.map((connection) => {
           const definition = state.definitions.find(
             (d) => d.id === connection.integrationId,
           );
           return (
-            <div key={connection.id} className="space-y-2 rounded border p-3">
-              <strong>{connection.label}</strong>
-              <p>{definition?.description}</p>
-              <p>
-                {connection.adapter} ·{" "}
-                {connection.enabled ? "Enabled" : "Disabled"} ·{" "}
-                {definition?.tools.length ?? 0} tools
-              </p>
+            <div
+              key={connection.id}
+              className="space-y-3 rounded-lg border bg-background/40 p-4"
+            >
+              <div className="space-y-1">
+                <p className="flex flex-wrap items-center gap-2">
+                  <strong className="font-medium">{connection.label}</strong>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${connection.enabled ? "bg-success-soft text-success" : "bg-muted text-muted-foreground"}`}
+                  >
+                    {connection.enabled ? "Enabled" : "Disabled"}
+                  </span>
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {definition?.name ?? connection.adapter} ·{" "}
+                  {definition?.tools.length ?? 0} tools
+                  {definition?.description
+                    ? ` · ${definition.description}`
+                    : ""}
+                </p>
+              </div>
               <form
                 className="flex flex-wrap items-center gap-2"
                 key={connection.revision}
@@ -95,65 +122,76 @@ export function Integrations({
                   });
                 }}
               >
-                <label>
-                  Label{" "}
-                  <input
+                <label
+                  htmlFor={`connection-label-${connection.id}`}
+                  className="flex min-w-48 flex-1 items-center gap-2"
+                >
+                  <span className="text-xs text-muted-foreground">Label</span>
+                  <Input
+                    id={`connection-label-${connection.id}`}
                     name="label"
                     defaultValue={connection.label}
                     maxLength={100}
                     required
-                    className="rounded border p-1"
+                    className="h-8"
                   />
                 </label>
-                <label>
+                <label className="flex items-center gap-1.5">
                   <input
                     name="enabled"
                     type="checkbox"
+                    className="accent-primary"
                     defaultChecked={connection.enabled}
-                  />{" "}
+                  />
                   Enabled
                 </label>
-                <Button type="submit" variant="outline">
+                <Button type="submit" size="sm" variant="outline">
                   Save connection
                 </Button>
               </form>
               {connectionSetup?.(connection)}
-              <Button
-                variant="outline"
-                onClick={() =>
-                  void action({
-                    action: "discover",
-                    connectionId: connection.id,
-                    expectedRevision: connection.revision,
-                  })
-                }
-              >
-                Test and discover
-              </Button>{" "}
-              <Button
-                variant="outline"
-                onClick={() =>
-                  void action({
-                    action: "disable",
-                    connectionId: connection.id,
-                    expectedRevision: connection.revision,
-                  })
-                }
-              >
-                Disable connection
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() =>
-                  void action({
-                    action: "delete",
-                    connectionId: connection.id,
-                    expectedRevision: connection.revision,
-                  })
-                }
-              >
-                Delete connection
-              </Button>
+              <div className="flex flex-wrap gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    void action({
+                      action: "discover",
+                      connectionId: connection.id,
+                      expectedRevision: connection.revision,
+                    })
+                  }
+                >
+                  Test and discover
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    void action({
+                      action: "disable",
+                      connectionId: connection.id,
+                      expectedRevision: connection.revision,
+                    })
+                  }
+                >
+                  Disable connection
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-danger hover:text-danger"
+                  onClick={() =>
+                    void action({
+                      action: "delete",
+                      connectionId: connection.id,
+                      expectedRevision: connection.revision,
+                    })
+                  }
+                >
+                  Delete connection
+                </Button>
+              </div>
               {state.workspaces.map((workspace) => {
                 const old = state.bindings.find(
                   (b) =>
@@ -167,7 +205,7 @@ export function Integrations({
                 return (
                   <form
                     key={workspace.id}
-                    className="rounded border p-2"
+                    className="space-y-2 rounded-md border bg-card p-3"
                     onSubmit={(e) => {
                       e.preventDefault();
                       const data = new FormData(e.currentTarget);
@@ -187,39 +225,69 @@ export function Integrations({
                       });
                     }}
                   >
-                    <strong>{workspace.name}</strong>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <strong className="font-medium">{workspace.name}</strong>
+                      {stale ? (
+                        <span className="rounded-full bg-warning-soft px-2 py-0.5 text-xs font-medium text-warning">
+                          Review needed
+                        </span>
+                      ) : old?.enabled && old.toolIds.length ? (
+                        <span className="rounded-full bg-success-soft px-2 py-0.5 text-xs font-medium text-success">
+                          {old.toolIds.length} granted
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          No access
+                        </span>
+                      )}
+                    </div>
                     {stale && (
-                      <p>
+                      <p className="text-xs text-warning">
                         Tool or connection revision changed. Review and save to
                         accept.
                       </p>
                     )}
-                    <label className="block">
+                    <label className="flex items-center gap-1.5">
                       <input
                         type="checkbox"
+                        className="accent-primary"
                         name="enabled"
                         defaultChecked={old?.enabled ?? false}
                         key={`enabled-${old?.revision}`}
-                      />{" "}
+                      />
                       Enable selected tools
                     </label>
-                    {definition?.tools.map((tool) => (
-                      <label
-                        key={`${old?.revision}-${definition.revision}-${tool.id}`}
-                        className="block"
-                      >
-                        <input
-                          type="checkbox"
-                          name="tools"
-                          value={tool.id}
-                          defaultChecked={
-                            old?.toolIds.includes(tool.id) ?? false
-                          }
-                        />{" "}
-                        {tool.name} ({tool.effect}) — {tool.description}
-                      </label>
-                    ))}
-                    <Button type="submit" variant="outline">
+                    <div className="grid gap-1 sm:grid-cols-2">
+                      {definition?.tools.map((tool) => (
+                        <label
+                          key={`${old?.revision}-${definition.revision}-${tool.id}`}
+                          className="flex cursor-pointer items-start gap-2 rounded-md p-1.5 hover:bg-accent/60"
+                          title={tool.description}
+                        >
+                          <input
+                            type="checkbox"
+                            name="tools"
+                            className="mt-0.5 accent-primary"
+                            value={tool.id}
+                            defaultChecked={
+                              old?.toolIds.includes(tool.id) ?? false
+                            }
+                          />
+                          <span className="block min-w-0">
+                            <span className="font-mono text-xs">
+                              {tool.name}
+                            </span>{" "}
+                            <span className="text-xs text-muted-foreground">
+                              {tool.effect}
+                            </span>
+                            <span className="line-clamp-2 text-xs text-muted-foreground">
+                              {tool.description}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                    <Button type="submit" size="sm" variant="outline">
                       Save reviewed access
                     </Button>
                   </form>
@@ -229,13 +297,14 @@ export function Integrations({
           );
         })}
         {state.connections.length === 0 && (
-          <p>
+          <p className="text-xs text-muted-foreground">
             No connections configured. Adding a connection grants no workspace
             access.
           </p>
         )}
         <Button
-          variant="outline"
+          size="sm"
+          variant="ghost"
           onClick={() => void load().catch((e) => setError(e.message))}
         >
           Refresh integrations
