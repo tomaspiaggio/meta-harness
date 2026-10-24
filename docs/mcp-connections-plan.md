@@ -6,8 +6,8 @@ Status: implementation design; no runtime changes. Baseline: `origin/main` at
 ## Problem and result
 
 The harness exposes its own MCP gateway but cannot configure arbitrary upstream
-servers. Add Settings → Connections → MCP so the owner can register an HTTP or
-stdio server, inspect its tools, and bind selected capabilities to workspaces.
+servers. Use Settings → Integrations → Add MCP server so the owner can register an HTTP
+or stdio collection, inspect its tools, and bind selected tools to workspaces.
 Ship reachable HTTP first; add stdio/private-host execution as a later slice.
 Claude and Codex keep their native loops and consume the existing harness gateway.
 An agent on a Pi can use a server hosted on a Mac or compatible cold Sandbox;
@@ -32,36 +32,30 @@ integrations. Eve remains a reference, never a runtime dependency.
 - `packages/storage/src/features-schema.ts` and Prisma migrations implement both
   database paths. Worker RPC already supports authenticated outbound polling.
 
-## Narrow connection contract
+## Unified integration contract
 
-Put JSON types, validation and policy decisions in a new core module. Define
-`ToolConnection { id, kind, name, revision, enabled, config }`,
-`Capability { id, inputSchema, effect, schemaHash }`, and
-`WorkspaceToolBinding { workspaceId, connectionId, revision, capabilities,
-constraints }`. Effects are `read`, `write`, or `unknown`; unknown means mutating.
-An execution port accepts a connection, capability, arguments and fenced context;
-it returns bounded content plus a durable execution receipt.
+Follow [the shared integration contract](integration-contract.md). An integration
+is a described tool collection, a connection is a configured account/endpoint,
+and a tool is one described/schema-defined action. MCP is an adapter supplying a
+collection; native Google, Notion or finance adapters use the same definition,
+connection, binding, model projection and execution port. Optional groups organize
+large collections without automatically granting tools.
 
-Keep this contract small enough for a future native integration to implement.
-Do not add native integration code or require its branch. External MCP libraries,
-Node subprocess code and database implementations stay outside core. Workflow
-SDK imports/directives stay in `apps/web`; no second model/tool loop is introduced.
+Implement the tiny registry/binding/gateway foundation once, separately from both
+adapters. Develop this MCP adapter against its pure ports/fixtures independently;
+bring the foundation commit into this branch when available. Do not create a
+second MCP-only catalog or require the native adapter to land. SDKs stay outside
+core and Workflow SDK/directives stay in apps/web.
 
 ## Minimal persistence and configuration
 
-Add separate tables rather than placing secrets/configuration in workspace policy:
-
-| Record | Minimum values |
-| --- | --- |
-| `mcp_connections` | ID, owner, label, enabled, revision, transport/config JSON, credential reference, timestamps |
-| `mcp_workspace_bindings` | Workspace + connection key, revision, enabled tool IDs, constraints, enabled flag |
-| `mcp_capability_snapshots` | Connection revision, bounded descriptors/schema hashes, discovery time/status |
-
-Use MCP-specific table/migration names so this branch and native integrations can
-land independently. Allocate the migration after inspecting current main; do not
-reuse another branch's migration ID. Shared TypeScript types are a small seam to
-reconcile on merge, not shared infrastructure that either feature must wait for.
-The first HTTP slice adds no tool command table, queue or executor lease.
+Use the common integration definition/connection/workspace-binding records from
+the foundation. MCP-specific configuration is validated adapter config, not a
+competing connection registry. Add `mcp_discovery_snapshots` for bounded upstream
+descriptors/schema hashes, discovery status and accepted integration revision.
+Use a distinct migration name for adapter details; do not duplicate or independently
+allocate the foundation's common tables. The HTTP slice adds no command table,
+queue or executor lease. Secrets remain references, outside ordinary settings.
 
 HTTP config: endpoint, approved destination policy and header-name → secret-ref
 bindings. Support Streamable HTTP first; explicitly report unsupported legacy SSE,
@@ -84,7 +78,7 @@ receipts or Workflow history. Deliver only required values to the tool host.
 
 ## Settings and access
 
-Owner-authenticated endpoints list/create/revise/delete connections, test discovery,
+Under the common Integrations UI, owner-authenticated endpoints list/create/revise/delete connections, test discovery,
 and manage workspace bindings; use existing origin/auth helpers and revision checks.
 Connection cards show transport, placement, available tools, last explicit test,
 missing prerequisites and workspaces using the connection. Creation grants nothing.
@@ -92,12 +86,13 @@ The workspace selector shows enabled capabilities, effect classification and hos
 availability; allow binding a subset and disabling immediately. Do not auto-enable
 new upstream tools after discovery. A schema change requires a new accepted binding.
 
-Add `tool_connection_list` and `tool_connection_call` to the existing gateway.
-List returns only this workspace's enabled descriptors, with bounded/paged schemas.
-Call takes `connection_id`, `capability_id`, `arguments`, and `operation_id` for
-writes/unknown effects. Validate arguments against the accepted schema. Keep upstream
-names in the capability ID so collisions cannot shadow built-in harness tools.
-This small dispatch surface avoids unbounded tool-list expansion on each turn.
+Use the common gateway projection: expose the enabled collection's tool names,
+descriptions and schemas exactly as for native integrations, with stable namespaced
+model names. A compact catalog describes integrations/connections and optional
+groups; bounded discovery can expand a selected collection when needed. Execution
+maps each name to connection/tool IDs and accepted revisions, with stable operation
+IDs for writes/unknown effects. Validate arguments against the accepted schema.
+Do not introduce an MCP-only router or let upstream names shadow harness tools.
 
 Derive workspace/session exclusively from the attempt grant. Recheck connection,
 binding revisions, current assignment, stop state and capability restrictions at
@@ -159,9 +154,9 @@ Bound/redact persisted results; tool text is untrusted external data, not policy
 
 ## Implementation checklist and verification
 
-- [ ] M1: pure contract/validation; additive SQLite and Prisma migrations; repository
-  methods with owner/workspace scope and optimistic revisions; export/import and
-  workspace-deletion coverage. Existing resource policies remain intact.
+- [ ] M1: adopt the common integration foundation/ports; implement MCP discovery
+  and adapter-specific snapshots/migrations with scope/revision/export coverage.
+  Preserve the shared owner/workspace binding semantics and existing policies.
 - [ ] M2 (first shipped slice): HTTP fixture server, discovery/bind UI, gateway
   list/call, bounded control-process adapter and existing operation receipts.
   Include setup docs and supported protocol/authentication matrix.
@@ -182,9 +177,12 @@ Bound/redact persisted results; tool text is untrusted external data, not policy
 
 Implement `docs/mcp-connections-plan.md` in this worktree on
 `feat/mcp-connections`. First read AGENTS.md, README.md, docs/architecture.md,
-the applicable nested instructions and this plan; inspect git status. Implement
+the applicable nested instructions, docs/integration-contract.md and this plan;
+inspect git status. Implement
 M1–M2 as the small first shipped slice, updating checklist verification. Leave
 remote execution and upstream OAuth as later work unless the session requests them.
+Use the common foundation instead of an MCP-only catalog; keep collection/tool
+descriptions and schemas in the same model projection as native integrations.
 Keep the existing native loops and attempt-scoped gateway; preserve data and engine
 boundaries. Do not depend on browser or native-integration branches. Use pnpm and
 fixtures, bound HTTP calls in the existing API process, and run all required checks
