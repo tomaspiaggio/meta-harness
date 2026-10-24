@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { ModelPicker } from "../model-picker";
 import { ErrorNote, PageHeading, Shell, useTree } from "../shell";
 import { WorkerSetup } from "../worker-setup";
+import { Integrations } from "./integrations";
 export default function Page() {
   return (
     <Shell>
@@ -361,6 +362,7 @@ function Settings() {
           </Button>
         </CardContent>
       </Card>
+      <Integrations />
       <Card>
         <CardHeader>
           <CardTitle>Workers</CardTitle>
