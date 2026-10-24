@@ -56,6 +56,23 @@ export function googleOwnerConfig(): GoogleOwnerConfig {
     );
   return { origin: url.origin, secret, clientId, clientSecret, emails };
 }
+/** Public readiness metadata contains no client IDs, secrets or account data. */
+export function googleLoginReadiness(): {
+  configured: boolean;
+  message?: string;
+} {
+  try {
+    googleOwnerConfig();
+    return { configured: true };
+  } catch (error) {
+    if (!(error instanceof HarnessError) || error.status !== 503) throw error;
+    return {
+      configured: false,
+      message:
+        "Google sign-in setup is pending. Configure the Google OAuth credentials on this control server to enable login.",
+    };
+  }
+}
 export function allowedGoogleOwner(
   user: { email?: unknown; emailVerified?: unknown },
   emails: string[],

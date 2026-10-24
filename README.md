@@ -375,10 +375,14 @@ and terminate HTTPS with a tailnet proxy. Network binding enables administrator
 authentication automatically and starts an allowlisted gateway in the launcher
 process. Next.js and internal Workflow callbacks remain on a separate loopback
 port. Network-mode development does not proxy HMR WebSockets; use loopback
-`pnpm dev` for editing and `pnpm start` for private-network use. `/login` accepts the token in
-`<HARNESS_DATA_DIR>/admin-token` and issues an HttpOnly session cookie. The launcher creates
-that file on network startup; do not publish it or put it in git. Worker credentials are separate and cannot administer tasks.
-The default loopback-only development flow needs no login.
+`pnpm dev` for editing and `pnpm start` for private-network use. The login page
+uses Google or the configured hosted identity provider; it never asks users to
+paste an administrator token. Until Google is configured, it shows a disabled
+Google button and an explicit setup-pending message. Existing local administrator
+credentials remain available to legacy automation and isolated test fixtures;
+the launcher keeps `<HARNESS_DATA_DIR>/admin-token` private. Selecting Google mode
+disables that legacy owner access. Worker credentials are separate and cannot
+administer tasks. The default loopback-only development flow needs no login.
 
 For Google owner login, set `HARNESS_AUTH=google`, `HARNESS_PUBLIC_URL`,
 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `BETTER_AUTH_SECRET` (32+ random

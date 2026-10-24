@@ -1,6 +1,6 @@
 import {
   googleAuthEnabled,
-  googleOwnerConfig,
+  googleLoginReadiness,
   handleGoogleAuth,
 } from "../../../../server/google-auth";
 import {
@@ -18,11 +18,19 @@ export async function GET(request: Request, context: Context) {
   try {
     const action = (await context.params).action.join("/");
     if (action === "status") {
-      if (googleAuthEnabled()) googleOwnerConfig();
       return Response.json(
         {
           hosted: hosted(),
-          mode: googleAuthEnabled() ? "google" : hosted() ? "oidc" : "token",
+          mode: googleAuthEnabled() ? "google" : hosted() ? "oidc" : "setup",
+          ...(googleAuthEnabled()
+            ? googleLoginReadiness()
+            : hosted()
+              ? { configured: true }
+              : {
+                  configured: false,
+                  message:
+                    "Google sign-in setup is pending. Configure the Google OAuth credentials on this control server to enable login.",
+                }),
         },
         { headers: { "Cache-Control": "no-store" } },
       );

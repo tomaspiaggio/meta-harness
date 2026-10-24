@@ -694,3 +694,23 @@ showed 14–15 frames per 1.2 seconds and 78–146 ms input acknowledgements. A
 90,000-byte payload plus credential-shaped metadata crossed multiple encrypted
 chunks intact. Original worker credentials, caches, profiles and paused real
 schedule were retained. No live Google credential or CRM action was established.
+
+
+2026-10-23 — Google login screen:
+
+- [x] Remove the access-token input and token submission from the web login page.
+- [x] Show Google sign-in with a disabled button and setup-pending explanation
+  until the selected Google authentication configuration is complete.
+- [x] Serve local Google setup/readiness even when credentials are missing,
+  instead of failing Next startup before the login page can render.
+- [x] Keep public readiness metadata free of OAuth credentials and owner data;
+  retain fail-closed protected routes and separate worker authentication.
+- [ ] Supply real Google OAuth client credentials and verify the allowed owner
+  can sign in. Removing the token form does not complete OAuth provisioning.
+
+Google login screen verification: `pnpm check`, `pnpm test` (92 passed, seven
+optional tests skipped), `pnpm build`, isolated production headless
+`scripts/login-screen-smoke.mjs`, and isolated `pnpm smoke` passed. Missing Google
+credentials produce a usable setup page while protected APIs deny access and an
+enrolled fixture worker keeps reporting. Personal auth configuration was not
+changed; no OAuth credentials or owner sessions were invented.

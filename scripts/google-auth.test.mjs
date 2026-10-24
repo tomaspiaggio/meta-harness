@@ -4,9 +4,12 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { GET as authStatus } from "../apps/web/app/api/auth/[...action]/route.ts";
+import { POST as tokenLogin } from "../apps/web/app/api/login/route.ts";
 import {
   allowedGoogleOwner,
   createGoogleOwnerAuth,
+  googleLoginReadiness,
   googleOwnerConfig,
   requireGoogleOwner,
 } from "../apps/web/server/google-auth.ts";
@@ -38,6 +41,38 @@ test("Google owner configuration fails closed and never inherits token/loopback 
     process.env.HARNESS_PUBLIC_URL = config.origin;
     delete process.env.BETTER_AUTH_SECRET;
     assert.throws(googleOwnerConfig, /disabled/);
+    assert.equal(googleLoginReadiness().configured, false);
+    const response = await authStatus(
+      new Request(`${config.origin}/api/auth/status`),
+      { params: Promise.resolve({ action: ["status"] }) },
+    );
+    assert.equal(
+      response.status,
+      200,
+      "Login readiness must remain visible when credentials are missing",
+    );
+    assert.deepEqual(await response.json(), {
+      hosted: false,
+      mode: "google",
+      ...googleLoginReadiness(),
+    });
+    assert.equal(
+      (
+        await tokenLogin(
+          new Request(`${config.origin}/api/login`, { method: "POST" }),
+        )
+      ).status,
+      403,
+    );
+    delete process.env.HARNESS_AUTH;
+    const setup = await authStatus(
+      new Request(`${config.origin}/api/auth/status`),
+      { params: Promise.resolve({ action: ["status"] }) },
+    );
+    const setupValue = await setup.json();
+    assert.equal(setupValue.mode, "setup");
+    assert.equal(setupValue.configured, false);
+    process.env.HARNESS_AUTH = "google";
     await assert.rejects(
       authorizeAdmin(new Request(`${config.origin}/api/state`)),
       /disabled/,
@@ -49,6 +84,11 @@ test("Google owner configuration fails closed and never inherits token/loopback 
       HARNESS_OWNER_EMAILS: owner,
     });
     assert.equal(googleOwnerConfig().emails[0], owner);
+    assert.deepEqual(
+      googleLoginReadiness(),
+      { configured: true },
+      "Readiness must not expose client credentials or owner account data",
+    );
     await assert.rejects(
       authorizeAdmin(
         new Request(`${config.origin}/api/state`, {

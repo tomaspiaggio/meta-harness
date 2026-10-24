@@ -399,7 +399,11 @@ gateway even for a loopback listener behind Caddy; Next/Workflow callbacks remai
 on a separate private port. Trust only the configured origin for browser writes.
 The gateway replaces caller-supplied proxy IP headers before auth rate limiting.
 Missing selected-mode settings fail closed. Google mode is enabled only after the
-origin, provider client and owner allowlist have been configured.
+origin, provider client and owner allowlist have been configured. The public auth
+status endpoint reports readiness without credentials or account information,
+including while configuration is incomplete. The login page shows a Google setup
+message instead of an administrator-token form; it does not change the selected
+server access policy or silently enable anonymous access.
 
 ## Coding repositories and handoff (agreed follow-up)
 
