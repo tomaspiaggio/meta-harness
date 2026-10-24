@@ -17,6 +17,7 @@ test("gateway admits only the public UI/API surface, regardless of encoded inter
     "/api/auth/sign-in/social",
     "/api/auth/callback/google",
     "/api/auth/get-session",
+    "/api/auth/profile",
     "/api/auth/sign-out",
     "/_next/static/app.js",
   ])

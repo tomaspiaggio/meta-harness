@@ -4,7 +4,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { GET as authStatus } from "../apps/web/app/api/auth/[...action]/route.ts";
+import {
+  POST as authAction,
+  GET as authStatus,
+} from "../apps/web/app/api/auth/[...action]/route.ts";
+import { GET as ownerProfile } from "../apps/web/app/api/auth/profile/route.ts";
 import { POST as tokenLogin } from "../apps/web/app/api/login/route.ts";
 import {
   allowedGoogleOwner,
@@ -146,7 +150,7 @@ test("Google OAuth validates state and verified owner, survives restart, and rev
       const now = Math.floor(Date.now() / 1000);
       const encode = (value) =>
         Buffer.from(JSON.stringify(value)).toString("base64url");
-      const payload = `${encode({ alg: "RS256", kid: "fixture-kid", typ: "JWT" })}.${encode({ iss: "https://accounts.google.com", aud: config.clientId, sub: "fixture-google-subject", email, email_verified: verified, name: "Fixture owner", iat: now, exp: now + 600, nonce })}`;
+      const payload = `${encode({ alg: "RS256", kid: "fixture-kid", typ: "JWT" })}.${encode({ iss: "https://accounts.google.com", aud: config.clientId, sub: "fixture-google-subject", email, email_verified: verified, name: "Fixture owner", picture: "https://lh3.googleusercontent.com/fixture-avatar", iat: now, exp: now + 600, nonce })}`;
       const jwt = `${payload}.${sign("RSA-SHA256", Buffer.from(payload), privateKey).toString("base64url")}`;
       return Response.json({
         access_token: "fixture-access-token",
@@ -272,7 +276,86 @@ test("Google OAuth validates state and verified owner, survives restart, and rev
       ),
       /allowed Google/,
     );
-    await store.revokeOwnerSession(signed.session.token);
+    const savedEnvironment = { ...process.env };
+    const savedStore = globalThis.harnessStore;
+    Object.assign(process.env, {
+      HARNESS_AUTH: "google",
+      HARNESS_PUBLIC_URL: config.origin,
+      BETTER_AUTH_SECRET: config.secret,
+      GOOGLE_CLIENT_ID: config.clientId,
+      GOOGLE_CLIENT_SECRET: config.clientSecret,
+      HARNESS_OWNER_EMAILS: owner,
+    });
+    globalThis.harnessStore = Promise.resolve(store);
+    try {
+      const profileHeaders = {
+        cookie: cookieHeader(valid.jar),
+        host: new URL(config.origin).host,
+        origin: config.origin,
+      };
+      assert.equal(
+        (
+          await ownerProfile(
+            new Request(`${config.origin}/api/auth/profile`, {
+              headers: { host: new URL(config.origin).host },
+            }),
+          )
+        ).status,
+        401,
+      );
+      const profile = await ownerProfile(
+        new Request(`${config.origin}/api/auth/profile`, {
+          headers: profileHeaders,
+        }),
+      );
+      assert.equal(profile.status, 200);
+      assert.match(profile.headers.get("cache-control"), /no-store/);
+      assert.deepEqual(
+        await profile.json(),
+        {
+          user: {
+            name: "Fixture owner",
+            email: owner,
+            image: "https://lh3.googleusercontent.com/fixture-avatar",
+          },
+        },
+        "Profile must expose no session token or provider credentials",
+      );
+      const logout = await authAction(
+        new Request(`${config.origin}/api/auth/logout`, {
+          method: "POST",
+          headers: profileHeaders,
+        }),
+        { params: Promise.resolve({ action: ["logout"] }) },
+      );
+      assert.equal(logout.status, 200);
+      assert(
+        logout.headers
+          .getSetCookie()
+          .some((cookie) => cookie.includes("Max-Age=0")),
+        "Sign-out must clear the browser cookie",
+      );
+      assert.equal(
+        Boolean(await store.ownerSession(signed.session.token)),
+        false,
+      );
+      assert.equal(
+        (
+          await ownerProfile(
+            new Request(`${config.origin}/api/auth/profile`, {
+              headers: profileHeaders,
+            }),
+          )
+        ).status,
+        401,
+        "Saved cookies cannot bypass sign-out revocation",
+      );
+    } finally {
+      globalThis.harnessStore = savedStore;
+      for (const key of Object.keys(process.env))
+        if (!(key in savedEnvironment)) delete process.env[key];
+      Object.assign(process.env, savedEnvironment);
+    }
     await assert.rejects(
       requireGoogleOwner(restarted, config, ledger, headers),
       /allowed Google/,

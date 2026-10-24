@@ -725,3 +725,21 @@ changed; no OAuth credentials or owner sessions were invented.
   fixture checking Google-button hydration, worker reports and idle page stability.
 - [x] Verify the real localhost login shows the enabled Google button and remains
   mounted without additional auth checks while the existing workers report.
+
+
+2026-10-23 — account avatar and sign-out:
+
+- [x] Add a compact header account menu with the Google photo, initials fallback,
+  name/email and Sign out; support Escape, keyboard use and phone layouts.
+- [x] Expose only name/email/HTTPS image from an authenticated, non-cacheable
+  profile route, with the existing owner allowlist and revocation checks.
+- [x] Keep the menu open with an actionable error after failed sign-out; clear the
+  current app session and navigate to login only after successful sign-out.
+- [x] Verify actual Google-cookie profile output and sign-out revocation using
+  signed SDK fixtures, including rejection of saved cookies after logout.
+- [x] Verify headless generic-account UI, Escape/mobile layout, offline failure
+  recovery and real owner-cookie logout on an isolated production stack.
+
+Account validation: `pnpm check`, `pnpm test` (93 passed, seven optional skips),
+`pnpm build`, `scripts/account-menu-smoke.mjs` and isolated `pnpm smoke` passed.
+Real user login was not signed out by these tests.

@@ -53,6 +53,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
+import { AccountMenu } from "./account-menu";
 import { DeleteDialog, type DeleteTarget } from "./delete-dialog";
 
 type Tree = {
@@ -153,7 +154,10 @@ export function Shell({
                 ))}
               </TabsList>
             </Tabs>
-            <div className="ml-auto flex items-center gap-2">{actions}</div>
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {actions}
+              <AccountMenu />
+            </div>
           </header>
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
             {children}

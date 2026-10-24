@@ -421,3 +421,20 @@ an unsent draft. It failed before the endpoint change and passes afterward.
 It must run separately from another dev/build process in this checkout. The
 other browser smoke scripts also run headlessly on macOS; they use the harness's
 private Chromium cache, with no browser window taking focus.
+
+
+The header account menu shows the current Google owner profile and Sign out.
+Profile data comes from `/api/auth/profile` after owner authentication and is not
+cached. Sign-out revokes the application's session; it does not sign the user out
+of Google across other applications. Google cookie/profile/revocation behavior
+uses signed fixtures in `scripts/google-auth.test.mjs`. For isolated headless UI
+verification, run this on an isolated local token-auth test stack:
+
+```sh
+HARNESS_URL=http://localhost:3192 \
+HARNESS_SMOKE_DATA_DIR=/absolute/account-menu-fixture \
+node scripts/account-menu-smoke.mjs
+```
+
+This UI fixture uses a real legacy owner-cookie logout and never touches the
+personal session.
