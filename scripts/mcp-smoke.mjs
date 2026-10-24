@@ -100,6 +100,8 @@ const endpoint = `http://127.0.0.1:${externalAddress.port}/mcp`;
 const env = {
   ...process.env,
   PORT: String(port),
+  // This isolated fixture deliberately exercises local owner access.
+  HARNESS_BIND_HOST: "127.0.0.1",
   HARNESS_DATA_DIR: directory,
   HARNESS_SECRET_BINDINGS: JSON.stringify({
     "fixture-auth": "JOB_SECRET_MCP_FIXTURE",
