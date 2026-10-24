@@ -8,6 +8,9 @@ Use pnpm, TypeScript, and the existing Turborepo packages. Read `README.md` and
 - `packages/core` must not import Node, storage, provider implementations, or SDKs.
 - Keep idle memory small. Do not add daemon services, package watchers, browser
   processes, or warm agent processes without a concrete need.
+- Start the user-facing control server on `0.0.0.0` so phones and tailnet devices
+  can reach it. Keep private Next.js/Workflow listeners on loopback. Isolated
+  test fixtures may explicitly bind to loopback.
 - Concurrency settings apply only to this harness; do not change machine-wide
   resource limits or terminate unrelated processes.
 - Interrupted native agent execution must not be retried automatically.

@@ -22,7 +22,9 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Open **http://127.0.0.1:3000** and start a Claude or Codex session.
+Open **http://127.0.0.1:3000** locally, or **http://<machine-name>:3000** from
+another device on your private network. The launcher listens on **0.0.0.0** by
+default; set `HARNESS_BIND_HOST=127.0.0.1` for loopback-only operation.
 Business, Tech, and Fundraising are seeded; create additional workspaces in the UI.
 Each workspace can contain independent sessions. Open **/tasks** for the durable
 backlog, worker capacity, pause controls, worker targeting, and draining.
@@ -215,7 +217,8 @@ copying `.data` alone is **not** a portable provider checkpoint.
 The control plane owns application persistence (local SQLite or Prisma/PostgreSQL).
 Workers communicate through authenticated HTTP
 and can run on separate machines without sharing database files. The default
-launcher binds to loopback. A local filesystem still is not Vercel-hosted
+launcher binds to `0.0.0.0`; Next.js and internal callbacks remain on loopback.
+A local filesystem still is not Vercel-hosted
 persistence.
 The local Workflow world is a development backend; production durability requires
 the hosted world or another supported persistent backend. Browser takeover,
@@ -384,8 +387,9 @@ workers require HTTPS; `HARNESS_ALLOW_INSECURE_HTTP=1` is an explicit override
 for a trusted private transport. Revoke a worker with
 `pnpm worker:enroll --revoke <worker-id>` on the control host.
 
-For private-network exposure, set `HARNESS_BIND_HOST` to the listening interface
-and terminate HTTPS with a tailnet proxy. Network binding enables administrator
+The launcher defaults to `HARNESS_BIND_HOST=0.0.0.0` for private-network access.
+Override it to select a specific interface, and terminate HTTPS with a tailnet
+proxy. Network binding enables administrator
 authentication automatically and starts an allowlisted gateway in the launcher
 process. Next.js and internal Workflow callbacks remain on a separate loopback
 port. Development forwards same-origin Next.js HMR through the gateway; production
@@ -397,7 +401,8 @@ Google button and an explicit setup-pending message. Existing local administrato
 credentials remain available to legacy automation and isolated test fixtures;
 the launcher keeps `<HARNESS_DATA_DIR>/admin-token` private. Selecting Google mode
 disables that legacy owner access. Worker credentials are separate and cannot
-administer tasks. The default loopback-only development flow needs no login.
+administer tasks. Explicit loopback-only development needs no login unless
+authentication is configured.
 
 For a short walkthrough, see [Google login credentials](docs/google-login-setup.md).
 
