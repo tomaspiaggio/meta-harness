@@ -56,13 +56,13 @@ export function Integrations({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Integrations</CardTitle>
+        <CardTitle>Connected services</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         <p className="text-muted-foreground">
-          Connections are described tool collections. Select tools explicitly
-          for each workspace. Reconnect or rediscover requires reviewing changed
-          grants.
+          Give agents direct access to outside services. Connecting an account
+          grants nothing by itself: you then pick which workspaces may use which
+          of its tools.
         </p>
         {setup}
         {error && (

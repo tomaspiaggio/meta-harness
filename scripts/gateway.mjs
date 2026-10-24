@@ -21,6 +21,11 @@ export function publicPath(raw) {
         "/knowledge",
         "/schedules",
         "/settings",
+        "/manifest.webmanifest",
+        "/apple-touch-icon.png",
+        "/icon-192.png",
+        "/icon-512.png",
+        "/icon-maskable-512.png",
       ].includes(path) ||
       path.startsWith("/_next/") ||
       /^\/api\/auth\/(status|profile|login|callback|logout|sign-in\/social|callback\/google|get-session|sign-out)$/.test(
@@ -29,7 +34,7 @@ export function publicPath(raw) {
       /^\/api\/(state|tasks|turns|sessions|workspaces|login|decisions|schedules|attachments|inputs|browser|resources|notifications|maintenance|tools|telegram|workers|diagnostics|preferences|worker|browser-stream)$/.test(
         path,
       ) ||
-      /^\/api\/integrations(?:\/mcp|\/google\/(?:status|start|callback|disconnect|binding))?$/.test(
+      /^\/api\/integrations(?:\/mcp|\/google\/(?:status|start|callback|disconnect|binding|client))?$/.test(
         path,
       ) ||
       /^\/api\/worker\/[a-z-]+$/.test(path)

@@ -48,6 +48,7 @@ import {
   SidebarProvider,
   SidebarRail,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -138,9 +139,15 @@ export function Shell({
           <AppSidebar tree={tree} refresh={refresh} />
         </Suspense>
         <SidebarInset className="min-h-0 overflow-hidden">
-          <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
+          <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3 pt-[env(safe-area-inset-top)] box-content">
             <SidebarTrigger className="-ml-1" />
-            <Tabs value={section} className="min-w-0 overflow-x-auto">
+            <span className="min-w-0 truncate text-sm font-medium md:hidden">
+              {sections.find((item) => item.href === section)?.label}
+            </span>
+            <Tabs
+              value={section}
+              className="hidden min-w-0 overflow-x-auto md:block"
+            >
               <TabsList variant="line" className="h-12 w-max gap-0 p-0">
                 {sections.map((item) => (
                   <TabsTrigger
@@ -186,6 +193,12 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
   const [title, setTitle] = useState("");
   const [savingTitle, setSavingTitle] = useState(false);
   const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
+  const { isMobile, setOpenMobile } = useSidebar();
+  const location = `${pathname}?${params}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: close the phone drawer after each navigation
+  useEffect(() => {
+    if (isMobile) setOpenMobile(false);
+  }, [location]);
   return (
     <Sidebar collapsible="offcanvas">
       <DeleteDialog
@@ -215,6 +228,26 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
         </Link>
       </SidebarHeader>
       <SidebarContent>
+        {isMobile && (
+          <SidebarGroup>
+            <SidebarMenu>
+              {sections.map((item) => (
+                <SidebarMenuItem key={item.href}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={
+                      item.href === "/"
+                        ? pathname === "/"
+                        : pathname.startsWith(item.href)
+                    }
+                  >
+                    <Link href={item.href}>{item.label}</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroup>
+        )}
         <SidebarGroup>
           <SidebarGroupLabel className="font-mono uppercase tracking-wider">
             Workspaces
@@ -315,6 +348,8 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
                       asChild
                       isActive={current && !sessionId}
                       tooltip={workspace.name}
+                      // Leave room for the count badge and both actions.
+                      className="pr-28"
                     >
                       <Link
                         href={conversationHref(workspace.id)}
@@ -326,7 +361,7 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
                         }
                       >
                         {open ? <FolderOpen /> : <Folder />}
-                        <span>{workspace.name}</span>
+                        <span className="truncate">{workspace.name}</span>
                       </Link>
                     </SidebarMenuButton>
                     <SidebarMenuBadge

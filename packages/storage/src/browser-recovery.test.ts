@@ -57,9 +57,9 @@ test("a Chrome connection failure can retry the same logical operation without e
       throw new Error("Browser tool never dispatched a command");
     };
     const args = {
-      action: "navigate",
+      action: "click",
       operation_id: "crm-check",
-      url: "https://example.com/crm",
+      selector: "#open-crm",
     };
     const first = browserTool(grant, args, store);
     const rejected = assert.rejects(first, /Connect your existing Chrome/);
@@ -98,7 +98,7 @@ test("a Chrome connection failure can retry the same logical operation without e
       .run(
         JSON.stringify({
           operationKey: args.operation_id,
-          action: "navigate",
+          action: "click",
           browserId: failed.identity.id,
         }),
         failed.command.id,
@@ -153,10 +153,10 @@ test("a Chrome connection failure can retry the same logical operation without e
       worker.id,
       next.command.id,
       next.identity.generation,
-      { url: args.url, title: "Existing account" },
+      { url: "https://example.com/crm", title: "Existing account" },
     );
     assert.deepEqual((await retry).result, {
-      url: args.url,
+      url: "https://example.com/crm",
       title: "Existing account",
     });
     assert.equal(

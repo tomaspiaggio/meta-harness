@@ -257,3 +257,13 @@
     @apply mr-2;
   }
 }
+
+/* iOS Safari zooms into any focused field smaller than 16px. Unlayered, so it
+   wins over Tailwind utility layers without !important. */
+@media (max-width: 640px) and (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}

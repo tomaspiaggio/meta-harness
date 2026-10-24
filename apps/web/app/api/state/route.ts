@@ -7,7 +7,21 @@ export async function GET(request: Request) {
     const store = await getStore();
     await store.recoverExpired(Date.now());
     const query = new URL(request.url).searchParams;
-    const workspaceId = query.get("workspace") ?? "business";
+    const workspaces = await store.listWorkspaces();
+    // Without an explicit workspace, use the first real one; the seeded
+    // "business" ID may have been deleted.
+    const workspaceId = query.get("workspace") ?? workspaces[0]?.id;
+    if (!workspaceId)
+      return Response.json(
+        {
+          workspaces,
+          sessions: [],
+          turns: [],
+          schedules: [],
+          inputRequests: [],
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     await store.getWorkspace(workspaceId);
     const sessionId = query.get("session");
     if (
@@ -21,7 +35,7 @@ export async function GET(request: Request) {
     }
     return Response.json(
       {
-        workspaces: await store.listWorkspaces(),
+        workspaces,
         sessions: await store.listSessions(workspaceId),
         turns: sessionId
           ? await Promise.all(

@@ -1,9 +1,41 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { BrowserAssignment } from "@harness/core/browser";
+import type { Page } from "patchright";
 import WebSocket from "ws";
 import { browserPeer, decryptBytes, encryptBytes } from "./crypto";
 import type { BrowserHost } from "./index";
 import { safeBrowserUrl } from "./index";
+
+/** A failure whose message is safe and useful to show the person. */
+export class LiveInputError extends Error {}
+
+const credentialFields: Record<string, string> = {
+  username:
+    'input[type="email"], input[autocomplete~="username"], input[autocomplete~="email"], input[name*="email" i], input[name*="user" i], input[name*="login" i], input[id*="email" i], input[id*="user" i], input[id*="identifier" i]',
+  password: 'input[type="password"]',
+  code: 'input[autocomplete="one-time-code"], input[name*="code" i], input[name*="otp" i], input[name*="pin" i], input[id*="code" i], input[id*="otp" i], input[id*="pin" i], input[inputmode="numeric"], input[type="tel"]',
+};
+
+/**
+ * Sealed sign-in: the value arrives encrypted from the owner's browser, is typed
+ * into the matching field and submitted, and is never stored, logged or
+ * returned. Falls back to the focused field when the page uses unusual markup.
+ */
+async function fillCredential(page: Page, field: string, value: string) {
+  let target = page
+    .locator(`${credentialFields[field]} >> visible=true`)
+    .first();
+  if (!(await target.count())) {
+    const focused = page.locator("input:focus, textarea:focus");
+    if (!(await focused.count()))
+      throw new LiveInputError(
+        `No ${field === "code" ? "code" : field} field is visible. Tap the field in the page first, then send again.`,
+      );
+    target = focused.first();
+  }
+  await target.fill(value, { timeout: 5000 });
+  await target.press("Enter");
+}
 
 /** Ephemeral CDP stream: no frame/input enters the operation ledger or model. */
 export async function liveBrowser(
@@ -12,21 +44,22 @@ export async function liveBrowser(
   publicKey: string,
   send: (message: Record<string, unknown>) => void,
 ) {
-  const { page, touch, downloads } = await host.livePage(assignment);
+  const { touch, downloads, current, onPage } = await host.livePage(assignment);
   const peer = browserPeer(publicKey);
-  const cdp = await page.context().newCDPSession(page);
+  let page = current();
+  let cdp = await page.context().newCDPSession(page);
   let closed = false;
   let lastFrame = 0;
   let sequence = 0;
-  const emit = (data: string) => {
+  const emit = (data: string, size?: { width: number; height: number }) => {
     if (closed) return;
     touch();
     send({
       type: "frame",
       sequence: ++sequence,
       time: Date.now(),
-      width: 1280,
-      height: 800,
+      width: size?.width ?? 1280,
+      height: size?.height ?? 800,
       url: safeBrowserUrl(page.url()),
       frame: {
         ...encryptBytes(peer.key, Buffer.from(data, "base64")),
@@ -34,26 +67,50 @@ export async function liveBrowser(
       },
     });
   };
-  cdp.on("Page.screencastFrame", (frame) => {
-    void cdp
-      .send("Page.screencastFrameAck", { sessionId: frame.sessionId })
-      .catch(() => {});
-    if (Date.now() - lastFrame < 70) return;
-    lastFrame = Date.now();
-    emit(frame.data);
+  const start = async () => {
+    const session = cdp;
+    session.on("Page.screencastFrame", (frame) => {
+      void session
+        .send("Page.screencastFrameAck", { sessionId: frame.sessionId })
+        .catch(() => {});
+      if (session !== cdp || Date.now() - lastFrame < 70) return;
+      lastFrame = Date.now();
+      emit(frame.data, {
+        width: Math.round(frame.metadata.deviceWidth ?? 1280),
+        height: Math.round(frame.metadata.deviceHeight ?? 800),
+      });
+    });
+    await session.send("Page.startScreencast", {
+      format: "jpeg",
+      quality: 65,
+      maxWidth: 1280,
+      maxHeight: 800,
+      everyNthFrame: 1,
+    });
+    // CDP does not promise a new frame for an unchanged page.
+    emit(
+      (
+        await session.send("Page.captureScreenshot", {
+          format: "jpeg",
+          quality: 65,
+        })
+      ).data,
+    );
+  };
+  await start();
+  // Follow popups and new tabs (for example OAuth sign-in windows), so the
+  // viewer always sees the page the agent or person is working in.
+  const unsubscribe = onPage((next) => {
+    if (closed || next === page) return;
+    const previous = cdp;
+    page = next;
+    void (async () => {
+      await previous.send("Page.stopScreencast").catch(() => {});
+      await previous.detach().catch(() => {});
+      cdp = await page.context().newCDPSession(page);
+      await start();
+    })().catch(() => {});
   });
-  await cdp.send("Page.startScreencast", {
-    format: "jpeg",
-    quality: 65,
-    maxWidth: 1280,
-    maxHeight: 800,
-    everyNthFrame: 1,
-  });
-  // CDP does not promise a new frame for an unchanged page.
-  emit(
-    (await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 65 }))
-      .data,
-  );
   let catalog = "";
   const heartbeat = setInterval(() => {
     touch();
@@ -136,6 +193,14 @@ export async function liveBrowser(
       ) {
         if (input.event === "down") await page.keyboard.down(input.key);
         else await page.keyboard.up(input.key);
+      } else if (
+        input.type === "credential" &&
+        ["username", "password", "code"].includes(input.field) &&
+        typeof input.value === "string" &&
+        input.value.length > 0 &&
+        input.value.length <= 512
+      ) {
+        await fillCredential(page, input.field, input.value);
       } else if (input.type === "navigate" && typeof input.url === "string") {
         await host.liveNavigate(page, input.url);
       } else throw new Error("Unsupported live browser input.");
@@ -143,6 +208,7 @@ export async function liveBrowser(
     async close() {
       if (closed) return;
       closed = true;
+      unsubscribe();
       clearInterval(heartbeat);
       await cdp.send("Page.stopScreencast").catch(() => {});
       await cdp.detach().catch(() => {});
@@ -232,12 +298,15 @@ export async function browserStreamWorker(
                 time: Date.now(),
               });
             })
-            .catch(() =>
+            .catch((error) =>
               send({
                 type: "error",
                 viewId: message.viewId,
+                id: message.id,
                 error:
-                  "Browser input failed; inspect the current page before retrying.",
+                  error instanceof LiveInputError
+                    ? error.message
+                    : "Browser input failed; inspect the current page before retrying.",
               }),
             );
         }

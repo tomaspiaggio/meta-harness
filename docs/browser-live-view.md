@@ -98,3 +98,54 @@ browser. Google explicitly may reject software-automated browsers, and headed
 mode is a compatibility option. No OAuth client secret has been created or
 downloaded by this validation. The real CRM schedule remains paused until an
 authenticated rehearsal verifies its sources; test fixtures do not establish it.
+
+
+## Sign-in reliability and phone use (2026-10-24)
+
+Google rejected sign-in from headless Chrome for Testing ("This browser or app
+may not be secure"). Workers now launch the installed stable Google Chrome when
+one exists (`/Applications/Google Chrome.app` on macOS, `/opt/google/chrome` on
+Linux) and remove `HeadlessChrome` from the user agent; the rest of the agent
+string stays truthful. Chrome uses its own `<profile>-chrome` directory so the
+newer bundled build's profile is never opened by an older Chrome.
+`HARNESS_BROWSER_CHANNEL=chromium` (or `HARNESS_BROWSER_EXECUTABLE`) keeps the
+bundled/system Chromium. Verified: headless Chrome with the corrected user agent
+reaches Google's password/passkey challenge instead of the rejection page.
+
+An idle release no longer clears the identity's last URL, and a navigation that
+lands on a sign-in wall records the requested page as the resume point, so the
+live view reopens there instead of `about:blank`. An expired takeover returns the
+browser to the agent rather than leaving it paused while the host holds its lease.
+`navigate` is a repeatable read; only clicks and fills use the operation ledger.
+
+Agent pages draw a cosmetic cursor and click ring (adapted from Autonoma's
+overlay; skipped on accounts.google.com). Live view follows new tabs and popups.
+
+"Sign in privately" in the takeover panel sends an email, password or code
+encrypted with the view's ECDH key over the live stream. The worker types it into
+the matching visible field (or the focused one) and presses Enter. Values are
+never written to the database, workflow state, logs, model history or the
+conversation; a local fixture run confirmed the password appeared in none of them.
+
+## Acting like a person instead of by selector (2026-10-24)
+
+Selector-only `click(selector)`/`fill(selector)` failed on real sites (for example
+Google's email field). Agents now look at the returned 1280x800 screenshot and
+say where to act with one of: a plain-language `description`, `x`/`y` read from
+the screenshot, a `ref` from `snapshot` (Playwright `ariaSnapshot({mode:"ai"})`,
+resolved with `aria-ref=`), or a CSS `selector` as a last resort. Clicks, hover,
+scroll and typing use real mouse and keyboard events; nothing is injected, so
+canvas and Trusted-Types pages behave like any other page. New actions: `type`,
+`press`, `hover`, `scroll`, `select`, `wait`, `snapshot`. `click`, `type`, `fill`,
+`press` and `select` use the operation ledger; the rest are repeatable.
+
+Description targeting follows Autonoma's quarita: a vision grounding model
+returns a 0–1000 normalized box and the worker clicks its center. It is optional
+and off unless a worker sets `HARNESS_GROUNDING_API_KEY` (OpenRouter;
+`HARNESS_GROUNDING_MODEL` defaults to `qwen/qwen3-vl-32b-instruct`). Without it,
+Codex and Claude read coordinates from the screenshot or use refs. Verified
+locally with Codex: snapshot → type into ref → click Next on Google sign-in
+reached the passkey/password step.
+
+On phones, tapping the streamed page while in control focuses an invisible text
+field so the keyboard opens; typed text, Backspace, Enter and Tab are forwarded.

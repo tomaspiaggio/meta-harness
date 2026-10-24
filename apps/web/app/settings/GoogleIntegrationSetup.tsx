@@ -19,6 +19,8 @@ type Account = {
 };
 type Setup = {
   configured: boolean;
+  source: "environment" | "settings" | null;
+  canSave: boolean;
   missing: string[];
   invalid: string[];
   expectedRedirectUri: string;
@@ -149,6 +151,127 @@ function CopyValue({ value }: { value: string }) {
   );
 }
 
+const apis = [
+  ["Gmail", "gmail.googleapis.com"],
+  ["Drive", "drive.googleapis.com"],
+  ["Docs", "docs.googleapis.com"],
+  ["Sheets", "sheets.googleapis.com"],
+  ["Calendar", "calendar-json.googleapis.com"],
+] as const;
+const link = "font-medium text-foreground underline underline-offset-2";
+
+function ClientForm({ setup, onSaved }: { setup: Setup; onSaved: () => void }) {
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <form
+      className="space-y-3 text-xs"
+      onSubmit={(event) => {
+        event.preventDefault();
+        setBusy(true);
+        setError("");
+        void fetch("/api/integrations/google/client", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clientId, clientSecret }),
+        })
+          .then(async (response) => {
+            const value = await response.json();
+            if (!response.ok) throw new Error(value.error);
+            setClientSecret("");
+            onSaved();
+          })
+          .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+          .finally(() => setBusy(false));
+      }}
+    >
+      <p className="text-muted-foreground">
+        Google requires every app that reads your data to have its own OAuth
+        client. You create it once in your Google Cloud account; it stays
+        private to you.
+      </p>
+      <ol className="list-decimal space-y-2 pl-4 text-muted-foreground marker:text-foreground">
+        <li>
+          Open{" "}
+          <a
+            className={link}
+            href="https://console.cloud.google.com/apis/credentials/consent"
+            target="_blank"
+            rel="noreferrer"
+          >
+            OAuth consent screen
+          </a>
+          , create it as <strong>External</strong>, and add your Google address
+          under <strong>Test users</strong>.
+        </li>
+        <li>
+          Enable the APIs you want:{" "}
+          {apis.map(([name, id], index) => (
+            <span key={id}>
+              {index ? ", " : ""}
+              <a
+                className={link}
+                href={`https://console.cloud.google.com/apis/library/${id}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {name}
+              </a>
+            </span>
+          ))}
+          .
+        </li>
+        <li>
+          Go to{" "}
+          <a
+            className={link}
+            href="https://console.cloud.google.com/apis/credentials/oauthclient"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Create OAuth client ID
+          </a>
+          , choose <strong>Web application</strong>, and under{" "}
+          <strong>Authorized redirect URIs</strong> add exactly:
+          <span className="mt-1 block">
+            <CopyValue value={setup.expectedRedirectUri} />
+          </span>
+        </li>
+        <li>Paste the client ID and secret Google shows you:</li>
+      </ol>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Input
+          aria-label="Google OAuth client ID"
+          placeholder="1234-abc.apps.googleusercontent.com"
+          value={clientId}
+          autoComplete="off"
+          onChange={(event) => setClientId(event.target.value)}
+        />
+        <Input
+          aria-label="Google OAuth client secret"
+          placeholder="Client secret"
+          type="password"
+          value={clientSecret}
+          autoComplete="off"
+          onChange={(event) => setClientSecret(event.target.value)}
+        />
+      </div>
+      {error && <p className="text-danger">{error}</p>}
+      <Button
+        size="sm"
+        disabled={busy || !clientId.trim() || !clientSecret.trim()}
+      >
+        Save and continue
+      </Button>
+      <p className="text-muted-foreground">
+        The secret is encrypted on the control server and never shown again.
+      </p>
+    </form>
+  );
+}
+
 export function GoogleIntegrationSetup() {
   const [label, setLabel] = useState("");
   const [selected, setSelected] = useState<Group[]>(["gmail", "drive"]);
@@ -250,7 +373,7 @@ export function GoogleIntegrationSetup() {
     (account) => account.status === "ready" && account.workspaceGrants > 0,
   );
   const blocker = !configured
-    ? "Finish step 1 on the control server first."
+    ? "Finish step 1 first."
     : setup?.openAt
       ? `Open Settings at ${setup.openAt} to connect; Google returns only to the registered origin.`
       : !selected.length
@@ -281,9 +404,15 @@ export function GoogleIntegrationSetup() {
             Google Workspace
           </h3>
           <p className="max-w-prose text-muted-foreground">
-            Read-only Gmail, Drive, Docs, Sheets and Calendar tools. Signing in
-            to Meta Harness grants no Google data access; each account needs its
-            own consent. Drafts, edits and sending are unavailable.
+            Lets agents search and read your Gmail, Drive, Docs, Sheets and
+            Calendar directly through Google&apos;s API — faster and more
+            reliable than the browser. Read-only: nothing can be sent, edited or
+            deleted.
+          </p>
+          <p className="max-w-prose text-xs text-muted-foreground">
+            Optional. Without it, agents can still use Google sites through the
+            workspace browser after you sign in there once. Signing in to Meta
+            Harness itself does not give agents access to your Google data.
           </p>
         </div>
         <Chip className={cn("mt-1 shrink-0", badge.style)}>{badge.text}</Chip>
@@ -304,7 +433,7 @@ export function GoogleIntegrationSetup() {
       <ol className="list-none">
         <Step
           index={1}
-          title="Configure the resource OAuth client"
+          title="Create your Google access key (one time, ~5 min)"
           done={configured}
           active={!!setup && !configured}
         >
@@ -321,65 +450,29 @@ export function GoogleIntegrationSetup() {
                 </span>
               )}
             </p>
+          ) : setup.canSave ? (
+            <ClientForm setup={setup} onSaved={() => void load()} />
           ) : (
             <div className="space-y-3">
-              {(setup.missing.length > 0 || setup.invalid.length > 0) && (
-                <div className="space-y-1.5">
-                  <p className="text-xs text-muted-foreground">
-                    The control server&apos;s <code>.env</code> is missing or
-                    has invalid values for:
-                  </p>
-                  <ul className="flex flex-wrap gap-1.5">
-                    {setup.missing.map((name) => (
-                      <li key={name}>
-                        <Chip className="bg-warning-soft font-mono text-warning">
-                          {name}
-                        </Chip>
-                      </li>
-                    ))}
-                    {setup.invalid.map((name) => (
-                      <li key={name}>
-                        <Chip className="bg-danger-soft font-mono text-danger">
-                          {name} · invalid
-                        </Chip>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              <ol className="list-decimal space-y-1.5 pl-4 text-xs text-muted-foreground marker:text-foreground">
-                <li>
-                  In Google Cloud, enable the Gmail and Drive APIs (plus Docs,
-                  Sheets or Calendar if needed) and add your account as a test
-                  user.
-                </li>
-                <li>
-                  Create a separate <strong>Web application</strong> OAuth
-                  client with this exact authorized redirect URI:
-                  <span className="mt-1 block">
-                    <CopyValue value={setup.expectedRedirectUri} />
-                  </span>
-                </li>
-                <li>
-                  On the control host run{" "}
-                  <code className="rounded bg-muted px-1 font-mono text-foreground">
-                    pnpm google:resource-env
+              <p className="text-xs text-muted-foreground">
+                This server takes Google settings from its environment. Missing
+                or invalid:{" "}
+                {[...setup.missing, ...setup.invalid].map((name) => (
+                  <code key={name} className="mr-1 font-mono text-warning">
+                    {name}
                   </code>
-                  . It prompts for the client ID and secret without echoing,
-                  generates the encryption key and updates <code>.env</code> in
-                  place.
-                </li>
-                <li>
-                  Restart the control server after active turns finish, then
-                  reload this page.
-                </li>
-              </ol>
+                ))}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Redirect URI to register:{" "}
+                <CopyValue value={setup.expectedRedirectUri} />
+              </p>
             </div>
           )}
         </Step>
         <Step
           index={2}
-          title="Connect a Google account"
+          title="Connect your Google account"
           done={connected}
           active={configured && !connected}
         >
@@ -523,7 +616,7 @@ export function GoogleIntegrationSetup() {
         </Step>
         <Step
           index={3}
-          title="Grant tools to a workspace"
+          title="Choose which workspaces can use it"
           done={granted}
           active={connected && !granted}
         >

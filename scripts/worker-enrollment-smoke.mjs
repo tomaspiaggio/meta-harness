@@ -34,7 +34,7 @@ try {
   for (let i = 0; i < 50; i++) {
     if (
       await evaluate(
-        'Boolean(document.querySelector("#worker-control-url") && document.querySelector("input[aria-label=\\"New worker name\\"]"))',
+        'Boolean(document.querySelector("#worker-control-url") && document.querySelector("input[aria-label=\\"New machine name\\"]"))',
       )
     )
       break;
@@ -46,10 +46,13 @@ try {
     ),
     2,
   );
+  await evaluate(
+    'document.querySelector("#worker-control-url").closest("details").open = true',
+  );
   await cli("fill", "#worker-control-url", base);
   await cli(
     "fill",
-    'input[aria-label="New worker name"]',
+    'input[aria-label="New machine name"]',
     "Agent setup fixture",
   );
   await evaluate(`(() => {
@@ -62,7 +65,7 @@ try {
     HTMLAnchorElement.prototype.click = function () { window.__workerFilename = this.download; return click.call(this); };
     return true;
   })()`);
-  await cli("find", "role", "button", "click", "--name", "Enroll worker");
+  await cli("find", "role", "button", "click", "--name", "Create setup");
   let guide;
   for (let i = 0; i < 50; i++) {
     guide = await evaluate(`(async () => {
@@ -78,7 +81,7 @@ try {
   if (guide.credential?.id) created.push(guide.credential.id);
   assert.equal(
     await evaluate(
-      'Boolean(document.querySelector("h3")?.textContent === "Paste to agent")',
+      'document.body.innerText.includes("Paste the setup into a coding agent on that machine")',
     ),
     true,
   );
@@ -87,7 +90,7 @@ try {
     false,
     "Enrollment must not download a file automatically",
   );
-  await cli("find", "role", "button", "click", "--name", "Download Markdown");
+  await cli("find", "role", "button", "click", "--name", "Download");
   const download = await evaluate(
     "(async () => ({markdown:await window.__workerGuide.text(),filename:window.__workerFilename,type:window.__workerGuide.type}))()",
   );
