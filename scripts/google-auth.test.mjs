@@ -17,6 +17,7 @@ import {
   googleOwnerConfig,
   requireGoogleOwner,
 } from "../apps/web/server/google-auth.ts";
+import { googleOwnerBinding } from "../apps/web/server/google-integrations.ts";
 import { authorizeAdmin } from "../apps/web/server/security.ts";
 import { HarnessStore } from "../packages/storage/src/application.ts";
 
@@ -320,6 +321,35 @@ test("Google OAuth validates state and verified owner, survives restart, and rev
           },
         },
         "Profile must expose no session token or provider credentials",
+      );
+      const flowCookie = "fixture-resource-browser-flow";
+      const originalRequest = new Request(
+        `${config.origin}/api/integrations/google/start`,
+        { headers: profileHeaders },
+      );
+      const originalBinding = await googleOwnerBinding(
+        originalRequest,
+        flowCookie,
+      );
+      assert.equal(
+        await googleOwnerBinding(originalRequest, flowCookie),
+        originalBinding,
+      );
+      const anotherLogin = await start(auth);
+      await callback(auth, anotherLogin);
+      const otherRequest = new Request(
+        `${config.origin}/api/integrations/google/start`,
+        {
+          headers: {
+            ...profileHeaders,
+            cookie: cookieHeader(anotherLogin.jar),
+          },
+        },
+      );
+      assert.notEqual(
+        await googleOwnerBinding(otherRequest, flowCookie),
+        originalBinding,
+        "Resource OAuth must be bound to the exact Google owner session, not a shared local fallback",
       );
       const logout = await authAction(
         new Request(`${config.origin}/api/auth/logout`, {

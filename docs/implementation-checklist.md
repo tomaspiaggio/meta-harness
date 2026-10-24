@@ -743,3 +743,26 @@ changed; no OAuth credentials or owner sessions were invented.
 Account validation: `pnpm check`, `pnpm test` (93 passed, seven optional skips),
 `pnpm build`, `scripts/account-menu-smoke.mjs` and isolated `pnpm smoke` passed.
 Real user login was not signed out by these tests.
+
+2026-10-23 — unified tools release and decision provenance:
+
+- [x] Combine the shared registry, HTTP MCP transport and native Google adapters
+  with the current browser, Google owner login and account menu.
+- [x] Keep both setup flows in Settings → Integrations, both adapter registrations,
+  storage schemas, Prisma relations and tool grants in the merged release.
+- [x] Admit only the explicit integration API routes through the gateway and bind
+  Google resource consent to the verified Better Auth owner session.
+- [ ] Add decision-source conversation lookup: retain workspace/session/turn
+  provenance and expose a bounded, paginated tool keyed by decision ID. Agents
+  should fetch relevant source turns on demand when reviewing the rationale.
+- [ ] Enforce source-conversation visibility independently of shared decision
+  visibility; return an explicit unavailable result for deleted or inaccessible
+  sources. Exclude credential-entry frames/secrets and avoid full transcript
+  injection. Test allowed cross-workspace lookup, revoked grants and missing data.
+
+Unified release validation: `pnpm check` (ten packages), `pnpm test` (124 passed,
+seven optional tests skipped), `pnpm build`, Prisma generation, `pnpm smoke:mcp`,
+`pnpm smoke:google` and the development login stability fixture passed. Both
+transport suites exercised the authenticated production gateway plus the common
+Workflow smoke. A headless owner Settings check showed both setup flows and
+verified authenticated endpoints, anonymous denial and phone-width layout.

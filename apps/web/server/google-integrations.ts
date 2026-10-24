@@ -7,6 +7,12 @@ import {
   oauthHash,
 } from "@harness/integrations/oauth";
 import { GoogleAuthorizationStore } from "@harness/storage/google";
+import {
+  googleAuthEnabled,
+  googleOwnerAuth,
+  googleOwnerConfig,
+  requireGoogleOwner,
+} from "./google-auth";
 import { cookie } from "./hosted-auth";
 import { registerIntegrationAdapter } from "./integrations";
 import { getStore } from "./store";
@@ -85,17 +91,23 @@ export async function googleBroker() {
     },
   });
 }
-export function googleOwnerBinding(request: Request, flowCookie: string) {
-  // Tie resource consent to the exact authenticated owner session and browser flow cookie.
-  return oauthHash(
-    JSON.stringify([
-      cookie(request, "harness_owner") ??
-        cookie(request, "harness_session") ??
-        request.headers.get("authorization") ??
-        "local-loopback-owner",
-      flowCookie,
-    ]),
-  );
+export async function googleOwnerBinding(request: Request, flowCookie: string) {
+  // Consent follows the verified owner session, not a serialized/refreshable cookie
+  // or a shared fallback when Better Auth owns authentication.
+  const principal = googleAuthEnabled()
+    ? (
+        await requireGoogleOwner(
+          googleOwnerAuth(),
+          googleOwnerConfig(),
+          getStore,
+          request.headers,
+        )
+      ).session.token
+    : (cookie(request, "harness_owner") ??
+      cookie(request, "harness_session") ??
+      request.headers.get("authorization") ??
+      "local-loopback-owner");
+  return oauthHash(JSON.stringify([principal, flowCookie]));
 }
 export function googleFlowCookie(request: Request) {
   const previous = cookie(request, "harness_google_resource");

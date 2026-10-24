@@ -1,5 +1,5 @@
-import { mcpSchema } from "./mcp-schema";
 import { googleSchema } from "./google-schema";
+import { mcpSchema } from "./mcp-schema";
 export const featureSchema = `${mcpSchema}
 ${googleSchema}
 CREATE TABLE IF NOT EXISTS deleted_resources (kind TEXT NOT NULL, id TEXT NOT NULL, createdAt INTEGER NOT NULL, PRIMARY KEY(kind,id));

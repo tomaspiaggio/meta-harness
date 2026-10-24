@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     const result = await broker.complete({
       state,
       code,
-      ownerBinding: googleOwnerBinding(request, flow),
+      ownerBinding: await googleOwnerBinding(request, flow),
       callbackUri: config.redirectUri,
       signal: AbortSignal.timeout(15_000),
     });

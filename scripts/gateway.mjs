@@ -29,6 +29,9 @@ export function publicPath(raw) {
       /^\/api\/(state|tasks|turns|sessions|workspaces|login|decisions|schedules|attachments|inputs|browser|resources|notifications|maintenance|tools|telegram|workers|diagnostics|preferences|worker|browser-stream)$/.test(
         path,
       ) ||
+      /^\/api\/integrations(?:\/mcp|\/google\/(?:status|start|callback|disconnect|binding))?$/.test(
+        path,
+      ) ||
       /^\/api\/worker\/[a-z-]+$/.test(path)
     );
   } catch {

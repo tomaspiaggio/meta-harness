@@ -82,7 +82,7 @@ export async function POST(request: Request) {
     const authorizationUrl = await broker.start({
       connectionId: connection.id,
       connectionRevision: connection.revision,
-      ownerBinding: googleOwnerBinding(request, flow),
+      ownerBinding: await googleOwnerBinding(request, flow),
       groups,
     });
     return Response.json(

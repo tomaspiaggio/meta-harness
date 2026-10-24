@@ -378,12 +378,20 @@ function Settings() {
         </CardContent>
       </Card>
       <Integrations
-        setup={<><GoogleIntegrationSetup /><McpIntegrationSetup /></>}
-        connectionSetup={(connection) => connection.adapter === "mcp" ? (
-          <McpConnectionSettings connection={connection} />
-        ) : connection.adapter === "native" && connection.config.adapterId === "google" ? (
-          <GoogleWorkspaceLimits connectionId={connection.id} />
-        ) : null}
+        setup={
+          <>
+            <GoogleIntegrationSetup />
+            <McpIntegrationSetup />
+          </>
+        }
+        connectionSetup={(connection) =>
+          connection.adapter === "mcp" ? (
+            <McpConnectionSettings connection={connection} />
+          ) : connection.adapter === "native" &&
+            connection.config.adapterId === "google" ? (
+            <GoogleWorkspaceLimits connectionId={connection.id} />
+          ) : null
+        }
       />
       <Card>
         <CardHeader>
