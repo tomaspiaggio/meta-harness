@@ -624,6 +624,8 @@ model IntegrationDefinitions {
 }
 model IntegrationConnections {
  id String @id
+ googleAuthorization GoogleAccountAuthorizations?
+ googleOAuthStates GoogleOAuthStates[]
  integrationId String
  revision String
  record String
@@ -640,4 +642,39 @@ model IntegrationBindings {
  workspace Workspaces @relation(fields:[workspaceId],references:[id],onDelete:Restrict)
  @@id([workspaceId,connectionId])
  @@map("integration_bindings")
+}
+
+model GoogleAccountAuthorizations {
+ connectionId String @id
+ subject String @default("")
+ email String @default("")
+ scopes String @default("[]")
+ status String @default("disconnected")
+ revision Int @default(0)
+ lockOwner String?
+ lockUntil BigInt @default(0)
+ connection IntegrationConnections @relation(fields:[connectionId],references:[id],onDelete:Cascade)
+ credential GoogleCredentials?
+ @@map("google_account_authorizations")
+}
+model GoogleCredentials {
+ connectionId String @id
+ cipher String
+ revision Int
+ authorization GoogleAccountAuthorizations @relation(fields:[connectionId],references:[connectionId],onDelete:Cascade)
+ @@map("google_credentials")
+}
+model GoogleOAuthStates {
+ stateHash String @id
+ ownerHash String
+ connectionId String
+ connectionRevision String
+ verifierCipher String
+ nonce String
+ scopes String
+ redirectUri String
+ expiresAt BigInt
+ connection IntegrationConnections @relation(fields:[connectionId],references:[id],onDelete:Cascade)
+ @@index([expiresAt],map:"google_oauth_expiry")
+ @@map("google_oauth_states")
 }

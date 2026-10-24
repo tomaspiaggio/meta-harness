@@ -1,3 +1,4 @@
+import "../../../server/integration-adapters";
 export const maxDuration = 60;
 
 import { createHash } from "node:crypto";

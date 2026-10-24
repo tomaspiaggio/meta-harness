@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { ModelPicker } from "../model-picker";
 import { ErrorNote, PageHeading, Shell, useTree } from "../shell";
 import { WorkerSetup } from "../worker-setup";
+import { GoogleIntegrationSetup } from "./GoogleIntegrationSetup";
 import { Integrations } from "./integrations";
 export default function Page() {
   return (
@@ -362,7 +363,7 @@ function Settings() {
           </Button>
         </CardContent>
       </Card>
-      <Integrations />
+      <Integrations setup={<GoogleIntegrationSetup />} />
       <Card>
         <CardHeader>
           <CardTitle>Workers</CardTitle>

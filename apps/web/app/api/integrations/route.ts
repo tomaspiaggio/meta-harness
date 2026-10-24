@@ -1,3 +1,4 @@
+import "../../../server/integration-adapters";
 import { randomUUID } from "node:crypto";
 import { HarnessError } from "@harness/core";
 import { failure, localRequest, readJson } from "../../../server/http";
