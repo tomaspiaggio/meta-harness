@@ -1,6 +1,6 @@
 # Unified integration contract
 
-Status: agreed design, 2026-10-23; no runtime implementation yet. This document is
+Status: foundation implemented, 2026-10-23; adapters ship independently. This document is
 identical in the MCP and native-integration worktrees. Implement the common
 foundation once, then build the adapters independently against its ports.
 
@@ -126,3 +126,33 @@ remote stdio/private-host execution remains a later capability.
 - [ ] Disabled/revised grants and newly discovered tools obey the same policy.
 - [ ] Receipts, ownership fencing and unknown outcomes are transport-independent.
 - [ ] A fixture third adapter (e.g. Notion/finance) fits without runtime/provider changes.
+
+## Foundation implementation
+
+`packages/core/src/integrations.ts` provides the shared pure contracts and parsers.
+`HarnessStore` persists definitions, connections and workspace bindings through the
+same SQL adapter on SQLite and Prisma/Postgres. Updates require the old revision;
+bindings accept exact definition/connection revisions and explicit tool IDs.
+Database export discovers these common tables and preserves their relationships.
+Deleting a workspace removes its bindings; deleting a connection removes its grants.
+
+`apps/web/server/integrations.ts` registers cold adapters by `config.adapterId`
+(defaulting to the connection adapter), projects bounded namespaced gateway tools,
+validates arguments and records transport-independent receipts. Tool calls wrap
+upstream arguments in `arguments`, plus `operation_id` for writes/unknown effects;
+`retry_unstarted` explicitly retries proven pre-execution rejection. A physical
+attempt token fences terminal receipt updates. Stop, grant and revision checks run
+before execution and during active I/O; uncertain effects remain unknown.
+Adapters receive the accepted workspace constraints and abort signal and must
+apply resource limits and redact secrets from results and errors.
+
+Settings contains the common registry and reviewed per-workspace tool selector.
+Adapter setup components can use its `setup` slot and dispatch the browser event
+`integrations-changed` after mutations. Shared owner APIs live at
+`/api/integrations`; adapter-specific setup/auth routes remain separate.
+
+Foundation verification: `pnpm check`, `pnpm test` (86 pass, seven existing skips),
+`pnpm build`, and local `pnpm smoke` on fixture port 3211. The fixture third adapter
+covers names/schema preservation, workspace denial, schema revision rejection,
+duplicate calls, argument conflicts, revocation during I/O and unknown outcomes.
+Postgres migration is provided; real Postgres deployment remains an external gate.

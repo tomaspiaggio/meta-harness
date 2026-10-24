@@ -4,6 +4,10 @@ import { createHash } from "node:crypto";
 import { HarnessError, requiredText } from "@harness/core";
 import { verifyAttemptGrant } from "../../../server/grants";
 import { failure, readJson } from "../../../server/http";
+import {
+  callIntegrationTool,
+  integrationToolDescriptors,
+} from "../../../server/integrations";
 import { sameOrigin } from "../../../server/security";
 import { getStore } from "../../../server/store";
 
@@ -158,7 +162,16 @@ export async function POST(request: Request) {
     )
       return new Response(null, { status: 202 });
     if (message.method === "ping") return reply({});
-    if (message.method === "tools/list") return reply({ tools });
+    if (message.method === "tools/list") {
+      const turn = await store.getTurn(grant.turnId);
+      const session = await store.getSession(turn.sessionId);
+      return reply({
+        tools: [
+          ...tools,
+          ...(await integrationToolDescriptors(store, session.workspaceId)),
+        ],
+      });
+    }
     if (message.method !== "tools/call")
       return Response.json({
         jsonrpc: "2.0",
@@ -243,7 +256,16 @@ export async function POST(request: Request) {
             ],
           });
         result = browser.result;
-      } else throw new HarnessError("Unknown tool.", 404);
+      } else if (parameters?.name?.startsWith("integration_"))
+        result = await callIntegrationTool(
+          store,
+          grant,
+          session.workspaceId,
+          parameters.name,
+          args,
+          request.signal,
+        );
+      else throw new HarnessError("Unknown tool.", 404);
       return reply({
         content: [{ type: "text", text: JSON.stringify(result) }],
       });
