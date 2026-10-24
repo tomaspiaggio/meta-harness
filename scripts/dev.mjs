@@ -34,7 +34,7 @@ if (gatewayEnabled) {
   await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
   privatePort = probe.address().port;
   await new Promise((resolve) => probe.close(resolve));
-  gateway = createGateway(privatePort);
+  gateway = createGateway(privatePort, { development: !production });
   await new Promise((resolve, reject) => {
     gateway.once("error", reject);
     gateway.listen(Number(process.env.PORT ?? 3000), bindHost, resolve);

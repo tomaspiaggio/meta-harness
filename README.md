@@ -374,8 +374,9 @@ For private-network exposure, set `HARNESS_BIND_HOST` to the listening interface
 and terminate HTTPS with a tailnet proxy. Network binding enables administrator
 authentication automatically and starts an allowlisted gateway in the launcher
 process. Next.js and internal Workflow callbacks remain on a separate loopback
-port. Network-mode development does not proxy HMR WebSockets; use loopback
-`pnpm dev` for editing and `pnpm start` for private-network use. The login page
+port. Development forwards same-origin Next.js HMR through the gateway; production
+rejects HMR upgrades. Use `pnpm dev` for editing and `pnpm start` for everyday
+private-network use with lower memory usage. The login page
 uses Google or the configured hosted identity provider; it never asks users to
 paste an administrator token. Until Google is configured, it shows a disabled
 Google button and an explicit setup-pending message. Existing local administrator

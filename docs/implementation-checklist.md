@@ -714,3 +714,14 @@ optional tests skipped), `pnpm build`, isolated production headless
 credentials produce a usable setup page while protected APIs deny access and an
 enrolled fixture worker keeps reporting. Personal auth configuration was not
 changed; no OAuth credentials or owner sessions were invented.
+
+
+2026-10-23 — development login hydration:
+
+- [x] Reproduce the stuck server-rendered login and rejected HMR handshake.
+- [x] Forward same-origin development HMR through the existing gateway; keep
+  production, cross-origin and internal upgrades blocked and sanitize proxy headers.
+- [x] Add a gateway regression and an actual Next dev + headless agent-browser
+  fixture checking Google-button hydration, worker reports and idle page stability.
+- [x] Verify the real localhost login shows the enabled Google button and remains
+  mounted without additional auth checks while the existing workers report.

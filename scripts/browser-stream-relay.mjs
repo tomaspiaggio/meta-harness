@@ -8,7 +8,7 @@ const require = createRequire(
 const { WebSocketServer } = require("ws");
 
 /** One ephemeral multiplexed relay in the existing gateway. Frames never touch SQL. */
-export function browserStreamRelay(server, privatePort) {
+export function browserStreamRelay(server, privatePort, otherUpgrade) {
   const wss = new WebSocketServer({
     noServer: true,
     maxPayload: 2 * 1024 * 1024,
@@ -85,6 +85,7 @@ export function browserStreamRelay(server, privatePort) {
       new URL(request.url ?? "/", "http://gateway").pathname !==
       "/api/browser-stream"
     ) {
+      if (otherUpgrade?.(request, socket, head)) return;
       socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
       return;
     }

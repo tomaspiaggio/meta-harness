@@ -52,6 +52,10 @@ layout. They never use the personal port 3000. Mac headless and the actual Pi's
 system Chromium have passed this flow; see [live browser validation](browser-live-view.md).
 Use `HARNESS_SMOKE_DATA_DIR` for authenticated fixture `pnpm smoke` as well; its
 owner token is read privately from that fixture, not pasted into commands.
+Run `node scripts/dev-login-smoke.mjs` to exercise the actual development gateway:
+it starts an isolated Google-configured fixture with dummy credentials and a Demo
+worker, then verifies login hydration and eight seconds without reloads or repeated
+auth checks. No Google authorization request or model call is made.
 `test:isolation` uses a temporary, resource-limited Docker container and no network
 inside it; the first run may download the Node test image.
 

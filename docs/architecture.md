@@ -478,3 +478,12 @@ headed Chromium. Display processes are created on demand and terminated with the
 owned browser. This never attaches to the user's desktop or disables account
 security. Headless mode remains the default elsewhere; a headed display is a
 compatibility option, not a promise that Google permits automation.
+
+
+Development routes only the same-origin `/_next/hmr` and
+`/_next/webpack-hmr` WebSocket upgrades to the private Next server. The browser
+stream relay still owns `/api/browser-stream`; unknown/internal upgrades are
+rejected, and production never forwards HMR. Forwarded identity headers are
+sanitized on both HTTP and HMR traffic, and gateway shutdown closes its tunnels.
+Next's development client needs this connection to finish startup: dropping it
+can leave login at its server-rendered loading state and trigger reload loops.
