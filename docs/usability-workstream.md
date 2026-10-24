@@ -30,6 +30,19 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
       submitted. Verified locally on a phone-sized screen: the site received them,
       and the password appears nowhere in the database, workflow state or logs.
 
+- [x] Act like a person, not by selector (after the live CRM run failed to find
+      Google's email field): snapshot refs, x/y from the screenshot, optional
+      visually grounded descriptions (quarita-style, needs
+      `HARNESS_GROUNDING_API_KEY`), real mouse/keyboard; new type/press/hover/
+      scroll/select/wait/snapshot actions. Verified locally with Codex on Google
+      sign-in: email typed via ref, Next clicked, passkey step reached.
+- [x] Browser activity collapsed to one row with the latest screenshot; "All N"
+      expands the strip.
+- [x] Phone keyboard: tapping the streamed page in control focuses a hidden field,
+      so the keyboard opens and keystrokes reach the remote page. Needs a check on
+      the real iPhone.
+- [ ] Optional: enable visual grounding (decide which OpenRouter key to use).
+
 ## Settings
 
 - [x] Adding a machine: name → paste setup into Codex/Claude on that machine →
@@ -76,4 +89,9 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
       my CRM" produced an inactive schedule draft for review.
 - [x] `pnpm check`, `pnpm test` (with real-browser tests), `pnpm build`,
       `pnpm smoke`, `smoke:browser-live`, `smoke:worker-enrollment` pass locally.
-- [ ] Deployed to the Pi and checked on the phone.
+- [x] Deployed `f91ac63` to the Pi: control and worker units point at
+      `releases/f91ac63` (old checkouts kept; unit backups in
+      `deployments/20261024-164555`). Pi check/test/build passed; Mac worker
+      restarted on the same code. Google accepts both the Mac (Chrome) and Pi
+      (Chromium) browsers up to the passkey/password step.
+- [ ] Checked on the phone by the owner.
