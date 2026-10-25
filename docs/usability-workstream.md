@@ -102,7 +102,22 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
 - [x] The sign-in card no longer stays forever: it is compact, has Dismiss, and
       a new message in the session resolves it.
 
-## Found while testing
+## Round 4 (owner feedback, 2026-10-25 01:00)
+
+- [x] No more take/give control. The browser is shared: whenever the view is
+      open you can tap, type and fill fields. An agent that needs a sign-in
+      finishes its turn; your next message resumes it. (The old lease stayed
+      held after the phone stream dropped during MFA, so the agent kept saying
+      control had not been returned.)
+- [x] The view reconnects by itself after the phone drops the stream (switching
+      apps for MFA) and when you come back to the tab.
+- [x] A busy host no longer stalls conversation turns. The CPU-load gate now
+      applies only to build turns; memory gates still apply to everything. (The
+      Mac at load 18 on 12 cores held a session pinned to it in the queue.)
+- [x] Schedule cards and Decisions overflowed the phone screen because of long
+      URLs in prompts and decisions. Text now wraps anywhere; measured at 390px
+      on Schedules, the session schedule card, Decisions, Tasks and Settings.
+
 
 - [x] An expired takeover left the browser "paused" forever, locking the agent out.
       It now returns to the agent.

@@ -167,11 +167,11 @@ export function browserStreamRelay(server, privatePort, otherUpgrade) {
             .then(async () => {
               const message = JSON.parse(raw.toString());
               if (message.type !== "input") return;
-              // Check generation, controller key, revocation and lease for EVERY input.
+              // Check generation, revocation and host for EVERY input. The
+              // owner and the agent share the browser; there is no control lease.
               await authorize(worker.upgradeRequest);
               const current = await authorize(request);
               if (
-                current.mode !== "human" ||
                 current.generation !== auth.generation ||
                 current.workerId !== auth.workerId
               )

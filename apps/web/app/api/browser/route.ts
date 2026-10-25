@@ -6,7 +6,6 @@ import {
   browserActivityLabel,
 } from "@harness/core/browser";
 import { BrowserBroker } from "../../../server/browser";
-import { flushDispatch } from "../../../server/dispatcher";
 import { failure, jsonBody, localRequest } from "../../../server/http";
 import { getStore } from "../../../server/store";
 
@@ -120,46 +119,6 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
     const identity = await broker.ensure(workspaceId);
-    if (body.action === "takeover")
-      return Response.json({
-        browser: visible(
-          await broker.takeover(
-            identity.id,
-            requiredText(body.publicKey, "Browser public key", 100),
-            body.force === true,
-          ),
-        ),
-      });
-    if (body.action === "return") {
-      if (typeof body.generation !== "number")
-        throw new HarnessError("Invalid browser generation.");
-      const browser = await broker.returnControl(
-        identity.id,
-        body.generation,
-        requiredText(body.sessionId, "Session ID", 100),
-        body.resume === true,
-      );
-      await flushDispatch();
-      return Response.json({ browser: visible(browser) });
-    }
-    if (body.action === "manual") {
-      const id = requiredText(body.id, "Browser input ID", 100);
-      await broker.command(
-        id,
-        identity.id,
-        "manual",
-        body.input ? { input: body.input } : {},
-      );
-      const command = await broker.wait(id);
-      if (command.status !== "completed")
-        throw new HarnessError(
-          command.error ?? "Browser input has no confirmed outcome.",
-          409,
-        );
-      return Response.json(JSON.parse(command.result ?? "{}"), {
-        headers: { "Cache-Control": "no-store" },
-      });
-    }
     if (body.action === "screenshot") {
       const id = crypto.randomUUID();
       await broker.command(id, identity.id, "screenshot", {});

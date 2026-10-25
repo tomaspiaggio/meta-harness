@@ -758,14 +758,14 @@ export class BrowserHost {
     const login = browserLoginState(page.url());
     if (login) {
       result.login = login;
-      // The requested page, not the login wall, is where takeover resumes:
+      // The requested page, not the login wall, is where the owner resumes:
       // reopening it lets the site issue a fresh sign-in redirect.
       if (command.action === "navigate") result.resumeUrl = String(args.url);
       result.status = "needs_login";
       result.hint =
         login === "rejected"
           ? "Google rejected this browser. The requested source was not read. Human sign-in in a supported browser is required; do not weaken account security."
-          : "Account sign-in is required. The requested source was not read. Request manual takeover and wait.";
+          : "Account sign-in is required. The requested source was not read. Call needs_login and finish the turn; the owner will reply after signing in.";
     } else if (command.action === "sheet_read")
       Object.assign(
         result,

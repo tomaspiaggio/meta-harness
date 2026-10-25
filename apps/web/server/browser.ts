@@ -642,7 +642,7 @@ export async function browserTool(
         url: browser.lastUrl,
         workerId: browser.workerId,
         instruction:
-          "This host uses its own browser login state. If the required account is signed out, navigate to the login page and call needs_login for interactive takeover. Never request passwords in chat.",
+          "This host uses its own browser login state. If the required account is signed out, navigate to the page you need and call needs_login; the owner signs in in the shared browser and replies. Never request passwords in chat.",
       },
     };
   if (action === "needs_login") {
@@ -651,13 +651,13 @@ export async function browserTool(
       session.id,
       grant.turnId,
       "browser-login",
-      `The agent needs you to sign in${siteName(browser.lastUrl)}. Open the browser, take control, finish the login, then press Continue task.`,
+      `The agent needs you to sign in${siteName(browser.lastUrl)}. Open the browser, sign in, then reply here.`,
     );
     return {
       result: {
         status: "needs_login",
         instruction:
-          "Finish the turn and wait for the user to return browser control.",
+          "Finish the turn. The owner signs in in the shared browser and replies with a new message when done.",
       },
     };
   }
@@ -763,8 +763,8 @@ export async function browserTool(
         grant.turnId,
         "browser-login",
         result.login === "rejected"
-          ? "Google rejected this browser's sign-in. Open the browser, take control and try again (choose “Try another way” if Google asks for a passkey), then press Continue task."
-          : `The agent needs you to sign in${siteName(typeof result.resumeUrl === "string" ? result.resumeUrl : result.url)}. Open the browser, take control, finish the login, then press Continue task.`,
+          ? "Google rejected this browser's sign-in. Open the browser and try again (choose “Try another way” if Google asks for a passkey), then reply here."
+          : `The agent needs you to sign in${siteName(typeof result.resumeUrl === "string" ? result.resumeUrl : result.url)}. Open the browser, sign in, then reply here.`,
       );
     delete result.image;
     if (mutating)

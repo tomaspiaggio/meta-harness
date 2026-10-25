@@ -601,10 +601,6 @@ function Conversation() {
                   request.sessionId === sessionId &&
                   request.kind === "browser-login",
               )}
-              onResume={() => {
-                void refresh.current();
-                refreshTree();
-              }}
             />
           )}
           {state.schedules

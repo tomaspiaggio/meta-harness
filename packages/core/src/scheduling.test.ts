@@ -42,7 +42,7 @@ test("admission preserves host headroom independently of the harness budget", ()
     /reservations/,
   );
   assert.match(
-    admissionReason({ ...report, loadPerCpu: 1.5 }, [], "standard", "claude") ??
+    admissionReason({ ...report, loadPerCpu: 1.5 }, [], "build", "claude") ??
       "",
     /CPU load/,
   );
@@ -146,11 +146,13 @@ test("macOS warning is advisory; critical pressure blocks new agents", async () 
     null,
   );
 });
-test("host CPU load does not block the in-process Demo runtime", () => {
+test("host CPU load only holds back builds, not conversation turns", () => {
   const busyHost = { ...report, loadPerCpu: 4 };
   assert.equal(admissionReason(busyHost, [], "standard", "demo"), null);
+  assert.equal(admissionReason(busyHost, [], "standard", "claude"), null);
+  assert.equal(admissionReason(busyHost, [], "browser", "claude"), null);
   assert.match(
-    admissionReason(busyHost, [], "standard", "claude") ?? "",
+    admissionReason(busyHost, [], "build", "claude") ?? "",
     /CPU load/,
   );
 });

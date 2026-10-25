@@ -180,6 +180,12 @@
   ::selection {
     @apply bg-primary/20;
   }
+  /* Prompts, decisions and agent output carry long URLs and IDs; let them
+     wrap instead of widening cards past a phone screen. Code blocks and
+     tables keep their own horizontal scroll. */
+  :is(p, li, dd, dt, blockquote, h1, h2, h3, h4, label, summary) {
+    overflow-wrap: anywhere;
+  }
 }
 
 /* Rendered agent output. Element styling stays here; it is not authored JSX. */

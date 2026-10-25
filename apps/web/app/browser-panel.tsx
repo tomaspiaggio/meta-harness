@@ -32,7 +32,6 @@ const encode = (bytes: Uint8Array) => {
 export function BrowserPanel({
   workspaceId,
   sessionId,
-  onResume,
   open,
   onOpenChange,
   needsLogin = false,
@@ -40,7 +39,6 @@ export function BrowserPanel({
 }: {
   workspaceId: string;
   sessionId: string;
-  onResume: () => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   needsLogin?: boolean;
@@ -64,7 +62,6 @@ export function BrowserPanel({
   const [latency, setLatency] = useState<number | null>(null);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  const [controlling, setControlling] = useState(false);
   const [notice, setNotice] = useState("");
   const [zoomed, setZoomed] = useState(false);
   const [tap, setTap] = useState<{ x: number; y: number; key: number } | null>(
@@ -186,7 +183,7 @@ export function BrowserPanel({
     };
   }, [visible]);
 
-  async function connect(takeControl = false) {
+  async function connect() {
     if (retry.current) clearTimeout(retry.current);
     setBusy(true);
     setError("");
@@ -209,22 +206,13 @@ export function BrowserPanel({
       const publicKey = encode(
         new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey)),
       );
-      const data = await request(
-        takeControl
-          ? { action: "takeover", publicKey, force: true }
-          : { action: "enable" },
-      );
-      if (!takeControl && data.browser.mode !== "agent")
-        throw new Error(
-          "This browser is paused for another view. Choose Sign in or Take control to reconnect here.",
-        );
+      const data = await request({ action: "enable" });
       const target = new URL("/api/browser-stream", location.origin);
       target.protocol = location.protocol === "https:" ? "wss:" : "ws:";
       target.searchParams.set("browser", data.browser.id);
       target.searchParams.set("key", publicKey);
       const ws = new WebSocket(target);
       socket.current = ws;
-      setControlling(takeControl);
       setFields(null);
       held.current.clear();
       let streamKey: CryptoKey | null = null;
@@ -361,7 +349,18 @@ export function BrowserPanel({
       ws.onclose = () => {
         if (socket.current === ws) {
           setPhase("Disconnected");
-          setControlling(false);
+          // Phones drop sockets when you switch apps (for example to approve
+          // MFA); reconnect on its own instead of leaving a dead view.
+          if (retry.current) clearTimeout(retry.current);
+          retry.current = setTimeout(() => {
+            if (
+              mounted.current &&
+              visibleRef.current &&
+              !document.hidden &&
+              socket.current === ws
+            )
+              void connectRef.current();
+          }, 1500);
         }
       };
       ws.onerror = () => {
@@ -380,7 +379,7 @@ export function BrowserPanel({
       if (reason.startsWith("Waiting for")) {
         setPhase("Waiting for capacity");
         retry.current = setTimeout(() => {
-          if (visibleRef.current) void connectRef.current(takeControl);
+          if (visibleRef.current) void connectRef.current();
         }, 1500);
       } else setPhase("Disconnected");
     } finally {
@@ -393,7 +392,22 @@ export function BrowserPanel({
   const connectRef = useRef(connect);
   connectRef.current = connect;
   useEffect(() => {
-    if (visible) void connectRef.current(false);
+    if (!visible) return;
+    const back = () => {
+      const ws = socket.current;
+      if (
+        !document.hidden &&
+        (!ws ||
+          ws.readyState === WebSocket.CLOSED ||
+          ws.readyState === WebSocket.CLOSING)
+      )
+        void connectRef.current();
+    };
+    document.addEventListener("visibilitychange", back);
+    return () => document.removeEventListener("visibilitychange", back);
+  }, [visible]);
+  useEffect(() => {
+    if (visible) void connectRef.current();
     else socket.current?.close();
     return () => {
       if (retry.current) clearTimeout(retry.current);
@@ -406,8 +420,8 @@ export function BrowserPanel({
     settled?: (error?: string) => void,
   ) {
     const ws = socket.current;
-    if (!controlling || phase !== "Live" || !key.current || !ws) {
-      settled?.("Take control of the browser first.");
+    if (phase !== "Live" || !key.current || !ws) {
+      settled?.("The browser is not connected. Reconnect and try again.");
       return;
     }
     const activeKey = key.current;
@@ -443,53 +457,13 @@ export function BrowserPanel({
   }
   inputRef.current = input;
 
-  async function release(resume = false) {
-    setBusy(true);
-    try {
-      await queue.current;
-      if (pending.current.size)
-        await Promise.race([
-          Promise.all(
-            [...pending.current.values()].map((receipt) => receipt.done),
-          ),
-          new Promise((_, reject) =>
-            setTimeout(
-              () =>
-                reject(
-                  new Error(
-                    "Some input is unconfirmed. Inspect the page before releasing control.",
-                  ),
-                ),
-              2500,
-            ),
-          ),
-        ]);
-      socket.current?.close();
-      await request({
-        action: "return",
-        generation: generation.current,
-        resume,
-      });
-      setControlling(false);
-      onResume();
-      await connect(false);
-    } catch (failure) {
-      setError(
-        failure instanceof Error
-          ? failure.message
-          : "Could not release control.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
   function pointer(
     event:
       | React.PointerEvent<HTMLCanvasElement>
       | React.WheelEvent<HTMLCanvasElement>,
     type: string,
   ) {
-    if (!controlling) return;
+    if (!live) return;
     event.preventDefault();
     if (type === "mousePressed") canvas.current?.focus({ preventScroll: true });
     const rect = event.currentTarget.getBoundingClientRect();
@@ -514,7 +488,7 @@ export function BrowserPanel({
     });
   }
   wheelHandler.current = (event) => {
-    if (!controlling || !canvas.current) return;
+    if (!live || !canvas.current) return;
     event.preventDefault();
     const rect = canvas.current.getBoundingClientRect();
     const scale = Math.min(rect.width / 1280, rect.height / 800);
@@ -551,10 +525,9 @@ export function BrowserPanel({
     <BrowserSteps steps={steps} />
   );
   if (!visible) return activity;
-  const close = () => {
-    if (controlling) void release().then(() => onOpenChange(false));
-    else onOpenChange(false);
-  };
+  // You and the agent share the browser: input works whenever it is live.
+  const live = phase === "Live";
+  const close = () => onOpenChange(false);
   return (
     <>
       <section
@@ -565,7 +538,6 @@ export function BrowserPanel({
             event.preventDefault();
             event.stopPropagation();
             if (expanded) setExpanded(false);
-            else if (controlling) void release();
             else close();
           }
         }}
@@ -589,8 +561,8 @@ export function BrowserPanel({
               className={`size-2 shrink-0 rounded-full ${phase === "Live" ? "bg-success" : phase === "Disconnected" ? "bg-destructive" : "bg-warning"}`}
             />
             <span className="truncate">
-              {phase} · {controlling ? "You have control" : "Watching"}
-              {latency !== null && controlling ? ` · ${latency} ms` : ""}
+              {phase}
+              {latency !== null && live ? ` · ${latency} ms` : ""}
               {host ? ` · ${host}` : ""}
             </span>
           </span>
@@ -622,9 +594,9 @@ export function BrowserPanel({
               The agent is waiting for you to sign in
               {site ? ` to ${site}` : ""}.
             </strong>{" "}
-            {controlling
-              ? "Fill what the page asks for below, or tap the page. Press Continue task once you see the signed-in page."
-              : "Take control to sign in. Your password goes only to the site; the agent never sees it."}
+            Fill what the page asks for below or tap the page, then reply in the
+            conversation. Your password goes only to the site; the agent never
+            sees it.
           </p>
         )}
         <div className="flex flex-wrap items-center gap-2 px-3 py-2">
@@ -633,41 +605,12 @@ export function BrowserPanel({
               size="sm"
               variant="outline"
               disabled={busy}
-              onClick={() => void connect(false)}
+              onClick={() => void connect()}
             >
               Reconnect
             </Button>
           )}
-          {controlling ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={() => void release()}
-            >
-              Give control back
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant={needsLogin ? "default" : "outline"}
-              disabled={busy}
-              onClick={() => void connect(true)}
-            >
-              Take control
-            </Button>
-          )}
-          {needsLogin && (
-            <Button
-              size="sm"
-              variant={controlling ? "default" : "outline"}
-              disabled={busy}
-              onClick={() => void release(true)}
-            >
-              Continue task
-            </Button>
-          )}
-          {controlling && (
+          {live && (
             <>
               <Button
                 size="sm"
@@ -692,8 +635,8 @@ export function BrowserPanel({
             <ErrorNote>{error}</ErrorNote>
           </div>
         )}
-        {controlling && <PageFields fields={fields} send={input} />}
-        {controlling && downloads.length > 0 && (
+        {live && <PageFields fields={fields} send={input} />}
+        {live && downloads.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2">
             <span>Downloads on this worker:</span>
             {downloads.map((item) => (
@@ -730,10 +673,10 @@ export function BrowserPanel({
             placeholder="Address"
             value={url}
             onChange={(event) => setUrl(event.target.value)}
-            disabled={!controlling}
+            disabled={!live}
             className="h-8 border-0 bg-transparent px-0 text-xs shadow-none"
           />
-          {controlling && (
+          {live && (
             <Button size="sm" variant="ghost" type="submit">
               Go
             </Button>
@@ -758,7 +701,7 @@ export function BrowserPanel({
             // Zoomed, one finger pans; a tap (no movement) still clicks.
             style={zoomed ? { touchAction: "pan-x pan-y" } : undefined}
             onPointerDown={(event) => {
-              if (!controlling) return;
+              if (!live) return;
               if (event.pointerType === "touch") {
                 touchStart.current = { x: event.clientX, y: event.clientY };
                 return;
@@ -771,7 +714,7 @@ export function BrowserPanel({
                 const start = touchStart.current;
                 touchStart.current = null;
                 if (
-                  !controlling ||
+                  !live ||
                   !start ||
                   Math.hypot(event.clientX - start.x, event.clientY - start.y) >
                     10
@@ -798,7 +741,7 @@ export function BrowserPanel({
               } else pointer(event, "mouseReleased");
               // Focus inside the tap so iOS/Android show the keyboard; typed
               // characters are forwarded to whatever the tap focused remotely.
-              if (controlling && event.pointerType !== "mouse")
+              if (live && event.pointerType !== "mouse")
                 keyboard.current?.focus({ preventScroll: true });
             }}
             onPointerCancel={() => {
@@ -806,7 +749,7 @@ export function BrowserPanel({
             }}
             onPointerMove={(event) => {
               if (
-                controlling &&
+                live &&
                 event.pointerType !== "touch" &&
                 Date.now() - hoverAt.current > 35
               ) {
@@ -816,13 +759,9 @@ export function BrowserPanel({
             }}
             onContextMenu={(event) => event.preventDefault()}
             onKeyDown={(event) => {
-              if (!controlling) return;
+              if (!live) return;
               event.preventDefault();
               event.stopPropagation();
-              if (event.key === "Escape") {
-                void release();
-                return;
-              }
               if (
                 event.key.length === 1 &&
                 !event.ctrlKey &&
@@ -849,7 +788,7 @@ export function BrowserPanel({
               held.current.clear();
             }}
             onPaste={(event) => {
-              if (controlling) {
+              if (live) {
                 event.preventDefault();
                 input({
                   type: "text",
@@ -858,7 +797,7 @@ export function BrowserPanel({
               }
             }}
           />
-          {controlling && (
+          {live && (
             <textarea
               ref={keyboard}
               aria-label="Phone keyboard for the remote page"
@@ -916,9 +855,9 @@ export function BrowserPanel({
           )}
         </div>
         <p className="px-3 py-2 text-xs text-muted-foreground">
-          {controlling
-            ? "The agent is paused while you have control. Tap or click the page; typing and paste go to the field you tapped."
-            : "Read-only live view. Watching never interrupts the agent."}
+          You and the agent share this browser. Tap or click the page; typing
+          and paste go to the field you tapped. When you are done, just reply in
+          the conversation.
         </p>
       </section>
       {targets && (

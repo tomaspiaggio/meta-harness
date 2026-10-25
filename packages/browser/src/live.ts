@@ -248,11 +248,11 @@ export async function liveBrowser(
       await start();
     })().catch(() => {});
   });
-  // While the owner has control, keep the list of fields the page is asking
-  // for current, so the form follows the site step by step.
+  // While the owner is viewing, keep the list of fields the page is asking for
+  // current, so the form follows the site step by step.
   let fieldsSent = "";
   const sendFields = async (force = false) => {
-    if (closed || assignment.identity.mode !== "human") return;
+    if (closed) return;
     const value = JSON.stringify(await pageFields(page));
     if (closed || (!force && value === fieldsSent)) return;
     fieldsSent = value;
@@ -261,16 +261,13 @@ export async function liveBrowser(
       data: encryptBytes(peer.key, Buffer.from(value)),
     });
   };
-  const fieldPoll =
-    assignment.identity.mode === "human"
-      ? setInterval(() => void sendFields().catch(() => {}), 2500)
-      : null;
-  fieldPoll?.unref();
+  const fieldPoll = setInterval(() => void sendFields().catch(() => {}), 2500);
+  fieldPoll.unref();
   void sendFields().catch(() => {});
   let catalog = "";
   const heartbeat = setInterval(() => {
     touch();
-    if (downloads && assignment.identity.mode === "human")
+    if (downloads)
       void downloads
         .list()
         .then((items) => {
@@ -288,8 +285,7 @@ export async function liveBrowser(
   heartbeat.unref();
   return {
     async input(value: { iv: string; ciphertext: string }) {
-      if (closed || assignment.identity.mode !== "human")
-        throw new Error("Read-only browser view.");
+      if (closed) throw new Error("This browser view has closed.");
       const input = JSON.parse(
         Buffer.from(decryptBytes(peer.key, value)).toString("utf8"),
       );
@@ -417,7 +413,7 @@ export async function liveBrowser(
       unsubscribe();
       stopNotices();
       clearInterval(heartbeat);
-      if (fieldPoll) clearInterval(fieldPoll);
+      clearInterval(fieldPoll);
       await cdp.send("Page.stopScreencast").catch(() => {});
       await cdp.detach().catch(() => {});
     },

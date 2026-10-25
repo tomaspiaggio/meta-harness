@@ -72,7 +72,9 @@ export function admissionReason(
     return "All agent slots are occupied";
   if (provider !== "demo" && report.memoryPressure === "critical")
     return "Host memory pressure is critical; waiting for it to ease";
-  if (provider !== "demo" && report.loadPerCpu > report.maxLoadPerCpu)
+  // Agent turns mostly wait on a remote model; only builds add real CPU work.
+  // A host busy with other work (a laptop) still takes conversation turns.
+  if (profile === "build" && report.loadPerCpu > report.maxLoadPerCpu)
     return "Host CPU load is above the configured threshold";
   const needs = requirements(profile, provider);
   const used = allocations.reduce(
