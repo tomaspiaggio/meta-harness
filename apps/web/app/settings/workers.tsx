@@ -1,10 +1,11 @@
-import type { WorkerRecord } from "@harness/core/scheduling";
+import { type WorkerRecord, workerLabels } from "@harness/core/scheduling";
 import { Check, Copy, Download, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { LabelEditor } from "../placement";
 
 const online = (worker: WorkerRecord) =>
   !worker.draining && !!worker.seenAt && worker.seenAt > Date.now() - 30000;
@@ -113,7 +114,9 @@ export function WorkersCard({
         <p className="text-sm text-muted-foreground">
           Agents and their browser run on machines you own, such as this Mac or
           a Raspberry Pi. This website only coordinates them. Any online machine
-          with free capacity picks up work.
+          with free capacity picks up work. Labels describe what a machine
+          offers (its agents, a browser, tools like asap7); a conversation that
+          requires labels runs only on machines that have them.
         </p>
       </CardHeader>
       <CardContent className="grid gap-5">
@@ -160,6 +163,43 @@ export function WorkersCard({
                         .join(", ") || "none"}{" "}
                       · browser: {worker.report.browserHost ? "yes" : "no"}
                     </p>
+                  )}
+                  {!worker.draining && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+                      {workerLabels({ ...worker, labels: [] }).map((label) => (
+                        <span
+                          key={label}
+                          title="Detected automatically"
+                          className="rounded-md border border-dashed px-2 py-0.5 font-mono text-muted-foreground"
+                        >
+                          {label}
+                        </span>
+                      ))}
+                      <LabelEditor
+                        label={`Labels for ${worker.name}`}
+                        labels={worker.labels ?? []}
+                        suggestions={[
+                          ...new Set(
+                            workers.flatMap((item) => item.labels ?? []),
+                          ),
+                        ]}
+                        disabled={busy}
+                        onChange={(labels) => {
+                          setBusy(true);
+                          void api("workers", "PATCH", {
+                            id: worker.id,
+                            labels,
+                          })
+                            .then(async () =>
+                              setWorkers(
+                                (await api("workers")) as WorkerRecord[],
+                              ),
+                            )
+                            .catch((error) => onError(error.message))
+                            .finally(() => setBusy(false));
+                        }}
+                      />
+                    </div>
                   )}
                 </div>
                 <Button

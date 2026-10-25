@@ -344,8 +344,13 @@ The Demo runtime checkpoints between three deterministic steps. Its files and
 output checkpoint together at the control plane. If a worker disappears, the
 30-second lease expires and another eligible worker restores that checkpoint.
 Demo is explicitly safe to replay. Native Claude/Codex turns remain interrupted
-after worker loss. Default CLI sessions stay pinned to the original worker;
-completed Claude SDK checkpoints have the separate compatibility gate below.
+after worker loss. A CLI conversation prefers the worker that ran it last, but
+any eligible worker continues it when that one is off, draining or busy for two
+minutes: the new agent starts fresh with the conversation so far (prompts and
+replies from the control plane) instead of its native memory. Completed Claude
+SDK checkpoints move with their memory under the separate gate below. Sessions
+can require worker labels (Advanced in the chat; labels per machine in
+Settings); see `docs/architecture.md`.
 They do not have the same recovery guarantees as Demo.
 
 ```sh

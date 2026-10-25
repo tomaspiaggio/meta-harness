@@ -27,6 +27,13 @@ export async function PATCH(request: Request) {
           body.model,
         ),
       );
+    if (body.action === "labels")
+      return Response.json(
+        await (await getStore()).setSessionLabels(
+          requiredText(body.id, "Session ID", 100),
+          body.labels,
+        ),
+      );
     if (body.action === "read") {
       if (typeof body.throughSequence !== "number")
         throw new HarnessError("Invalid read cursor.");

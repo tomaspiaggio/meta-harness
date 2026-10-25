@@ -208,7 +208,7 @@ test("a lost Demo attempt restores the checkpoint output and fences the old gene
     await store.close();
   }
 });
-test("native agent interruptions never replay, and continuation remains on its original worker", async () => {
+test("native agent interruptions never replay, and continuation prefers its original worker", async () => {
   const store = new ControlStore(":memory:");
   try {
     const mac = await enroll(store, "mac");
@@ -240,7 +240,7 @@ test("native agent interruptions never replay, and continuation remains on its o
       (await store.listTasks())
         .find((item) => item.id === work.id)
         ?.workers.find((item) => item.workerId === pi.id)?.reason ?? "",
-      /pinned/,
+      /agent memory/,
     );
     assert.equal(
       (await store.claimForWorker(mac.id))?.claim.turn.id,

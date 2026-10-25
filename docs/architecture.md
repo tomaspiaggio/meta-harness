@@ -253,6 +253,27 @@ bridge creates/renames topics; ambiguous creation waits for inspection rather th
 creating another topic automatically. Notification delivery is a separate outbox
 with retries/receipts and authenticated UI links, and does not mark a session read.
 
+## Where a conversation runs
+
+Workers offer labels, like Kubernetes node labels: the agents they run
+(`codex`, `claude`), `browser` when they host one, `HARNESS_WORKER_LABELS`
+(default: CPU architecture), and labels the owner adds in Settings (stored on
+the worker row, for example `asap7` for a machine with chip tools). A session
+may require labels (Advanced in the chat; `sessions.requiredLabels`); only
+workers that have all of them claim its turns, and the waiting reason names
+the missing label. Schedules keep their own optional target worker.
+
+Without labels any machine can continue any conversation, so work does not
+depend on one machine staying on. Native Claude Code and Codex memory lives on
+the machine that ran the session (`ownerWorkerId`). That machine is preferred
+while it is online and free, and for two minutes while it is busy. Otherwise
+another eligible worker claims the turn; the claim clears the native ID and
+checkpoint, and the claim route prepends the conversation so far (earlier
+prompts and replies, newest kept within about 60k characters) to the prompt.
+That worker becomes the new home. Files, clones and uncommitted work stay on
+the old machine, and the agent is told so. A complete Claude SDK checkpoint
+still moves with its memory. Interrupted native turns are never retried.
+
 ## Sessions handing work to sessions
 
 A planning session can hand work to the owner's other sessions with

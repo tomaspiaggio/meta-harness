@@ -154,6 +154,20 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
       and its report (25 s), and a question answered by the planner (35 s).
 - [ ] First real use on the Litho sessions.
 
+## Where conversations run (2026-10-25)
+
+- [x] Machine labels (automatic: agents, `browser`, architecture; owner-added
+      in Settings → Machines, for example `asap7`) and per-session required
+      labels under Advanced in the chat. Verified live with Codex: a session
+      requiring `asap7` waited ("Needs a machine labelled asap7") until a
+      worker got the label, then ran there.
+- [x] Conversations no longer stay pinned to the machine they started on. The
+      last machine is preferred; when it is off (or busy for two minutes)
+      another continues with the conversation so far. Verified live with
+      Codex: stopped the first worker after turn 1; the second answered a
+      question about turn 1 correctly.
+- [ ] Label the Mac for the chip session once it exists in the harness.
+
 ## Next: skills
 
 - [ ] Skills the owner asks for, stored like decisions, available to agents,

@@ -5,7 +5,7 @@ import type { Attachment } from "@harness/core/attachments";
 import type { Schedule } from "@harness/core/automations";
 import type { Decision } from "@harness/core/knowledge";
 import { type AgentProvider, defaultAgentDefaults } from "@harness/core/models";
-import { ArrowUp, Globe2, Square } from "lucide-react";
+import { ArrowUp, Globe2, SlidersHorizontal, Square } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -38,6 +38,7 @@ import {
 } from "./delegations";
 import { MarkdownMessage } from "./markdown";
 import { ModelPicker } from "./model-picker";
+import { type Placement, PlacementPanel } from "./placement";
 import { ScheduleCard } from "./schedule-card";
 import {
   conversationHref,
@@ -53,6 +54,7 @@ type State = {
   sessions: Session[];
   schedules?: Schedule[];
   delegations?: DelegationView[];
+  placement?: Placement | null;
   inputRequests?: {
     id: string;
     sessionId: string;
@@ -124,6 +126,10 @@ function Conversation() {
   const [models, setModels] = useState(defaultAgentDefaults.models);
   const choicesEdited = useRef(false);
   const [modelBusy, setModelBusy] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [labelsBusy, setLabelsBusy] = useState(false);
+  // Labels chosen before the first message create the session with them.
+  const [draftLabels, setDraftLabels] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -152,6 +158,9 @@ function Conversation() {
   const turns = state.turns.filter((t) => t.sessionId === sessionId);
   const workspace = state.workspaces.find((w) => w.id === workspaceId);
   const selected = state.sessions.find((s) => s.id === sessionId);
+  const sessionLabels = sessionId
+    ? (selected?.requiredLabels ?? "").split(",").filter(Boolean)
+    : draftLabels;
   const active = turns.some((turn) => !isTerminal(turn.status));
   const activeTurn =
     turns.find((turn) => turn.status === "running") ??
@@ -166,6 +175,8 @@ function Conversation() {
     setPrompt("");
     setBrowserOpen(false);
     setBrowserSteps([]);
+    setAdvanced(false);
+    setDraftLabels([]);
   }, [routeKey]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: initialize defaults after the composer location resets
   useEffect(() => {
@@ -340,6 +351,12 @@ function Conversation() {
           model: provider === "demo" ? null : models[provider],
         });
         id = session.id;
+        if (draftLabels.length)
+          await post<Session>(
+            "sessions",
+            { id, action: "labels", labels: draftLabels },
+            "PATCH",
+          );
         draftSession.current = { location: routeKey, id };
         setState((s) => ({ ...s, sessions: [session, ...s.sessions] }));
         refreshTree();
@@ -817,6 +834,30 @@ function Conversation() {
               keep their model.
             </p>
           )}
+          {advanced && (
+            <PlacementPanel
+              placement={state.placement}
+              labels={sessionLabels}
+              provider={selected?.provider ?? provider}
+              disabled={busy || labelsBusy}
+              onChange={(labels) => {
+                if (!sessionId) {
+                  setDraftLabels(labels);
+                  return;
+                }
+                setLabelsBusy(true);
+                setError("");
+                void post<Session>(
+                  "sessions",
+                  { id: sessionId, action: "labels", labels },
+                  "PATCH",
+                )
+                  .then(() => refresh.current())
+                  .catch((reason) => setError(reason.message))
+                  .finally(() => setLabelsBusy(false));
+              }}
+            />
+          )}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <FilePicker files={files} disabled={busy} onFiles={addFiles} />
             {sessionId && (
@@ -831,6 +872,18 @@ function Conversation() {
                 <Globe2 />
               </Button>
             )}
+            <Button
+              type="button"
+              variant={advanced ? "secondary" : "ghost"}
+              size="sm"
+              aria-expanded={advanced}
+              title="Advanced: which machines run this conversation"
+              onClick={() => setAdvanced(!advanced)}
+              className="text-xs text-muted-foreground"
+            >
+              <SlidersHorizontal />
+              {sessionLabels.length ? sessionLabels.join(", ") : "Advanced"}
+            </Button>
             {!sessionId ? (
               <ToggleGroup
                 type="single"

@@ -1,3 +1,8 @@
+import {
+  labelList,
+  type WorkerRecord,
+  workerLabels,
+} from "@harness/core/scheduling";
 import { failure, localRequest } from "../../../server/http";
 import { getStore } from "../../../server/store";
 
@@ -19,6 +24,19 @@ async function delegationTag(
     peer: peer
       ? { id: peer.id, title: peer.title, workspaceId: peer.workspaceId }
       : null,
+  };
+}
+/** Which machines can run a session, for its Advanced settings. */
+function placement(workers: WorkerRecord[], required: string[]) {
+  const live = workers.filter((worker) => !worker.draining && worker.report);
+  return {
+    labels: required,
+    available: [...new Set(live.flatMap(workerLabels))].sort(),
+    machines: live.map((worker) => ({
+      name: worker.name,
+      online: !!worker.seenAt && worker.seenAt > Date.now() - 30000,
+      labels: workerLabels(worker),
+    })),
   };
 }
 export const dynamic = "force-dynamic";
@@ -45,8 +63,9 @@ export async function GET(request: Request) {
       );
     await store.getWorkspace(workspaceId);
     const sessionId = query.get("session");
+    const workers = await store.listWorkers();
     const workerNames = new Map(
-      (sessionId ? await store.listWorkers() : []).map((worker) => [
+      workers.map((worker) => [
         worker.id,
         {
           name: worker.name,
@@ -86,6 +105,12 @@ export async function GET(request: Request) {
           ? await store.delegationsForSession(sessionId)
           : [],
         inputRequests: sessionId ? await store.inputsForSession(sessionId) : [],
+        placement: placement(
+          workers,
+          sessionId
+            ? labelList((await store.getSession(sessionId)).requiredLabels)
+            : [],
+        ),
       },
       { headers: { "Cache-Control": "no-store" } },
     );

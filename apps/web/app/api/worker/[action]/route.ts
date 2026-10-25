@@ -73,6 +73,13 @@ export async function POST(
         requiredText(body.requestId, "Claim request ID", 100),
       );
       if (!assignment) return Response.json(null);
+      // A session that moved to a machine without its agent's memory gets the
+      // conversation so far, so any machine can continue it.
+      const { claim } = assignment;
+      if (claim.session.provider !== "demo" && !claim.session.nativeId) {
+        const earlier = await store.conversationSoFar(claim.turn.id);
+        if (earlier) claim.turn.prompt = `${earlier}\n\n${claim.turn.prompt}`;
+      }
       // Task, feedback and report turns carry their protocol to the agent; the
       // stored message stays what the sender wrote.
       const framing = await delegationInstructions(store, assignment.claim);

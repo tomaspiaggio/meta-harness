@@ -436,6 +436,42 @@ export class HarnessStore extends ControlStore {
       return this.getSession(id);
     });
   }
+  /**
+   * The earlier messages and replies of a conversation, for a fresh agent that
+   * continues it without its native memory (on another machine, or after the
+   * first agent never started). Newest turns are kept when it is too long.
+   */
+  async conversationSoFar(
+    turnId: string,
+    maxChars = 60000,
+  ): Promise<string | null> {
+    const turn = await this.getTurn(turnId);
+    const earlier = (await this.db
+      .prepare(
+        "SELECT * FROM turns WHERE sessionId = ? AND rowid < (SELECT rowid FROM turns WHERE id = ?) ORDER BY rowid DESC LIMIT 200",
+      )
+      .all(turn.sessionId, turnId)) as unknown as Turn[];
+    if (!earlier.length) return null;
+    const blocks: string[] = [];
+    let used = 0;
+    for (const item of earlier) {
+      const output = item.output.trim();
+      const reply =
+        output.length > 8000
+          ? `[…start of this reply omitted]\n${output.slice(-8000)}`
+          : output || `(no reply; the turn ${item.status})`;
+      const block = `### Message\n${item.prompt.trim()}\n\n### Your reply\n${reply}${item.error ? `\n\n(Error: ${item.error.slice(0, 500)})` : ""}`;
+      if (used + block.length > maxChars && blocks.length) break;
+      blocks.push(block);
+      used += block.length;
+    }
+    const omitted = earlier.length - blocks.length;
+    return `[Meta Harness: this conversation now runs on a machine where your agent has no memory of it, so it starts fresh. The conversation so far is below, oldest first; continue from it as if you remembered it.${omitted ? ` ${omitted} older turns are left out; use session_read for them.` : ""} Files, clones, installed tools and uncommitted changes from the earlier machine are not here: check what was pushed or saved before redoing work, and say so if something you need is missing.]
+
+${blocks.reverse().join("\n\n---\n\n")}
+
+[End of the earlier conversation. The new message follows.]`;
+  }
   async deleteSession(id: string) {
     return deleteResource(this.db, "session", id);
   }

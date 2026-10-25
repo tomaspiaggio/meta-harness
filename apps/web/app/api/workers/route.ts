@@ -65,6 +65,20 @@ export async function POST(request: Request) {
     return failure(error);
   }
 }
+/** The owner labels a machine, so sessions can require it. */
+export async function PATCH(request: Request) {
+  try {
+    const body = await jsonBody(request);
+    return Response.json(
+      await (await getStore()).setWorkerLabels(
+        requiredText(body.id, "Worker ID", 100),
+        body.labels,
+      ),
+    );
+  } catch (error) {
+    return failure(error);
+  }
+}
 export async function DELETE(request: Request) {
   try {
     const body = await jsonBody(request);

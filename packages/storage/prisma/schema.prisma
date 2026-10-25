@@ -31,6 +31,7 @@ model Sessions {
   titleSource                   String               @default("prompt")
   readThroughSequence           BigInt               @default(0)
   ownerWorkerId                 String?
+  requiredLabels                String?
   checkpointId                  String?
   nativeRevision                Int                  @default(0)
   related_workspaceId           Workspaces           @relation("sessions_workspaceId", fields: [workspaceId], references: [id], onDelete: Restrict)
@@ -110,6 +111,7 @@ model Workers {
   tokenHash                   String
   report                      String?
   seenAt                      BigInt?
+  labels                      String?
   draining                    Int                 @default(0)
   worker_claims_workerId      WorkerClaims[]      @relation("worker_claims_workerId")
   provider_cooldowns_workerId ProviderCooldowns[] @relation("provider_cooldowns_workerId")

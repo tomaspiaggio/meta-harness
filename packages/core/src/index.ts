@@ -28,6 +28,8 @@ export interface Session {
   provider: Provider;
   nativeId: string | null;
   ownerWorkerId?: string | null;
+  /** Comma-separated labels a machine needs to run this session. */
+  requiredLabels?: string | null;
   createdAt: number;
 }
 export interface Turn {
