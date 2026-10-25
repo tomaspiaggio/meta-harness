@@ -24,6 +24,15 @@ export async function GET(request: Request) {
       );
     await store.getWorkspace(workspaceId);
     const sessionId = query.get("session");
+    const workerNames = new Map(
+      (sessionId ? await store.listWorkers() : []).map((worker) => [
+        worker.id,
+        {
+          name: worker.name,
+          hostname: worker.report?.hostname ?? null,
+        },
+      ]),
+    );
     if (
       sessionId &&
       (await store.getSession(sessionId)).workspaceId !== workspaceId
@@ -41,6 +50,9 @@ export async function GET(request: Request) {
           ? await Promise.all(
               (await store.listTurns(sessionId)).map(async (turn) => ({
                 ...turn,
+                worker: turn.workerId
+                  ? (workerNames.get(turn.workerId) ?? null)
+                  : null,
                 waitingReason: await store.waitingReason(turn.id),
                 publications: await store.decisionsForTurn(turn.id),
                 attachments: await store.attachmentsForTurn(turn.id),

@@ -126,6 +126,7 @@ export function browserStreamRelay(server, privatePort, otherUpgrade) {
                 "download",
                 "notice",
                 "select",
+                "targets",
               ].includes(message.type)
             )
               send(view.ws, message);

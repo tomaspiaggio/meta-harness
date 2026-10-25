@@ -53,6 +53,7 @@ type State = {
     message: string;
   }[];
   turns: (Turn & {
+    worker?: { name: string; hostname: string | null } | null;
     waitingReason?: string | null;
     publications?: Decision[];
     attachments?: Attachment[];
@@ -509,6 +510,13 @@ function Conversation() {
                   </div>
                 )}
               </div>
+              <p className="mt-1.5 px-1 font-mono text-[11px] text-muted-foreground">
+                {turn.worker
+                  ? `Picked up by ${turn.worker.name}${turn.worker.hostname && turn.worker.hostname !== turn.worker.name ? ` · ${turn.worker.hostname}` : ""}`
+                  : isTerminal(turn.status)
+                    ? "No worker ran this message"
+                    : "Waiting for a worker to pick this up"}
+              </p>
               <div className="px-0.5 pt-5">
                 <Role className="text-primary">
                   {selected?.provider ?? "agent"}

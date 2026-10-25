@@ -67,6 +67,19 @@ export function BrowserPanel({
   const [controlling, setControlling] = useState(false);
   const [typed, setTyped] = useState("");
   const [notice, setNotice] = useState("");
+  const [zoomed, setZoomed] = useState(false);
+  const [tap, setTap] = useState<{ x: number; y: number; key: number } | null>(
+    null,
+  );
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!tap) return;
+    const timer = setTimeout(() => setTap(null), 700);
+    return () => clearTimeout(timer);
+  }, [tap]);
+  const [targets, setTargets] = useState<
+    { ref: string; role: string; name: string }[] | null
+  >(null);
   const [picker, setPicker] = useState<{
     label: string;
     x: number;
@@ -235,7 +248,7 @@ export function BrowserPanel({
             return;
           }
           if (
-            ["downloads", "download", "notice", "select"].includes(
+            ["downloads", "download", "notice", "select", "targets"].includes(
               message.type,
             ) &&
             streamKey
@@ -251,6 +264,7 @@ export function BrowserPanel({
                 `The page showed ${value.kind === "alert" ? "an alert" : `a ${value.kind}`} (${value.kind === "alert" ? "acknowledged" : "cancelled"} automatically): ${value.message}`,
               );
             else if (message.type === "select") setPicker(value);
+            else if (message.type === "targets") setTargets(value);
             else if (message.type === "downloads") setDownloads(value);
             else {
               const active = downloading.current;
@@ -689,7 +703,7 @@ export function BrowserPanel({
             </div>
           )}
           <div
-            className="relative flex min-h-0 flex-1 items-center justify-center bg-muted sm:bg-neutral-950"
+            className={`relative flex min-h-0 flex-1 bg-muted sm:bg-neutral-950 ${zoomed ? "items-start justify-start overflow-auto" : "items-center justify-center"}`}
             aria-busy={!hasFrame}
           >
             <canvas
@@ -699,22 +713,68 @@ export function BrowserPanel({
               tabIndex={0}
               aria-label="Remote browser"
               data-ready={hasFrame}
-              className="block h-auto max-h-full w-auto max-w-full touch-none outline-none focus:ring-2 focus:ring-primary"
+              className={
+                zoomed
+                  ? "block h-auto w-[250%] max-w-none outline-none"
+                  : "block h-auto max-h-full w-auto max-w-full touch-none outline-none focus:ring-2 focus:ring-primary"
+              }
+              // Zoomed, one finger pans; a tap (no movement) still clicks.
+              style={zoomed ? { touchAction: "pan-x pan-y" } : undefined}
               onPointerDown={(event) => {
-                if (controlling) {
-                  event.currentTarget.setPointerCapture(event.pointerId);
-                  pointer(event, "mousePressed");
+                if (!controlling) return;
+                if (event.pointerType === "touch") {
+                  touchStart.current = { x: event.clientX, y: event.clientY };
+                  return;
                 }
+                event.currentTarget.setPointerCapture(event.pointerId);
+                pointer(event, "mousePressed");
               }}
               onPointerUp={(event) => {
-                pointer(event, "mouseReleased");
+                if (event.pointerType === "touch") {
+                  const start = touchStart.current;
+                  touchStart.current = null;
+                  if (
+                    !controlling ||
+                    !start ||
+                    Math.hypot(
+                      event.clientX - start.x,
+                      event.clientY - start.y,
+                    ) > 10
+                  )
+                    return;
+                  // Taps click on release, so a pan never leaves the remote
+                  // mouse pressed.
+                  pointer(event, "mousePressed");
+                  pointer(event, "mouseReleased");
+                  const box =
+                    event.currentTarget.parentElement?.getBoundingClientRect();
+                  if (box)
+                    setTap({
+                      x:
+                        event.clientX -
+                        box.left +
+                        (event.currentTarget.parentElement?.scrollLeft ?? 0),
+                      y:
+                        event.clientY -
+                        box.top +
+                        (event.currentTarget.parentElement?.scrollTop ?? 0),
+                      key: Date.now(),
+                    });
+                } else pointer(event, "mouseReleased");
                 // Focus inside the tap so iOS/Android show the keyboard; typed
                 // characters are forwarded to whatever the tap focused remotely.
                 if (controlling && event.pointerType !== "mouse")
                   keyboard.current?.focus({ preventScroll: true });
               }}
+              onPointerCancel={() => {
+                touchStart.current = null;
+              }}
               onPointerMove={(event) => {
-                if (controlling && Date.now() - hoverAt.current > 35) {
+                if (
+                  controlling &&
+                  event.pointerType !== "touch" &&
+                  Date.now() - hoverAt.current > 35
+                ) {
                   hoverAt.current = Date.now();
                   pointer(event, "mouseMoved");
                 }
@@ -789,6 +849,56 @@ export function BrowserPanel({
                 }}
               />
             )}
+            {tap && (
+              <span
+                key={tap.key}
+                aria-hidden
+                className="pointer-events-none absolute size-10 -translate-x-1/2 -translate-y-1/2 animate-ping rounded-full border-4 border-primary"
+                style={{ left: tap.x, top: tap.y }}
+              />
+            )}
+            {targets && (
+              <div
+                role="dialog"
+                aria-label="Buttons on this page"
+                className="fixed inset-x-0 bottom-0 z-[60] max-h-[70vh] overflow-y-auto rounded-t-xl border-t bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-sm shadow-2xl sm:absolute sm:max-h-[75%]"
+              >
+                <div className="mb-2 flex items-center justify-between">
+                  <strong>Buttons and links on this page</strong>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setTargets(null)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+                {!targets.length && (
+                  <p className="text-muted-foreground">
+                    No buttons found. Tap the page directly or use Zoom.
+                  </p>
+                )}
+                <ul className="grid gap-1">
+                  {targets.map((target) => (
+                    <li key={target.ref}>
+                      <button
+                        type="button"
+                        className="w-full rounded-md px-3 py-2.5 text-left hover:bg-accent"
+                        onClick={() => {
+                          input({ type: "press-target", ref: target.ref });
+                          setTargets(null);
+                        }}
+                      >
+                        {target.name}
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {target.role}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {notice && (
               <div
                 role="status"
@@ -808,7 +918,7 @@ export function BrowserPanel({
               <div
                 role="dialog"
                 aria-label={picker.label}
-                className="absolute inset-x-0 bottom-0 max-h-[70%] overflow-y-auto rounded-t-xl border-t bg-card p-3 text-sm shadow-2xl"
+                className="fixed inset-x-0 bottom-0 z-[60] max-h-[70vh] overflow-y-auto rounded-t-xl border-t bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-sm shadow-2xl sm:absolute sm:max-h-[70%]"
               >
                 <div className="mb-2 flex items-center justify-between">
                   <strong>{picker.label}</strong>
@@ -852,6 +962,25 @@ export function BrowserPanel({
               </div>
             )}
           </div>
+          {controlling && (
+            <div className="flex gap-2 border-t px-3 py-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => input({ type: "targets" })}
+              >
+                Buttons on this page
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                aria-pressed={zoomed}
+                onClick={() => setZoomed(!zoomed)}
+              >
+                {zoomed ? "Fit page" : "Zoom in"}
+              </Button>
+            </div>
+          )}
           {controlling && <SealedSignIn send={input} />}
           {controlling && (
             <form

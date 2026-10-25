@@ -1,3 +1,9 @@
+import {
+  decisionSource,
+  listWorkspacesWithSessions,
+  readSession,
+  searchHistory,
+} from "../../../server/history";
 import "../../../server/integration-adapters";
 export const maxDuration = 60;
 
@@ -34,7 +40,55 @@ const tools = [
   {
     name: "memory_get",
     description:
-      "Read current shared decisions before answering or acting; latest revisions supersede old conversation claims.",
+      "Read current shared decisions before answering or acting; latest revisions supersede old conversation claims. Each decision names its source session/turn; use decision_source for the full conversation behind it.",
+    inputSchema: { ...object, properties: {} },
+  },
+  {
+    name: "decision_source",
+    description:
+      "Read the conversation that produced a shared decision (any workspace): the decision, its revision history, and the turns around the one that wrote it. Use when a decision lacks the rationale or detail you need.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        key: text,
+        revision: { type: "integer", minimum: 1 },
+        limit: { type: "integer", minimum: 1, maximum: 12 },
+      },
+      required: ["key"],
+    },
+  },
+  {
+    name: "session_read",
+    description:
+      "Read another (or this) conversation of the owner, in any workspace, a page of turns at a time. Pass around_turn_id to center on a turn, or before (from olderPage) to page back.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: text,
+        around_turn_id: text,
+        before: { type: "number" },
+        limit: { type: "integer", minimum: 1, maximum: 12 },
+      },
+      required: ["session_id"],
+    },
+  },
+  {
+    name: "history_search",
+    description:
+      "Search the owner's past conversations across all workspaces for words or a phrase. Returns session IDs, turn IDs and excerpts to open with session_read.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: text,
+        limit: { type: "integer", minimum: 1, maximum: 20 },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "workspace_list",
+    description:
+      "List the owner's workspaces and their recent sessions (IDs and titles).",
     inputSchema: { ...object, properties: {} },
   },
   {
@@ -218,6 +272,14 @@ export async function POST(request: Request) {
         result = await store.unfinishedOperations(session.id);
       else if (parameters?.name === "memory_get")
         result = await store.getSharedDecisions();
+      else if (parameters?.name === "decision_source")
+        result = await decisionSource(store, args);
+      else if (parameters?.name === "session_read")
+        result = await readSession(store, args);
+      else if (parameters?.name === "history_search")
+        result = await searchHistory(store, args);
+      else if (parameters?.name === "workspace_list")
+        result = await listWorkspacesWithSessions(store);
       else if (parameters?.name === "schedule_list")
         result = await store.listSchedules(session.id);
       else if (parameters?.name === "schedule_propose") {

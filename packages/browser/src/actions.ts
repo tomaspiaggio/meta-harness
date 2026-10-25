@@ -47,8 +47,10 @@ async function resolve(
 ): Promise<{ point: Point; label: string; locator?: Locator } | null> {
   let locator: Locator | undefined;
   if (typeof args.ref === "string") {
-    if (!/^[a-z]?\d{1,6}$/.test(args.ref))
-      throw new Error("Use a ref exactly as shown in the snapshot, like e12.");
+    if (!/^(?:f\d{1,4})?e\d{1,6}$/.test(args.ref))
+      throw new Error(
+        "Use a ref exactly as shown in the snapshot, like e12 or f2e7.",
+      );
     locator = page.locator(`aria-ref=${args.ref}`);
   } else if (typeof args.selector === "string" && args.selector)
     locator = page.locator(args.selector).first();

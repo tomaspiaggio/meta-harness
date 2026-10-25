@@ -443,7 +443,10 @@ export class BrowserBroker {
           error ? "error" : "ready",
           typeof result?.resumeUrl === "string"
             ? result.resumeUrl.slice(0, 4000)
-            : typeof result?.url === "string"
+            : // A sign-in page's stripped URL cannot be reopened (Google answers
+              // 400); keep the page that led to it so the site redirects again.
+              typeof result?.url === "string" &&
+                !(result.login && browser.lastUrl)
               ? result.url.slice(0, 4000)
               : browser.lastUrl,
           result?.frame

@@ -38,6 +38,26 @@ async function fillCredential(page: Page, field: string, value: string) {
   await target.press("Enter");
 }
 
+/**
+ * Phone-sized tap targets: the page's clickable elements from the accessibility
+ * tree, so a person can press "Try another way" without hitting a tiny link.
+ */
+async function pageTargets(page: Page) {
+  const snapshot = await page
+    .ariaSnapshot({ mode: "ai", timeout: 5000 })
+    .catch(() => "");
+  const targets: { ref: string; role: string; name: string }[] = [];
+  for (const line of snapshot.split("\n")) {
+    const match = line.match(
+      /^\s*- (button|link|checkbox|radio|menuitem|tab|option|switch)\s+"([^"]{1,120})"[^\n]*?\[ref=((?:f\d+)?e\d+)\]/,
+    );
+    if (match && !targets.some((item) => item.name === match[2]))
+      targets.push({ role: match[1], name: match[2], ref: match[3] });
+    if (targets.length >= 60) break;
+  }
+  return targets;
+}
+
 /** Ephemeral CDP stream: no frame/input enters the operation ledger or model. */
 export async function liveBrowser(
   host: BrowserHost,
@@ -154,6 +174,23 @@ export async function liveBrowser(
           type: "download",
           data: encryptBytes(peer.key, Buffer.from(JSON.stringify(chunk))),
         });
+      } else if (input.type === "targets") {
+        sendSealed("targets", await pageTargets(page));
+      } else if (
+        input.type === "press-target" &&
+        typeof input.ref === "string" &&
+        /^(?:f\d{1,4})?e\d{1,6}$/.test(input.ref)
+      ) {
+        const box = await page
+          .locator(`aria-ref=${input.ref}`)
+          .boundingBox({ timeout: 3000 })
+          .catch(() => null);
+        if (!box)
+          throw new LiveInputError(
+            "That button is gone. Open the list again for the current page.",
+          );
+        // Real input at the element's center, like a precise tap.
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
       } else if (
         input.type === "choose" &&
         typeof input.value === "string" &&

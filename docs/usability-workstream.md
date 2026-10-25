@@ -48,6 +48,22 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
       for the person (and return their options to the agent). Verified locally.
 - [ ] Optional: enable visual grounding (decide which OpenRouter key to use).
 
+- [x] Phone sign-in on Google's passkey screen: "Buttons on this page" lists the
+      page's buttons/links as large rows (from the accessibility tree; iframe refs
+      supported), taps show a ripple and click on release, and "Zoom in" lets you
+      pan the stream. Verified at iPhone size: list → "Try another way" →
+      "Enter your password".
+- [x] A browser waiting on a sign-in page stays open 15 minutes (not 2), and a
+      stored Google sign-in URL reopens the account page instead of a 400 error.
+- [x] Each message shows which worker picked it up.
+
+## Agents reading history
+
+- [x] Agents can read the conversation behind a shared decision and any of the
+      owner's sessions: `decision_source`, `session_read`, `history_search`,
+      `workspace_list` (bounded, paginated). Verified with Codex from another
+      workspace.
+
 ## Settings
 
 - [x] Adding a machine: name → paste setup into Codex/Claude on that machine →

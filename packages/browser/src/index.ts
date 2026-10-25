@@ -221,10 +221,12 @@ export class BrowserHost {
     );
     for (const [id, context] of this.contexts) {
       const generation = allowed.get(id);
-      if (
-        generation === undefined ||
-        Date.now() - context.lastUsed > (this.options.idleMs ?? 120000)
-      ) {
+      // A browser waiting on a sign-in page keeps its progress (typed email,
+      // challenge step) long enough for the owner to come back to it.
+      const idle = browserLoginState(context.page.url())
+        ? Math.max(this.options.idleMs ?? 120000, 15 * 60000)
+        : (this.options.idleMs ?? 120000);
+      if (generation === undefined || Date.now() - context.lastUsed > idle) {
         await this.release(context);
         this.contexts.delete(id);
       } else context.generation = generation;
@@ -572,8 +574,10 @@ export class BrowserHost {
     // A profile reopened after its idle timeout starts blank. Return to the
     // page that asked for sign-in so the viewer sees the real login screen.
     const last = assignment.identity.lastUrl;
+    // Google sign-in URLs lose their required parameters when stored; reopen
+    // the account chooser instead of a 400 page.
     const resume =
-      last && browserLoginState(last) === "rejected"
+      last && /^https:\/\/accounts\.google\.com\//.test(last)
         ? "https://accounts.google.com/"
         : last;
     if (context.page.url() === "about:blank" && resume)
