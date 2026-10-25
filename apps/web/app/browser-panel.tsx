@@ -1043,6 +1043,7 @@ function PageFields({
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset per page step
   useEffect(() => {
     setValues({});
+    setStatus("");
   }, [key]);
   if (!fields) return null;
   if (!fields.length)
