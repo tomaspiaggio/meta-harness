@@ -1,6 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, readFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import {
@@ -443,26 +443,43 @@ export class BrowserHost {
         acceptDownloads: true,
         serviceWorkers: "block",
       });
+    // The cached user agent survives worker restarts, so only the very first
+    // launch on a host needs the extra relaunch below.
+    const agents = join(this.root, "user-agents.json");
+    const agentKey = `${channel}:${managedBrowserExecutable() ?? ""}`;
+    if (headless && !this.userAgents.has(channel))
+      try {
+        const cached = JSON.parse(await readFile(agents, "utf8"))[agentKey];
+        if (typeof cached === "string" && cached.startsWith("Mozilla/"))
+          this.userAgents.set(channel, cached);
+      } catch {}
     let context = await launch(
       headless ? this.userAgents.get(channel) : undefined,
     ).catch(async (error) => {
       await display?.close();
       throw error;
     });
-    if (headless && !this.userAgents.has(channel)) {
-      // The version is only known after the first launch; relaunch once per
-      // worker process so every page reports an ordinary Chrome user agent.
-      const page = context.pages()[0] ?? (await context.newPage());
-      const agent = await page.evaluate(() => navigator.userAgent);
-      this.userAgents.set(channel, visibleUserAgent(agent));
-      if (agent !== visibleUserAgent(agent)) {
+    if (headless) {
+      // The real version is only known after launching. Browser.getVersion
+      // reports the default (HeadlessChrome) agent even under an override, so
+      // relaunch only when no agent is known yet or Chrome has updated.
+      const session = await context.newCDPSession(
+        context.pages()[0] ?? (await context.newPage()),
+      );
+      const wanted = visibleUserAgent(
+        (await session.send("Browser.getVersion")).userAgent,
+      );
+      await session.detach().catch(() => {});
+      if (this.userAgents.get(channel) !== wanted) {
+        this.userAgents.set(channel, wanted);
+        await writeFile(agents, JSON.stringify({ [agentKey]: wanted }), {
+          mode: 0o600,
+        }).catch(() => {});
         await context.close();
-        context = await launch(this.userAgents.get(channel)).catch(
-          async (error) => {
-            await display?.close();
-            throw error;
-          },
-        );
+        context = await launch(wanted).catch(async (error) => {
+          await display?.close();
+          throw error;
+        });
       }
     }
     try {
