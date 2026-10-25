@@ -143,6 +143,17 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
 - [x] Hourly encrypted backups of the Pi control plane to Drive (owner key
       in Dashlane), with status in Settings and a push when they fail.
 
+## Sessions handing work to sessions (2026-10-25)
+
+- [x] A planning session gives tasks to other sessions (`session_send`), gets
+      their reports back as new messages that wake it, and sends feedback or
+      answers on the same task, up to 6 rounds. Workers ask the planner first
+      and the owner only for purchases, deletions, sensitive actions or
+      questions nobody else can answer. Reports are written for a reader who
+      did not follow the work. Verified live with Codex on both sides: a task
+      and its report (25 s), and a question answered by the planner (35 s).
+- [ ] First real use on the Litho sessions.
+
 ## Next: skills
 
 - [ ] Skills the owner asks for, stored like decisions, available to agents,

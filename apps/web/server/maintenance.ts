@@ -1,5 +1,6 @@
 import { alertBackups } from "./backup";
 import { BrowserBroker } from "./browser";
+import { deliverDelegationReports } from "./delegation";
 import { cleanupDeleted } from "./deletion";
 import { flushDispatch } from "./dispatcher";
 import { dispatchOutcomes } from "./outcomes";
@@ -34,6 +35,7 @@ export function maintain(): Promise<void> {
       cleanupDeleted,
       flushDispatch,
       dispatchOutcomes,
+      deliverDelegationReports,
       dispatchSchedules,
       reconcileSandboxes,
       generateTitles,

@@ -1,5 +1,26 @@
 import { failure, localRequest } from "../../../server/http";
 import { getStore } from "../../../server/store";
+
+/** Who a task, feedback or report turn came from, for the conversation view. */
+async function delegationTag(
+  store: Awaited<ReturnType<typeof getStore>>,
+  turnId: string,
+) {
+  const link = await store.delegationForTurn(turnId);
+  if (!link) return null;
+  const peerId = link.role === "report" ? link.toSessionId : link.fromSessionId;
+  const peer = await store.getSession(peerId).catch(() => null);
+  return {
+    role: link.role,
+    taskId: link.delegationId,
+    title: link.title,
+    round: link.round,
+    status: link.role === "report" ? link.reportStatus : null,
+    peer: peer
+      ? { id: peer.id, title: peer.title, workspaceId: peer.workspaceId }
+      : null,
+  };
+}
 export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
@@ -56,10 +77,14 @@ export async function GET(request: Request) {
                 waitingReason: await store.waitingReason(turn.id),
                 publications: await store.decisionsForTurn(turn.id),
                 attachments: await store.attachmentsForTurn(turn.id),
+                delegation: await delegationTag(store, turn.id),
               })),
             )
           : [],
         schedules: sessionId ? await store.listSchedules(sessionId) : [],
+        delegations: sessionId
+          ? await store.delegationsForSession(sessionId)
+          : [],
         inputRequests: sessionId ? await store.inputsForSession(sessionId) : [],
       },
       { headers: { "Cache-Control": "no-store" } },

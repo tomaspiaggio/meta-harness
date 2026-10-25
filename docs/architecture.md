@@ -253,6 +253,30 @@ bridge creates/renames topics; ambiguous creation waits for inspection rather th
 creating another topic automatically. Notification delivery is a separate outbox
 with retries/receipts and authenticated UI links, and does not mark a session read.
 
+## Sessions handing work to sessions
+
+A planning session can hand work to the owner's other sessions with
+`session_send` (any workspace, any agent: a Claude planner can drive Codex
+workers). The message becomes an ordinary queued turn in the worker session,
+linked to a `delegations` row; feedback and answers on the same task are more
+turns on that row (`delegation_turns`, one round each, at most six). When a
+linked worker turn ends, maintenance posts one report turn into the sender:
+the worker's `task_report` (done, question or blocked), its pending question to
+the owner, or its final message as a fallback. That turn wakes the sender's
+agent, which reviews it and replies on the task, closes it with `task_close`,
+or hands out more work. Progress reports are stored without waking anyone.
+
+The protocol text is added when a worker claims the turn, so stored messages
+stay what the sender wrote and workers need no update. Worker turns are told to
+keep moving, to ask the sender before the owner, and to ask the owner only for
+purchases, deletions and other sensitive or irreversible actions, or questions
+no agent can answer. A turn working on a task cannot hand work onward; agents
+use their own subagents for parallel work. The owner sees each task, its state
+and latest progress and report in the session, and can cancel it. This is the
+in-harness form of the inter-harness message model (request, report, question,
+answer, with who decided what), without the permission filtering that a
+different owner's harness would need.
+
 ## Browser identity and optional capacity
 
 ### Agreed target: browser resources on any eligible worker

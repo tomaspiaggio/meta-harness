@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   HarnessError,
+  isTerminal,
   type Provider,
   requiredText,
   type Session,
@@ -100,6 +101,93 @@ export interface InputRequest {
 }
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
+
+export const MAX_DELEGATION_ROUNDS = 6;
+export const DELEGATION_REPORTS = [
+  "progress",
+  "done",
+  "question",
+  "blocked",
+] as const;
+export type DelegationReportStatus = (typeof DELEGATION_REPORTS)[number];
+export interface Delegation {
+  id: string;
+  fromSessionId: string;
+  toSessionId: string;
+  title: string;
+  status: string;
+  rounds: number;
+  progress: string | null;
+  progressAt: number | null;
+  reportStatus: string | null;
+  report: string | null;
+  reportAt: number | null;
+  closedNote: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface DelegationView extends Delegation {
+  /** queued, working, waiting-on-owner, a report status, accepted or cancelled. */
+  state: string;
+  from: { id: string; title: string; workspaceId: string };
+  to: { id: string; title: string; workspaceId: string };
+}
+export interface DelegationTurn {
+  turnId: string;
+  delegationId: string;
+  role: "task" | "reply" | "report";
+  round: number;
+  reportStatus: string | null;
+  report: string | null;
+  reportedAt: number | null;
+  fromSessionId: string;
+  toSessionId: string;
+  title: string;
+  status: string;
+  rounds: number;
+}
+const optionalNumber = (value: unknown) =>
+  value == null ? null : Number(value);
+const optionalText = (value: unknown) => (value == null ? null : String(value));
+const delegationRow = (row: Record<string, unknown>): Delegation => ({
+  id: String(row.id),
+  fromSessionId: String(row.fromSessionId),
+  toSessionId: String(row.toSessionId),
+  title: String(row.title),
+  status: String(row.status),
+  rounds: Number(row.rounds),
+  progress: optionalText(row.progress),
+  progressAt: optionalNumber(row.progressAt),
+  reportStatus: optionalText(row.reportStatus),
+  report: optionalText(row.report),
+  reportAt: optionalNumber(row.reportAt),
+  closedNote: optionalText(row.closedNote),
+  createdAt: Number(row.createdAt),
+  updatedAt: Number(row.updatedAt),
+});
+const delegationTurnRow = (row: Record<string, unknown>): DelegationTurn => ({
+  turnId: String(row.turnId),
+  delegationId: String(row.delegationId),
+  role: String(row.role) as DelegationTurn["role"],
+  round: Number(row.round),
+  reportStatus: optionalText(row.reportStatus),
+  report: optionalText(row.report),
+  reportedAt: optionalNumber(row.reportedAt),
+  fromSessionId: String(row.fromSessionId),
+  toSessionId: String(row.toSessionId),
+  title: String(row.title),
+  status: String(row.status),
+  rounds: Number(row.rounds),
+});
+/** First line of the task, short enough for a list. */
+const delegationTitle = (message: string) => {
+  const line =
+    message
+      .split("\n")
+      .map((item) => item.replace(/^[#>*\-\s]+/, "").trim())
+      .find(Boolean) ?? "Task";
+  return line.length > 80 ? `${line.slice(0, 77)}…` : line;
+};
 
 /** Application persistence shared by local and hosted control planes. */
 export class HarnessStore extends ControlStore {
@@ -1010,6 +1098,17 @@ export class HarnessStore extends ControlStore {
         String(input.sessionId),
         response,
       );
+      // The owner answered a worker on a task: its continuation still works
+      // on that task and reports back when it ends.
+      const link = input.turnId
+        ? await this.delegationForTurn(String(input.turnId))
+        : null;
+      if (link && link.role !== "report")
+        await this.db
+          .prepare(
+            "INSERT OR IGNORE INTO delegation_turns(turnId, delegationId, role, round, createdAt) VALUES (?, ?, 'reply', ?, ?)",
+          )
+          .run(`input:${id}`, link.delegationId, link.round, Date.now());
     });
   }
   override async listSessions(workspaceId: string): Promise<Session[]> {
@@ -1532,6 +1631,283 @@ export class HarnessStore extends ControlStore {
     await this.requireWorkerOwnership(workerId, turnId, generation);
     if ((await this.getTurn(turnId)).stopRequestedAt)
       throw new HarnessError("This turn is stopping.", 409);
+  }
+  /** The delegation a turn belongs to: a task or reply it works on, or a report. */
+  async delegationForTurn(turnId: string): Promise<DelegationTurn | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT delegation_turns.*, delegations.fromSessionId, delegations.toSessionId, delegations.title, delegations.status, delegations.rounds FROM delegation_turns JOIN delegations ON delegations.id = delegation_turns.delegationId WHERE delegation_turns.turnId = ?",
+      )
+      .get(turnId);
+    return row ? delegationTurnRow(row) : null;
+  }
+  async getDelegation(id: string): Promise<Delegation> {
+    const row = await this.db
+      .prepare("SELECT * FROM delegations WHERE id = ?")
+      .get(id);
+    if (!row) throw new HarnessError("Task not found.", 404);
+    return delegationRow(row);
+  }
+  /**
+   * A session hands work to another session: a new task, or feedback and
+   * answers on one it already gave. The message is queued in the worker
+   * session; its result comes back as a report turn in the sender.
+   */
+  async sendDelegation(input: {
+    turnId: string;
+    callerTurnId: string;
+    message: string;
+    toSessionId?: string;
+    delegationId?: string;
+  }): Promise<{ delegation: Delegation; turn: Turn }> {
+    return this.transaction(async () => {
+      const existing = await this.delegationForTurn(input.turnId);
+      if (existing)
+        return {
+          delegation: await this.getDelegation(existing.delegationId),
+          turn: await this.getTurn(input.turnId),
+        };
+      const caller = await this.getTurn(input.callerTurnId);
+      const callerRole = await this.delegationForTurn(caller.id);
+      if (callerRole && callerRole.role !== "report")
+        throw new HarnessError(
+          `This session is working on a task from another session; it cannot hand work to other sessions. Use your own subagents for parallel work, or report back with task_report.`,
+          403,
+        );
+      const message = requiredText(input.message, "Message", 20000);
+      const now = Date.now();
+      let delegation: Delegation;
+      if (input.delegationId) {
+        delegation = await this.getDelegation(input.delegationId);
+        if (delegation.fromSessionId !== caller.sessionId)
+          throw new HarnessError("That task belongs to another session.", 403);
+        if (delegation.status !== "open")
+          throw new HarnessError(
+            `That task is ${delegation.status}. Send a new task instead.`,
+            409,
+          );
+        if (delegation.rounds >= MAX_DELEGATION_ROUNDS)
+          throw new HarnessError(
+            `This task already went back and forth ${delegation.rounds} times. Accept the work with task_close, start a new task with a narrower scope, or ask the owner with request_input.`,
+            409,
+          );
+        await this.db
+          .prepare(
+            "UPDATE delegations SET rounds = rounds + 1, updatedAt = ? WHERE id = ?",
+          )
+          .run(now, delegation.id);
+        delegation = await this.getDelegation(delegation.id);
+      } else {
+        const toSessionId = requiredText(input.toSessionId, "Session ID", 100);
+        if (toSessionId === caller.sessionId)
+          throw new HarnessError("A session cannot give itself a task.");
+        await this.getSession(toSessionId);
+        const id = `task-${hash(input.turnId).slice(0, 12)}`;
+        await this.db
+          .prepare(
+            "INSERT INTO delegations(id, fromSessionId, toSessionId, title, status, rounds, createdAt, updatedAt) VALUES (?, ?, ?, ?, 'open', 1, ?, ?)",
+          )
+          .run(
+            id,
+            caller.sessionId,
+            toSessionId,
+            delegationTitle(message),
+            now,
+            now,
+          );
+        delegation = await this.getDelegation(id);
+      }
+      const turn = await this.createTurn(
+        input.turnId,
+        delegation.toSessionId,
+        message,
+      );
+      await this.db
+        .prepare(
+          "INSERT INTO delegation_turns(turnId, delegationId, role, round, createdAt) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          turn.id,
+          delegation.id,
+          delegation.rounds === 1 ? "task" : "reply",
+          delegation.rounds,
+          now,
+        );
+      return { delegation, turn };
+    });
+  }
+  /**
+   * The worker reports on its task. Progress is recorded for the owner and the
+   * sender to look at; any other status is delivered to the sender when the
+   * worker's turn ends.
+   */
+  async reportDelegation(
+    turnId: string,
+    status: string,
+    summary: string,
+  ): Promise<Delegation> {
+    const link = await this.delegationForTurn(turnId);
+    if (!link || link.role === "report")
+      throw new HarnessError(
+        "This turn is not working on a task from another session.",
+        409,
+      );
+    if (!DELEGATION_REPORTS.includes(status as DelegationReportStatus))
+      throw new HarnessError(
+        `Status must be one of ${DELEGATION_REPORTS.join(", ")}.`,
+      );
+    const text = requiredText(summary, "Report", 20000);
+    const now = Date.now();
+    if (status === "progress")
+      await this.db
+        .prepare(
+          "UPDATE delegations SET progress = ?, progressAt = ?, updatedAt = ? WHERE id = ?",
+        )
+        .run(text, now, now, link.delegationId);
+    else
+      await this.db
+        .prepare(
+          "UPDATE delegation_turns SET reportStatus = ?, report = ? WHERE turnId = ?",
+        )
+        .run(status, text, turnId);
+    return this.getDelegation(link.delegationId);
+  }
+  async closeDelegation(
+    id: string,
+    sessionId: string | null,
+    status: "accepted" | "cancelled",
+    note?: string,
+  ): Promise<Delegation> {
+    const delegation = await this.getDelegation(id);
+    if (sessionId && delegation.fromSessionId !== sessionId)
+      throw new HarnessError("That task belongs to another session.", 403);
+    await this.db
+      .prepare(
+        "UPDATE delegations SET status = ?, closedNote = ?, updatedAt = ? WHERE id = ?",
+      )
+      .run(status, note?.slice(0, 2000) ?? null, Date.now(), id);
+    return this.getDelegation(id);
+  }
+  /** Tasks this session gave or received, each with where it stands now. */
+  async delegationsForSession(sessionId: string): Promise<DelegationView[]> {
+    const rows = await this.db
+      .prepare(
+        "SELECT * FROM delegations WHERE fromSessionId = ? OR toSessionId = ? ORDER BY updatedAt DESC LIMIT 50",
+      )
+      .all(sessionId, sessionId);
+    const views: DelegationView[] = [];
+    for (const row of rows) {
+      const delegation = delegationRow(row);
+      const titles = await this.db
+        .prepare(
+          "SELECT id, title, workspaceId FROM sessions WHERE id IN (?, ?)",
+        )
+        .all(delegation.fromSessionId, delegation.toSessionId);
+      const session = (id: string) => {
+        const found = titles.find((item) => item.id === id);
+        return found
+          ? {
+              id,
+              title: String(found.title),
+              workspaceId: String(found.workspaceId),
+            }
+          : { id, title: "Deleted session", workspaceId: "" };
+      };
+      const latest = await this.db
+        .prepare(
+          "SELECT turns.id, turns.status FROM delegation_turns JOIN turns ON turns.id = delegation_turns.turnId WHERE delegation_turns.delegationId = ? AND delegation_turns.role != 'report' ORDER BY delegation_turns.createdAt DESC LIMIT 1",
+        )
+        .get(delegation.id);
+      const waiting =
+        latest &&
+        (await this.db
+          .prepare(
+            "SELECT 1 AS present FROM input_requests WHERE turnId = ? AND status = 'pending' LIMIT 1",
+          )
+          .get(latest.id));
+      const state =
+        delegation.status !== "open"
+          ? delegation.status
+          : waiting
+            ? "waiting-on-owner"
+            : latest && !isTerminal(latest.status as Turn["status"])
+              ? latest.status === "running"
+                ? "working"
+                : "queued"
+              : (delegation.reportStatus ?? "queued");
+      views.push({
+        ...delegation,
+        state,
+        from: session(delegation.fromSessionId),
+        to: session(delegation.toSessionId),
+      });
+    }
+    return views;
+  }
+  /** Finished task turns whose result has not gone back to the sender yet. */
+  async pendingDelegationReports(): Promise<string[]> {
+    return (
+      await this.db
+        .prepare(
+          "SELECT delegation_turns.turnId FROM delegation_turns JOIN turns ON turns.id = delegation_turns.turnId WHERE delegation_turns.role != 'report' AND delegation_turns.reportedAt IS NULL AND turns.status IN ('completed', 'failed', 'interrupted', 'cancelled') ORDER BY delegation_turns.createdAt LIMIT 20",
+        )
+        .all()
+    ).map((row) => String(row.turnId));
+  }
+  /**
+   * Post the result of a finished task turn into the sender as a new turn, so
+   * the sender's agent wakes up, reviews it and decides what comes next.
+   */
+  async deliverDelegationReport(turnId: string): Promise<Turn | null> {
+    return this.transaction(async () => {
+      const link = await this.delegationForTurn(turnId);
+      if (!link || link.role === "report" || link.reportedAt) return null;
+      const turn = await this.getTurn(turnId);
+      if (!isTerminal(turn.status)) return null;
+      const now = Date.now();
+      await this.db
+        .prepare("UPDATE delegation_turns SET reportedAt = ? WHERE turnId = ?")
+        .run(now, turnId);
+      const delegation = await this.getDelegation(link.delegationId);
+      if (delegation.status !== "open") return null;
+      const question = await this.db
+        .prepare(
+          "SELECT message FROM input_requests WHERE turnId = ? AND status = 'pending' AND kind = 'question' ORDER BY createdAt DESC LIMIT 1",
+        )
+        .get(turnId);
+      let status: string;
+      let report: string;
+      if (question) {
+        status = "waiting-on-owner";
+        report = `The worker asked the owner and is waiting for an answer:\n\n> ${String(question.message).replaceAll("\n", "\n> ")}${link.report ? `\n\nIts report so far:\n\n${link.report}` : ""}`;
+      } else if (link.reportStatus && link.report) {
+        status = link.reportStatus;
+        report = link.report;
+      } else if (turn.status === "completed") {
+        status = "finished";
+        report = `The worker ended its turn without a report. Its final message:\n\n${turn.output.slice(-6000) || "(no output)"}`;
+      } else {
+        status = turn.status;
+        report = `The worker's turn ${turn.status}${turn.error ? `: ${turn.error}` : "."}${turn.output ? `\n\nLast output:\n\n${turn.output.slice(-3000)}` : ""}`;
+      }
+      await this.db
+        .prepare(
+          "UPDATE delegations SET reportStatus = ?, report = ?, reportAt = ?, updatedAt = ? WHERE id = ?",
+        )
+        .run(status, report, now, now, delegation.id);
+      const worker = await this.getSession(delegation.toSessionId);
+      const reportTurn = await this.createTurn(
+        `report:${turnId}`,
+        delegation.fromSessionId,
+        `Report from "${worker.title}" on task ${delegation.id} (${delegation.title}): ${status}\n\n${report}`,
+      );
+      await this.db
+        .prepare(
+          "INSERT OR IGNORE INTO delegation_turns(turnId, delegationId, role, round, reportStatus, report, createdAt) VALUES (?, ?, 'report', ?, ?, ?, ?)",
+        )
+        .run(reportTurn.id, delegation.id, link.round, status, report, now);
+      return reportTurn;
+    });
   }
 }
 

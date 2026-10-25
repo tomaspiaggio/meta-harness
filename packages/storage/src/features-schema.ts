@@ -40,6 +40,18 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
  results INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL, lastSeenAt INTEGER NOT NULL,
  lastSentAt INTEGER, error TEXT
 );
+CREATE TABLE IF NOT EXISTS delegations (
+ id TEXT PRIMARY KEY, fromSessionId TEXT NOT NULL, toSessionId TEXT NOT NULL, title TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'open', rounds INTEGER NOT NULL DEFAULT 1, progress TEXT, progressAt INTEGER,
+ reportStatus TEXT, report TEXT, reportAt INTEGER, closedNote TEXT, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS delegations_from ON delegations(fromSessionId);
+CREATE INDEX IF NOT EXISTS delegations_to ON delegations(toSessionId);
+CREATE TABLE IF NOT EXISTS delegation_turns (
+ turnId TEXT PRIMARY KEY, delegationId TEXT NOT NULL, role TEXT NOT NULL, round INTEGER NOT NULL,
+ reportStatus TEXT, report TEXT, reportedAt INTEGER, createdAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS delegation_turns_delegation ON delegation_turns(delegationId);
 CREATE TABLE IF NOT EXISTS browser_identities (
  id TEXT PRIMARY KEY, workspaceId TEXT NOT NULL REFERENCES workspaces(id), name TEXT NOT NULL,
  workerId TEXT, status TEXT NOT NULL DEFAULT 'idle', mode TEXT NOT NULL DEFAULT 'agent',

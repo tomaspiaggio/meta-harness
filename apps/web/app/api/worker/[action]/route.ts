@@ -12,6 +12,7 @@ import type {
 import { parseWorkerReport } from "@harness/core/scheduling";
 import { after } from "next/server";
 import { BrowserBroker } from "../../../../server/browser";
+import { delegationInstructions } from "../../../../server/delegation";
 import { mintAttemptGrant } from "../../../../server/grants";
 import { hosted, publicOrigin } from "../../../../server/hosted-auth";
 import { failure, readJson } from "../../../../server/http";
@@ -72,6 +73,11 @@ export async function POST(
         requiredText(body.requestId, "Claim request ID", 100),
       );
       if (!assignment) return Response.json(null);
+      // Task, feedback and report turns carry their protocol to the agent; the
+      // stored message stays what the sender wrote.
+      const framing = await delegationInstructions(store, assignment.claim);
+      if (framing)
+        assignment.claim.turn.prompt = `${assignment.claim.turn.prompt}\n\n${framing}`;
       return workerReply(
         workerId,
         assignment.claim.turn.id,

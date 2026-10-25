@@ -30,6 +30,12 @@ import {
 } from "./attachment-input";
 import { BrowserPanel, type BrowserStep } from "./browser-panel";
 import { BrowserSteps } from "./browser-steps";
+import {
+  DelegationsCard,
+  type DelegationTag,
+  type DelegationView,
+  SessionLink,
+} from "./delegations";
 import { MarkdownMessage } from "./markdown";
 import { ModelPicker } from "./model-picker";
 import { ScheduleCard } from "./schedule-card";
@@ -46,6 +52,7 @@ type State = {
   workspaces: Workspace[];
   sessions: Session[];
   schedules?: Schedule[];
+  delegations?: DelegationView[];
   inputRequests?: {
     id: string;
     sessionId: string;
@@ -57,6 +64,7 @@ type State = {
     waitingReason?: string | null;
     publications?: Decision[];
     attachments?: Attachment[];
+    delegation?: DelegationTag | null;
   })[];
 };
 const initial: State = { workspaces: [], sessions: [], turns: [] };
@@ -490,10 +498,42 @@ function Conversation() {
               className="animate-in fade-in border-b py-7 first:pt-0 last:border-0"
             >
               <div className="rounded-lg bg-muted px-4 py-3">
-                <Role>You</Role>
-                <div className="whitespace-pre-wrap break-words">
-                  {turn.prompt}
-                </div>
+                {turn.delegation ? (
+                  <>
+                    <Role className="flex-wrap normal-case tracking-normal">
+                      {turn.delegation.role === "report" ? (
+                        <>
+                          Report from{" "}
+                          <SessionLink session={turn.delegation.peer} />
+                          {turn.delegation.status && (
+                            <StatusBadge status={turn.delegation.status} />
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {turn.delegation.role === "task"
+                            ? "Task from"
+                            : "Follow-up from"}{" "}
+                          <SessionLink session={turn.delegation.peer} />
+                          {turn.delegation.round > 1 &&
+                            ` · round ${turn.delegation.round}`}
+                        </>
+                      )}
+                    </Role>
+                    <MarkdownMessage>
+                      {turn.delegation.role === "report"
+                        ? turn.prompt.replace(/^[^\n]*\n+/, "")
+                        : turn.prompt}
+                    </MarkdownMessage>
+                  </>
+                ) : (
+                  <>
+                    <Role>You</Role>
+                    <div className="whitespace-pre-wrap break-words">
+                      {turn.prompt}
+                    </div>
+                  </>
+                )}
                 {!!turn.attachments?.length && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {turn.attachments.map((file) => (
@@ -601,6 +641,13 @@ function Conversation() {
                   request.sessionId === sessionId &&
                   request.kind === "browser-login",
               )}
+            />
+          )}
+          {sessionId && (
+            <DelegationsCard
+              sessionId={sessionId}
+              delegations={state.delegations ?? []}
+              onChange={() => void refresh.current()}
             />
           )}
           {state.schedules

@@ -341,6 +341,41 @@ model PushSubscriptions {
   @@map("push_subscriptions")
 }
 
+model Delegations {
+  id            String  @id
+  fromSessionId String
+  toSessionId   String
+  title         String
+  status        String  @default("open")
+  rounds        Int     @default(1)
+  progress      String?
+  progressAt    BigInt?
+  reportStatus  String?
+  report        String?
+  reportAt      BigInt?
+  closedNote    String?
+  createdAt     BigInt
+  updatedAt     BigInt
+
+  @@index([fromSessionId], map: "delegations_from")
+  @@index([toSessionId], map: "delegations_to")
+  @@map("delegations")
+}
+
+model DelegationTurns {
+  turnId       String  @id
+  delegationId String
+  role         String
+  round        Int
+  reportStatus String?
+  report       String?
+  reportedAt   BigInt?
+  createdAt    BigInt
+
+  @@index([delegationId], map: "delegation_turns_delegation")
+  @@map("delegation_turns")
+}
+
 model BrowserIdentities {
   stateCipher                String?
   id                         String            @id

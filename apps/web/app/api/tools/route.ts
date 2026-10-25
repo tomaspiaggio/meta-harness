@@ -9,6 +9,8 @@ export const maxDuration = 60;
 
 import { createHash } from "node:crypto";
 import { HarnessError, requiredText } from "@harness/core";
+import { REPORT_RULES } from "../../../server/delegation";
+import { flushDispatch } from "../../../server/dispatcher";
 import { verifyAttemptGrant } from "../../../server/grants";
 import { failure, readJson } from "../../../server/http";
 import {
@@ -139,6 +141,58 @@ const tools = [
         action: { type: "string", enum: ["pause", "delete"] },
       },
       required: ["id", "revision", "action"],
+    },
+  },
+  {
+    name: "session_send",
+    description:
+      "Hand work to another of the owner's sessions (find IDs with workspace_list), or answer, give feedback or the next step on a task you already gave (pass task_id). The message is queued in that session and its agent works on it like an owner message, with its own agent, model, files and tools. When its turn ends, its report arrives here as a new message and you continue: review it against what you asked, then send feedback, answer its question, give the next step, or close it with task_close. Write self-contained instructions: the other session has not seen this conversation. Returns immediately; do not wait for the result.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { ...text, description: "Target session, for a new task" },
+        task_id: {
+          ...text,
+          description: "An open task you gave, for feedback or answers",
+        },
+        message: text,
+      },
+      required: ["message"],
+    },
+  },
+  {
+    name: "task_report",
+    description: `Report on the task this turn is working on (only for turns that work on a task from another session). status: progress (a checkpoint; you keep working), done, question (you need an answer from the session that gave the task; end your turn after this), or blocked. Only the last done/question/blocked report of a turn is sent, when the turn ends. ${REPORT_RULES}`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["progress", "done", "question", "blocked"],
+        },
+        summary: text,
+      },
+      required: ["status", "summary"],
+    },
+  },
+  {
+    name: "task_list",
+    description:
+      "Tasks this session gave to other sessions or received, with where each stands (queued, working, waiting-on-owner, done, question, blocked, accepted, cancelled), the latest progress note and report.",
+    inputSchema: { ...object, properties: {} },
+  },
+  {
+    name: "task_close",
+    description:
+      "Close a task you gave once its result is accepted (or cancel one that is no longer needed). Closed tasks stop reporting here.",
+    inputSchema: {
+      ...object,
+      properties: {
+        task_id: text,
+        outcome: { type: "string", enum: ["accepted", "cancelled"] },
+        note: text,
+      },
+      required: ["task_id", "outcome"],
     },
   },
   {
@@ -328,7 +382,50 @@ export async function POST(request: Request) {
           "question",
           requiredText(args.question, "Question", 4000),
         );
-      } else if (parameters?.name === "browser_action") {
+      } else if (parameters?.name === "session_send") {
+        const { delegation, turn: sent } = await store.sendDelegation({
+          turnId: `task:${createHash("sha256")
+            .update(`${grant.turnId}:${String(id)}`)
+            .digest("hex")
+            .slice(0, 32)}`,
+          callerTurnId: turn.id,
+          message: requiredText(args.message, "Message", 20000),
+          ...(typeof args.task_id === "string" && args.task_id
+            ? { delegationId: args.task_id }
+            : {
+                toSessionId: requiredText(args.session_id, "Session ID", 100),
+              }),
+        });
+        await flushDispatch();
+        result = {
+          task_id: delegation.id,
+          round: delegation.rounds,
+          queued_turn: sent.id,
+          note: "Queued. Its report will arrive in this session as a new message when that turn ends; finish your turn instead of waiting.",
+        };
+      } else if (parameters?.name === "task_report") {
+        const delegation = await store.reportDelegation(
+          turn.id,
+          requiredText(args.status, "Status", 20),
+          requiredText(args.summary, "Report", 20000),
+        );
+        result = {
+          task_id: delegation.id,
+          note:
+            args.status === "progress"
+              ? "Progress recorded. Keep working."
+              : "Recorded. It is sent to the session that gave the task when this turn ends.",
+        };
+      } else if (parameters?.name === "task_list")
+        result = await store.delegationsForSession(session.id);
+      else if (parameters?.name === "task_close")
+        result = await store.closeDelegation(
+          requiredText(args.task_id, "Task ID", 100),
+          session.id,
+          args.outcome === "cancelled" ? "cancelled" : "accepted",
+          typeof args.note === "string" ? args.note : undefined,
+        );
+      else if (parameters?.name === "browser_action") {
         const { browserTool } = await import("../../../server/browser");
         const browser = await browserTool(grant, args);
         if (browser.image)
