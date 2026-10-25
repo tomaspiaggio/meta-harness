@@ -56,6 +56,7 @@ import { cn } from "@/lib/utils";
 
 import { AccountMenu } from "./account-menu";
 import { DeleteDialog, type DeleteTarget } from "./delete-dialog";
+import { refreshPush } from "./push-client";
 
 type Tree = {
   defaults?: AgentDefaults;
@@ -109,6 +110,7 @@ function useLatestBuild() {
     document.addEventListener("visibilitychange", check);
     const timer = setInterval(check, 5 * 60000);
     void check();
+    void refreshPush().catch(() => {});
     return () => {
       document.removeEventListener("visibilitychange", check);
       clearInterval(timer);

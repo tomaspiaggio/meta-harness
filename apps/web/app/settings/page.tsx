@@ -18,6 +18,7 @@ import {
   McpConnectionSettings,
   McpIntegrationSetup,
 } from "./McpIntegrationSetup";
+import { NotificationsCard } from "./notifications";
 import { WorkersCard } from "./workers";
 export default function Page() {
   return (
@@ -227,6 +228,7 @@ function Settings() {
           </Button>
         </CardContent>
       </Card>
+      <NotificationsCard onError={setError} />
       <WorkersCard api={api} onError={setError} />
       <Card>
         <CardHeader>

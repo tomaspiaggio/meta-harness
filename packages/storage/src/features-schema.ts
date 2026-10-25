@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
  nextAt INTEGER NOT NULL, leaseUntil INTEGER, receipt TEXT, error TEXT, createdAt INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS notifications_due ON notification_outbox(status, nextAt);
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+ endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, label TEXT NOT NULL,
+ results INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL, lastSeenAt INTEGER NOT NULL,
+ lastSentAt INTEGER, error TEXT
+);
 CREATE TABLE IF NOT EXISTS browser_identities (
  id TEXT PRIMARY KEY, workspaceId TEXT NOT NULL REFERENCES workspaces(id), name TEXT NOT NULL,
  workerId TEXT, status TEXT NOT NULL DEFAULT 'idle', mode TEXT NOT NULL DEFAULT 'agent',

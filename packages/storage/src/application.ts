@@ -50,6 +50,30 @@ export interface ChannelBinding {
   title: string;
   revision: number;
 }
+/** A browser or home-screen app that receives Web Push notifications. */
+export interface PushSubscription {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  label: string;
+  /** Also notify when a result is ready, not only when attention is needed. */
+  results: boolean;
+  createdAt: number;
+  lastSeenAt: number;
+  lastSentAt: number | null;
+  error: string | null;
+}
+const pushRow = (row: Record<string, unknown>): PushSubscription => ({
+  endpoint: String(row.endpoint),
+  p256dh: String(row.p256dh),
+  auth: String(row.auth),
+  label: String(row.label),
+  results: Number(row.results) === 1,
+  createdAt: Number(row.createdAt),
+  lastSeenAt: Number(row.lastSeenAt),
+  lastSentAt: row.lastSentAt == null ? null : Number(row.lastSentAt),
+  error: row.error == null ? null : String(row.error),
+});
 export interface Notification {
   id: string;
   sessionId: string;
@@ -753,6 +777,62 @@ export class HarnessStore extends ControlStore {
         Date.now() + Math.min(3600000, 10000 * 2 ** Number(row.attempts)),
         id,
       );
+  }
+  async savePushSubscription(input: {
+    endpoint: string;
+    p256dh: string;
+    auth: string;
+    label: string;
+    results?: boolean;
+  }): Promise<PushSubscription> {
+    const endpoint = requiredText(input.endpoint, "Push endpoint", 1000);
+    if (!/^https:\/\//.test(endpoint))
+      throw new HarnessError("Push endpoint must use HTTPS.");
+    const now = Date.now();
+    // Re-registering on every app open keeps the row fresh; it only changes the
+    // event choice when one is given.
+    await this.db
+      .prepare(
+        "INSERT INTO push_subscriptions(endpoint,p256dh,auth,label,results,createdAt,lastSeenAt) VALUES (?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh,auth=excluded.auth,label=excluded.label,lastSeenAt=excluded.lastSeenAt,error=NULL" +
+          (input.results === undefined ? "" : ",results=excluded.results"),
+      )
+      .run(
+        endpoint,
+        requiredText(input.p256dh, "Push key", 200),
+        requiredText(input.auth, "Push secret", 100),
+        requiredText(input.label, "Device name", 100),
+        input.results ? 1 : 0,
+        now,
+        now,
+      );
+    return (await this.pushSubscription(endpoint)) as PushSubscription;
+  }
+  async pushSubscription(endpoint: string): Promise<PushSubscription | null> {
+    const row = await this.db
+      .prepare("SELECT * FROM push_subscriptions WHERE endpoint = ?")
+      .get(endpoint);
+    return row ? pushRow(row) : null;
+  }
+  async pushSubscriptions(): Promise<PushSubscription[]> {
+    return (
+      await this.db
+        .prepare("SELECT * FROM push_subscriptions ORDER BY createdAt LIMIT 50")
+        .all()
+    ).map(pushRow);
+  }
+  async removePushSubscription(endpoint: string): Promise<void> {
+    await this.db
+      .prepare("DELETE FROM push_subscriptions WHERE endpoint = ?")
+      .run(endpoint);
+  }
+  async pushSent(endpoint: string, error?: string): Promise<void> {
+    await this.db
+      .prepare(
+        error
+          ? "UPDATE push_subscriptions SET error = ? WHERE endpoint = ?"
+          : "UPDATE push_subscriptions SET lastSentAt = ?, error = NULL WHERE endpoint = ?",
+      )
+      .run(error ? error.slice(0, 300) : Date.now(), endpoint);
   }
   async channelBinding(sessionId: string): Promise<ChannelBinding | null> {
     return (await this.db

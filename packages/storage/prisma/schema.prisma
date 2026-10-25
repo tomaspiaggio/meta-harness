@@ -327,6 +327,20 @@ model NotificationOutbox {
   @@map("notification_outbox")
 }
 
+model PushSubscriptions {
+  endpoint   String  @id
+  p256dh     String
+  auth       String
+  label      String
+  results    Int     @default(0)
+  createdAt  BigInt
+  lastSeenAt BigInt
+  lastSentAt BigInt?
+  error      String?
+
+  @@map("push_subscriptions")
+}
+
 model BrowserIdentities {
   stateCipher                String?
   id                         String            @id

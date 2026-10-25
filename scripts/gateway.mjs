@@ -22,6 +22,7 @@ export function publicPath(raw) {
         "/schedules",
         "/settings",
         "/manifest.webmanifest",
+        "/sw.js",
         "/apple-touch-icon.png",
         "/icon-192.png",
         "/icon-512.png",
@@ -31,7 +32,7 @@ export function publicPath(raw) {
       /^\/api\/auth\/(status|profile|login|callback|logout|sign-in\/social|callback\/google|get-session|sign-out)$/.test(
         path,
       ) ||
-      /^\/api\/(state|tasks|turns|sessions|workspaces|login|decisions|schedules|attachments|inputs|browser|resources|notifications|maintenance|tools|telegram|workers|diagnostics|preferences|worker|browser-stream|version)$/.test(
+      /^\/api\/(state|tasks|turns|sessions|workspaces|login|decisions|schedules|attachments|inputs|browser|resources|notifications|maintenance|tools|telegram|workers|diagnostics|preferences|worker|browser-stream|version|push)$/.test(
         path,
       ) ||
       /^\/api\/integrations(?:\/mcp|\/google\/(?:status|start|callback|disconnect|binding|client))?$/.test(
