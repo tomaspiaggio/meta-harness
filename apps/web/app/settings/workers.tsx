@@ -61,6 +61,8 @@ export function WorkersCard({
       clearInterval(timer);
     };
   }, [api, onError, pending]);
+  const active = workers.filter((worker) => !worker.draining);
+  const revoked = workers.filter((worker) => worker.draining);
   const newWorker = pending && workers.find((item) => item.id === pending.id);
   const connected = !!newWorker && online(newWorker);
   const local = controlUrl && /\/\/(localhost|127\.0\.0\.1)/.test(controlUrl);
@@ -121,12 +123,12 @@ export function WorkersCard({
       </CardHeader>
       <CardContent className="grid gap-5">
         <ul className="grid gap-2" aria-label="Connected machines">
-          {!workers.length && (
+          {!active.length && (
             <li className="text-sm text-muted-foreground">
               No machines yet. Add one below so agents can run.
             </li>
           )}
-          {workers.map((worker) => {
+          {active.map((worker) => {
             const up = online(worker);
             return (
               <li
@@ -222,6 +224,22 @@ export function WorkersCard({
             );
           })}
         </ul>
+        {revoked.length > 0 && (
+          <details className="text-sm text-muted-foreground">
+            <summary className="cursor-pointer">
+              Revoked machines ({revoked.length})
+            </summary>
+            <ul className="mt-2 grid gap-1 pl-4">
+              {revoked.map((worker) => (
+                <li key={worker.id}>
+                  {worker.name}
+                  {worker.report ? ` · ${worker.report.hostname}` : ""} · last
+                  seen {ago(worker.seenAt)}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
         <section className="grid gap-4 rounded-lg border bg-background/40 p-4 text-sm">
           <h3 className="font-medium">Add a machine</h3>
           <Step n={1} done={!!pending} title="Name it">
