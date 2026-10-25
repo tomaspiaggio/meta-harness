@@ -158,3 +158,87 @@ test("a worker's question to the owner reaches the planner, and the answer stays
     await store.close();
   }
 });
+
+test("workers coordinate with notes; a note that unblocks a task reports to the planner", async () => {
+  const store = new HarnessStore(":memory:");
+  await store.ready;
+  try {
+    const planner = await store.createSession("tech", "Planner", "claude");
+    const chip = await store.createSession("tech", "Chip Code", "claude");
+    const scheduler = await store.createSession("tech", "Scheduler", "codex");
+    const plan = await store.submitMessage("plan", planner.id, "Plan");
+    const { delegation, turn: task } = await store.sendDelegation({
+      turnId: "task:chip",
+      callerTurnId: plan.id,
+      toSessionId: chip.id,
+      title: "B1 command port",
+      message: "Planner task, 2026-10-25 (T-011). This is Tom's next batch…",
+    });
+    assert.equal(delegation.title, "B1 command port");
+
+    // Chip Code asks the scheduler directly instead of the planner relaying.
+    const note = await store.sendNote({
+      turnId: "note:1",
+      callerTurnId: task.id,
+      toSessionId: scheduler.id,
+      message: "Do you agree the B0 boundary in PR 134?",
+    });
+    assert.equal(note.sessionId, scheduler.id);
+    assert.equal((await store.noteForTurn("note:1"))?.fromSessionId, chip.id);
+    await store.reportDelegation(task.id, "blocked", "Waiting for B0.");
+    await finish(store, task.id);
+    await store.deliverDelegationReport(task.id);
+
+    // The scheduler replies; the reply unblocks Chip Code's task.
+    await finish(store, "note:1");
+    const reply = await store.sendNote({
+      turnId: "note:2",
+      callerTurnId: "note:1",
+      toSessionId: chip.id,
+      message: "Agreed.",
+    });
+    // Notes do not wake the planner.
+    assert.deepEqual(await store.pendingDelegationReports(), []);
+    await store.reportDelegation(
+      reply.id,
+      "done",
+      "B1 written on the agreed B0.",
+    );
+    await finish(store, reply.id);
+    const report = await store.deliverDelegationReport(reply.id);
+    assert.match(String(report?.prompt), /B1 written/);
+    assert.equal(report?.sessionId, planner.id);
+    assert.equal((await store.notesAmong([chip.id])).length, 2);
+
+    await assert.rejects(
+      store.sendNote({
+        turnId: "note:self",
+        callerTurnId: "note:2",
+        toSessionId: chip.id,
+        message: "hi",
+      }),
+      /itself/,
+    );
+    for (let index = 3; index <= 20; index++)
+      await store.sendNote({
+        turnId: `note:${index}`,
+        callerTurnId: task.id,
+        toSessionId: scheduler.id,
+        message: `Note ${index}`,
+      });
+    await assert.rejects(
+      store.sendNote({
+        turnId: "note:21",
+        callerTurnId: task.id,
+        toSessionId: scheduler.id,
+        message: "Again",
+      }),
+      /last hour/,
+    );
+    const { deleteResource } = await import("./deletion");
+    await deleteResource(store.databaseConnection(), "session", scheduler.id);
+    assert.equal(await store.noteForTurn("note:1"), null);
+  } finally {
+    await store.close();
+  }
+});

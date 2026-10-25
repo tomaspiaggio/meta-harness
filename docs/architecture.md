@@ -292,6 +292,14 @@ before. Agents are told to push before moving. At most five self-queued steps
 run in a row without an outside message. On a task from another session the
 report waits for the last step.
 
+Sessions coordinate with notes (`session_note`): a message to another session
+that is not a task, for example two workers agreeing an interface. It arrives
+as a "Note from" turn (`session_notes` links it), may be answered with another
+note, and does not wake the planning session, which sees recent notes in
+`task_list`. Two sessions exchange at most 20 notes an hour. A note that
+unblocks the recipient's open task links to it when the agent reports, so the
+report reaches the planner. Planners give each new task a short title.
+
 ## Sessions handing work to sessions
 
 A planning session can hand work to the owner's other sessions with

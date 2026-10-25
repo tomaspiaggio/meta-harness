@@ -133,7 +133,7 @@ function folderContext(claim: ClaimedTurn, folder: string | undefined) {
   if (folder)
     return `${access} Work in the workspace folder ${folder}: run commands from there (cd into it) and follow its CLAUDE.md or AGENTS.md house rules. The current directory is only a private scratch folder for harness files such as DECISION_UPDATES.json.`;
   if (claim.workspace.folder)
-    return `${access} The workspace folder ${claim.workspace.folder} does not exist on this machine (${hostname()}). Do not recreate it or clone a substitute; tell the owner that this session should require a label of a machine that has it.`;
+    return `${access} The workspace folder ${claim.workspace.folder} does not exist on this machine (${hostname()}). For work that only needs the code, clone the repositories you need from their remotes into the current directory and push your branch when done. For work that needs that folder's local tools or data, use machines_list and continue_on to move to a machine that has them. Never create the folder itself here.`;
   return access;
 }
 function harnessContext(claim: ClaimedTurn, folder?: string) {

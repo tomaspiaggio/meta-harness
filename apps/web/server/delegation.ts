@@ -19,6 +19,13 @@ export async function delegationInstructions(
   store: HarnessStore,
   claim: ClaimedTurn,
 ): Promise<string | null> {
+  const note = await store.noteForTurn(claim.turn.id);
+  if (note) {
+    const sender = await store
+      .getSession(note.fromSessionId)
+      .catch(() => ({ title: "a deleted session", id: note.fromSessionId }));
+    return `[Meta Harness: this is a note from session "${sender.title}" (${sender.id}), another of the owner's sessions, to coordinate; it is not a new task from the owner. Act on it as far as it concerns your work. Reply with session_note to ${sender.id} only if it asks something or needs your answer; do not reply just to acknowledge. If it unblocks a task you are working on, continue that task and report with task_report as usual.]`;
+  }
   const link = await store.delegationForTurn(claim.turn.id);
   if (!link) return null;
   if (link.role === "report") {
@@ -26,7 +33,7 @@ export async function delegationInstructions(
     return `[Meta Harness: this message is the automatic report from session "${worker.title}" (${worker.id}) on task ${link.delegationId}, which you gave it (round ${link.round}). Review it against what you asked and the plan. Then either send feedback, an answer or the next step with session_send and task_id ${link.delegationId}; close it with task_close when the result is acceptable; or hand out new work. Keep work moving without the owner. ${OWNER_ONLY} End your reply with a short summary for the owner of where the overall plan stands.]`;
   }
   const planner = await store.getSession(link.fromSessionId);
-  return `[Meta Harness: this is ${link.role === "task" ? "a task" : link.role === "continue" ? "your own continuation of task" : "feedback or an answer on task"} ${link.delegationId} from session "${planner.title}" (${planner.id}), a planning session acting for the owner (round ${link.round}). Treat it as the owner's request. Work on it without waiting for anyone. If something is unclear, make the most reasonable assumption, note it, and continue; if you need an answer to continue at all, call task_report with status "question" and end your turn: the planning session answers, and asks the owner only if it cannot. ${OWNER_ONLY} Use your own subagents for parallel work; do not hand work to other sessions. Call task_report with status "progress" at meaningful checkpoints. When you finish, call task_report with status "done" (or "blocked") before ending the turn. ${REPORT_RULES}]`;
+  return `[Meta Harness: this is ${link.role === "task" ? "a task" : link.role === "continue" ? "your own continuation of task" : "feedback or an answer on task"} ${link.delegationId} from session "${planner.title}" (${planner.id}), a planning session acting for the owner (round ${link.round}). Treat it as the owner's request. Work on it without waiting for anyone. If something is unclear, make the most reasonable assumption, note it, and continue; if you need an answer to continue at all, call task_report with status "question" and end your turn: the planning session answers, and asks the owner only if it cannot. ${OWNER_ONLY} Use your own subagents for parallel work; do not hand work to other sessions. To coordinate with another session directly (agree an interface, ask what it changed), send it a session_note instead of asking the planning session to relay. Call task_report with status "progress" at meaningful checkpoints. When you finish, call task_report with status "done" (or "blocked") before ending the turn. ${REPORT_RULES}]`;
 }
 
 /** Results of finished task turns go back to the session that gave the task. */

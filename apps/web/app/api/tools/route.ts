@@ -151,6 +151,11 @@ const tools = [
       type: "object",
       properties: {
         session_id: { ...text, description: "Target session, for a new task" },
+        title: {
+          ...text,
+          description:
+            'For a new task: a short name the owner sees in task lists, 3-8 words, e.g. "A3 board power options"',
+        },
         task_id: {
           ...text,
           description: "An open task you gave, for feedback or answers",
@@ -158,6 +163,16 @@ const tools = [
         message: text,
       },
       required: ["message"],
+    },
+  },
+  {
+    name: "session_note",
+    description:
+      "Send a note to another of the owner's sessions to coordinate, for example to agree an interface, ask what it changed or tell it a branch is ready. It arrives there as a message and its agent may reply with session_note; the planning session is not woken. Use it instead of asking the planner to relay. Do not use it to hand out work (that is session_send, for planning sessions) or to acknowledge; write one self-contained note with what you need and by when. If you are waiting for the reply to continue a task, say so in task_report and end your turn: the reply arrives as a new message here.",
+    inputSchema: {
+      ...object,
+      properties: { session_id: text, message: text },
+      required: ["session_id", "message"],
     },
   },
   {
@@ -414,6 +429,7 @@ export async function POST(request: Request) {
             .slice(0, 32)}`,
           callerTurnId: turn.id,
           message: requiredText(args.message, "Message", 20000),
+          ...(typeof args.title === "string" ? { title: args.title } : {}),
           ...(typeof args.task_id === "string" && args.task_id
             ? { delegationId: args.task_id }
             : {
@@ -426,6 +442,21 @@ export async function POST(request: Request) {
           round: delegation.rounds,
           queued_turn: sent.id,
           note: "Queued. Its report will arrive in this session as a new message when that turn ends; finish your turn instead of waiting.",
+        };
+      } else if (parameters?.name === "session_note") {
+        const sent = await store.sendNote({
+          turnId: `note:${createHash("sha256")
+            .update(`${grant.turnId}:${String(id)}`)
+            .digest("hex")
+            .slice(0, 32)}`,
+          callerTurnId: turn.id,
+          toSessionId: requiredText(args.session_id, "Session ID", 100),
+          message: requiredText(args.message, "Message", 20000),
+        });
+        await flushDispatch();
+        result = {
+          queued_turn: sent.id,
+          note: "Sent. A reply, if any, arrives here as a new message. Continue other work or end your turn.",
         };
       } else if (parameters?.name === "continue_on") {
         const next = await store.continueOn({
@@ -476,9 +507,16 @@ export async function POST(request: Request) {
               ? "Progress recorded. Keep working."
               : "Recorded. It is sent to the session that gave the task when this turn ends.",
         };
-      } else if (parameters?.name === "task_list")
-        result = await store.delegationsForSession(session.id);
-      else if (parameters?.name === "task_close")
+      } else if (parameters?.name === "task_list") {
+        const tasks = await store.delegationsForSession(session.id);
+        result = {
+          tasks,
+          // Notes the sessions on these tasks exchanged, for the planner to follow.
+          notes: await store.notesAmong([
+            ...new Set(tasks.flatMap((task) => [task.from.id, task.to.id])),
+          ]),
+        };
+      } else if (parameters?.name === "task_close")
         result = await store.closeDelegation(
           requiredText(args.task_id, "Task ID", 100),
           session.id,

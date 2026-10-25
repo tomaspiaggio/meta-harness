@@ -107,6 +107,14 @@ const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 
 export const MAX_DELEGATION_ROUNDS = 6;
+/** Notes two sessions may exchange per hour, so they cannot loop forever. */
+export const MAX_NOTES_PER_HOUR = 20;
+export interface SessionNote {
+  turnId: string;
+  fromSessionId: string;
+  toSessionId: string;
+  createdAt: number;
+}
 /** Turns an agent may queue for itself in a row before an outside message. */
 export const MAX_CONTINUATIONS = 5;
 export const DELEGATION_REPORTS = [
@@ -1699,6 +1707,7 @@ ${blocks.reverse().join("\n\n---\n\n")}
     turnId: string;
     callerTurnId: string;
     message: string;
+    title?: string;
     toSessionId?: string;
     delegationId?: string;
   }): Promise<{ delegation: Delegation; turn: Turn }> {
@@ -1713,7 +1722,7 @@ ${blocks.reverse().join("\n\n---\n\n")}
       const callerRole = await this.delegationForTurn(caller.id);
       if (callerRole && callerRole.role !== "report")
         throw new HarnessError(
-          `This session is working on a task from another session; it cannot hand work to other sessions. Use your own subagents for parallel work, or report back with task_report.`,
+          `This session is working on a task from another session; it cannot hand work to other sessions. To coordinate with another session (agree an interface, ask what it changed), send it a note with session_note. Use your own subagents for parallel work, or report back with task_report.`,
           403,
         );
       const message = requiredText(input.message, "Message", 20000);
@@ -1753,7 +1762,9 @@ ${blocks.reverse().join("\n\n---\n\n")}
             id,
             caller.sessionId,
             toSessionId,
-            delegationTitle(message),
+            input.title?.trim()
+              ? delegationTitle(input.title)
+              : delegationTitle(message),
             now,
             now,
           );
@@ -1777,6 +1788,83 @@ ${blocks.reverse().join("\n\n---\n\n")}
         );
       return { delegation, turn };
     });
+  }
+  /**
+   * A note from one session to another: coordination between sessions (for
+   * example two workers agreeing an interface) without handing out work. It
+   * arrives as a message in the other session and does not wake the planner.
+   */
+  async sendNote(input: {
+    turnId: string;
+    callerTurnId: string;
+    toSessionId: string;
+    message: string;
+  }): Promise<Turn> {
+    const message = requiredText(input.message, "Message", 20000);
+    return this.transaction(async () => {
+      const existing = await this.noteForTurn(input.turnId);
+      if (existing) return await this.getTurn(input.turnId);
+      const caller = await this.getTurn(input.callerTurnId);
+      const target = await this.getSession(
+        requiredText(input.toSessionId, "Session ID", 100),
+      );
+      if (target.id === caller.sessionId)
+        throw new HarnessError("A session cannot send itself a note.");
+      const now = Date.now();
+      const recent = Number(
+        (
+          await this.db
+            .prepare(
+              "SELECT COUNT(*) AS count FROM session_notes WHERE ((fromSessionId = ? AND toSessionId = ?) OR (fromSessionId = ? AND toSessionId = ?)) AND createdAt > ?",
+            )
+            .get(
+              caller.sessionId,
+              target.id,
+              target.id,
+              caller.sessionId,
+              now - 3600000,
+            )
+        )?.count,
+      );
+      if (recent >= MAX_NOTES_PER_HOUR)
+        throw new HarnessError(
+          `These two sessions exchanged ${recent} notes in the last hour. Settle it in fewer, fuller notes, or ask the planning session or the owner.`,
+          429,
+        );
+      const turn = await this.createTurn(input.turnId, target.id, message);
+      await this.db
+        .prepare(
+          "INSERT INTO session_notes(turnId, fromSessionId, toSessionId, createdAt) VALUES (?, ?, ?, ?)",
+        )
+        .run(turn.id, caller.sessionId, target.id, now);
+      return turn;
+    });
+  }
+  async noteForTurn(turnId: string): Promise<SessionNote | null> {
+    const row = await this.db
+      .prepare("SELECT * FROM session_notes WHERE turnId = ?")
+      .get(turnId);
+    return row
+      ? {
+          turnId: String(row.turnId),
+          fromSessionId: String(row.fromSessionId),
+          toSessionId: String(row.toSessionId),
+          createdAt: Number(row.createdAt),
+        }
+      : null;
+  }
+  /** Recent notes sent or received by these sessions, newest first. */
+  async notesAmong(sessionIds: string[], limit = 30) {
+    if (!sessionIds.length) return [];
+    const marks = sessionIds.map(() => "?").join(", ");
+    return (await this.db
+      .prepare(
+        `SELECT session_notes.*, turns.status, substr(turns.prompt, 1, 300) AS preview FROM session_notes JOIN turns ON turns.id = session_notes.turnId WHERE fromSessionId IN (${marks}) OR toSessionId IN (${marks}) ORDER BY session_notes.createdAt DESC LIMIT ?`,
+      )
+      .all(...sessionIds, ...sessionIds, limit)) as unknown as (SessionNote & {
+      status: string;
+      preview: string;
+    })[];
   }
   /**
    * The agent continues this conversation in a new turn that only machines
@@ -1853,7 +1941,25 @@ ${blocks.reverse().join("\n\n---\n\n")}
     status: string,
     summary: string,
   ): Promise<Delegation> {
-    const link = await this.delegationForTurn(turnId);
+    let link = await this.delegationForTurn(turnId);
+    if (!link && (await this.noteForTurn(turnId))) {
+      // A note can unblock this session's task; its report then comes from
+      // this turn.
+      const turn = await this.getTurn(turnId);
+      const open = await this.db
+        .prepare(
+          "SELECT id, rounds FROM delegations WHERE toSessionId = ? AND status = 'open' ORDER BY updatedAt DESC LIMIT 1",
+        )
+        .get(turn.sessionId);
+      if (open) {
+        await this.db
+          .prepare(
+            "INSERT INTO delegation_turns(turnId, delegationId, role, round, createdAt) VALUES (?, ?, 'continue', ?, ?)",
+          )
+          .run(turnId, String(open.id), Number(open.rounds), Date.now());
+        link = await this.delegationForTurn(turnId);
+      }
+    }
     if (!link || link.role === "report")
       throw new HarnessError(
         "This turn is not working on a task from another session.",

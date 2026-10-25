@@ -39,6 +39,20 @@ function placement(workers: WorkerRecord[], required: string[]) {
     })),
   };
 }
+/** The session a note turn came from. */
+async function noteTag(
+  store: Awaited<ReturnType<typeof getStore>>,
+  turnId: string,
+) {
+  const note = await store.noteForTurn(turnId);
+  if (!note) return null;
+  const from = await store.getSession(note.fromSessionId).catch(() => null);
+  return {
+    from: from
+      ? { id: from.id, title: from.title, workspaceId: from.workspaceId }
+      : null,
+  };
+}
 export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
@@ -97,6 +111,7 @@ export async function GET(request: Request) {
                 publications: await store.decisionsForTurn(turn.id),
                 attachments: await store.attachmentsForTurn(turn.id),
                 delegation: await delegationTag(store, turn.id),
+                note: await noteTag(store, turn.id),
               })),
             )
           : [],

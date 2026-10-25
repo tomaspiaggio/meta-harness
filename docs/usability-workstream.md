@@ -176,7 +176,13 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
       from". Verified live with Codex: step 1 on one worker queued a step
       needing `asap7`, which waited while that machine was off and then ran
       there.
-- [ ] Owner: set the Litho folder, label the Mac, require it on the chip session.
+- [x] Tech workspace folder set to ~/Documents/Projects/litho; Mac worker runs 3 agents.
+- [x] Workers coordinate directly with `session_note` instead of asking the
+      planner to relay (Chip Code was blocked on B0 waiting for a relay).
+      Verified live with Codex: note, reply note, 25 s, planner not woken.
+- [x] Task lists show short titles the planner gives, not the prompt's first line.
+- [x] A machine without the workspace folder clones what it needs or moves to
+      one that has it, instead of stopping.
 
 ## Next: skills
 
