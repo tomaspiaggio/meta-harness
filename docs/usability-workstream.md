@@ -94,6 +94,8 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
       my CRM" produced an inactive schedule draft for review.
 - [x] `pnpm check`, `pnpm test` (with real-browser tests), `pnpm build`,
       `pnpm smoke`, `smoke:browser-live`, `smoke:worker-enrollment` pass locally.
+- [x] Redeployed `1d1e107` (native UI handling, user-agent cache) to the Pi and
+      the Mac worker after checking no turns or takeovers were active.
 - [x] Deployed `f91ac63` to the Pi: control and worker units point at
       `releases/f91ac63` (old checkouts kept; unit backups in
       `deployments/20261024-164555`). Pi check/test/build passed; Mac worker
