@@ -1,4 +1,4 @@
-import type { Page } from "patchright";
+import type { BrowserContext, Page } from "patchright";
 
 /**
  * Browser-native UI (passkey sheets, alert/confirm/prompt, select popups) is
@@ -7,13 +7,41 @@ import type { Page } from "patchright";
  */
 export type NativeNotice = { kind: string; message: string; at: number };
 
+// A string, not a function: bundlers can inject helpers that do not exist in
+// the page when a function is serialized.
+const noPasskeys = `
+(() => {
+  var credentials = navigator.credentials;
+  if (!credentials) return;
+  var deny = () => Promise.reject(new DOMException("Passkeys are not available in this browser.", "NotAllowedError"));
+  var get = credentials.get.bind(credentials);
+  var create = credentials.create.bind(credentials);
+  credentials.get = (options) => (options && options.publicKey ? deny() : get(options));
+  credentials.create = (options) => (options && options.publicKey ? deny() : create(options));
+  if (window.PublicKeyCredential) {
+    PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = () => Promise.resolve(false);
+    PublicKeyCredential.isConditionalMediationAvailable = () => Promise.resolve(false);
+  }
+})();
+`;
+
+/**
+ * Every page and frame reports that this browser has no passkeys, before any
+ * site script runs. Sites then offer a password or code instead of opening the
+ * browser's own passkey dialog, which never appears in the stream and, while
+ * open, makes Chrome ignore every click on the page.
+ */
+export async function disablePasskeys(context: BrowserContext) {
+  await context.addInitScript(noPasskeys);
+}
+
 export async function tameNativeUi(
   page: Page,
   notice: (value: NativeNotice) => void,
 ) {
-  // A silent virtual authenticator replaces the native passkey sheet. It holds
-  // no credentials, so sites fall back to "Try another way" / password. The CDP
-  // session must stay attached for the authenticator to exist.
+  // Backup for requests that bypass the init script: a silent virtual
+  // authenticator replaces the native passkey sheet. It holds no credentials,
+  // and the CDP session must stay attached for it to exist.
   try {
     const session = await page.context().newCDPSession(page);
     await session.send("WebAuthn.enable", { enableUI: false });

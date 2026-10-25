@@ -10,32 +10,139 @@ import { chooseAt, selectAt } from "./native";
 /** A failure whose message is safe and useful to show the person. */
 export class LiveInputError extends Error {}
 
-const credentialFields: Record<string, string> = {
-  username:
-    'input[type="email"], input[autocomplete~="username"], input[autocomplete~="email"], input[name*="email" i], input[name*="user" i], input[name*="login" i], input[id*="email" i], input[id*="user" i], input[id*="identifier" i]',
-  password: 'input[type="password"]',
-  code: 'input[autocomplete="one-time-code"], input[name*="code" i], input[name*="otp" i], input[name*="pin" i], input[id*="code" i], input[id*="otp" i], input[id*="pin" i], input[inputmode="numeric"], input[type="tel"]',
+export type PageField = {
+  ref: string;
+  label: string;
+  kind: "text" | "email" | "password" | "code" | "tel" | "number" | "select";
+  value?: string;
+  filled: boolean;
+  options?: { value: string; label: string }[];
 };
 
 /**
- * Sealed sign-in: the value arrives encrypted from the owner's browser, is typed
- * into the matching field and submitted, and is never stored, logged or
- * returned. Falls back to the focused field when the page uses unusual markup.
+ * The fields the page is asking for right now, read from its accessibility
+ * tree. The owner fills only what the agent could not; values already in the
+ * page are shown so they can be changed. Password values are never read back.
  */
-async function fillCredential(page: Page, field: string, value: string) {
-  let target = page
-    .locator(`${credentialFields[field]} >> visible=true`)
-    .first();
-  if (!(await target.count())) {
-    const focused = page.locator("input:focus, textarea:focus");
-    if (!(await focused.count()))
-      throw new LiveInputError(
-        `No ${field === "code" ? "code" : field} field is visible. Tap the field in the page first, then send again.`,
-      );
-    target = focused.first();
+export async function pageFields(page: Page): Promise<PageField[]> {
+  const snapshot = await page
+    .ariaSnapshot({ mode: "ai", timeout: 5000 })
+    .catch(() => "");
+  const fields: PageField[] = [];
+  for (const line of snapshot.split("\n")) {
+    const match = line.match(
+      /^\s*- (textbox|searchbox|spinbutton|combobox)(?: "([^"]{0,120})")?[^\n]*?\[ref=((?:f\d+)?e\d+)\]/,
+    );
+    if (!match) continue;
+    const details = await page
+      .locator(`aria-ref=${match[3]}`)
+      .evaluate((element) => {
+        const input = element as HTMLInputElement & HTMLSelectElement;
+        const tag = element.tagName.toLowerCase();
+        const style = getComputedStyle(element);
+        const box = element.getBoundingClientRect();
+        if (
+          !["input", "textarea", "select"].includes(tag) ||
+          input.disabled ||
+          input.readOnly ||
+          style.visibility === "hidden" ||
+          style.display === "none" ||
+          box.width < 2 ||
+          box.height < 2
+        )
+          return null;
+        const type = (input.type || "text").toLowerCase();
+        if (
+          [
+            "hidden",
+            "submit",
+            "button",
+            "reset",
+            "checkbox",
+            "radio",
+            "file",
+            "range",
+            "color",
+            "image",
+          ].includes(type)
+        )
+          return null;
+        const hint = `${input.autocomplete} ${input.name} ${input.id}`;
+        return {
+          tag,
+          type,
+          code:
+            /one-time-code/.test(input.autocomplete) ||
+            /\b(otp|code|pin|totp)\b|otp|pin$/i.test(hint),
+          label:
+            element.getAttribute("aria-label") ||
+            input.labels?.[0]?.textContent?.trim() ||
+            input.placeholder ||
+            input.name ||
+            "",
+          value: type === "password" ? "" : String(input.value ?? ""),
+          filled: Boolean(input.value),
+          options:
+            tag === "select"
+              ? Array.from(input.options)
+                  .slice(0, 200)
+                  .map((option) => ({
+                    value: option.value,
+                    label: (option.label || option.textContent || "")
+                      .trim()
+                      .slice(0, 120),
+                  }))
+              : undefined,
+        };
+      })
+      .catch(() => null);
+    if (!details) continue;
+    const kind: PageField["kind"] =
+      details.tag === "select"
+        ? "select"
+        : details.type === "password"
+          ? "password"
+          : details.code
+            ? "code"
+            : details.type === "email"
+              ? "email"
+              : details.type === "tel"
+                ? "tel"
+                : details.type === "number"
+                  ? "number"
+                  : "text";
+    fields.push({
+      ref: match[3],
+      label: (match[2] || details.label || "Field").slice(0, 120),
+      kind,
+      filled: details.filled,
+      ...(details.value ? { value: details.value.slice(0, 500) } : {}),
+      ...(details.options ? { options: details.options } : {}),
+    });
+    if (fields.length >= 20) break;
   }
-  await target.fill(value, { timeout: 5000 });
-  await target.press("Enter");
+  return fields;
+}
+
+/**
+ * Sealed fill: the value arrives encrypted from the owner's browser and is
+ * typed into that field. It is never stored, logged or returned.
+ */
+async function fillField(
+  page: Page,
+  ref: string,
+  value: string,
+  submit: boolean,
+) {
+  const target = page.locator(`aria-ref=${ref}`);
+  if (!(await target.count()))
+    throw new LiveInputError(
+      "That field is no longer on the page. The list was refreshed.",
+    );
+  if ((await target.evaluate((element) => element.tagName)) === "SELECT")
+    await target.selectOption(value, { timeout: 5000 });
+  else await target.fill(value, { timeout: 5000 });
+  if (submit) await target.press("Enter");
 }
 
 /**
@@ -141,6 +248,25 @@ export async function liveBrowser(
       await start();
     })().catch(() => {});
   });
+  // While the owner has control, keep the list of fields the page is asking
+  // for current, so the form follows the site step by step.
+  let fieldsSent = "";
+  const sendFields = async (force = false) => {
+    if (closed || assignment.identity.mode !== "human") return;
+    const value = JSON.stringify(await pageFields(page));
+    if (closed || (!force && value === fieldsSent)) return;
+    fieldsSent = value;
+    send({
+      type: "fields",
+      data: encryptBytes(peer.key, Buffer.from(value)),
+    });
+  };
+  const fieldPoll =
+    assignment.identity.mode === "human"
+      ? setInterval(() => void sendFields().catch(() => {}), 2500)
+      : null;
+  fieldPoll?.unref();
+  void sendFields().catch(() => {});
   let catalog = "";
   const heartbeat = setInterval(() => {
     touch();
@@ -256,14 +382,31 @@ export async function liveBrowser(
       ) {
         if (input.event === "down") await page.keyboard.down(input.key);
         else await page.keyboard.up(input.key);
+      } else if (input.type === "fields") {
+        await sendFields(true);
       } else if (
-        input.type === "credential" &&
-        ["username", "password", "code"].includes(input.field) &&
-        typeof input.value === "string" &&
-        input.value.length > 0 &&
-        input.value.length <= 512
+        input.type === "fill" &&
+        Array.isArray(input.fields) &&
+        input.fields.length <= 20
       ) {
-        await fillCredential(page, input.field, input.value);
+        const entries = input.fields.filter(
+          (item: { ref?: unknown; value?: unknown }) =>
+            typeof item?.ref === "string" &&
+            /^(?:f\d{1,4})?e\d{1,6}$/.test(item.ref) &&
+            typeof item.value === "string" &&
+            item.value.length <= 2000,
+        ) as { ref: string; value: string }[];
+        try {
+          for (const [index, item] of entries.entries())
+            await fillField(
+              page,
+              item.ref,
+              item.value,
+              input.submit === true && index === entries.length - 1,
+            );
+        } finally {
+          setTimeout(() => void sendFields(), 1200);
+        }
       } else if (input.type === "navigate" && typeof input.url === "string") {
         await host.liveNavigate(page, input.url);
       } else throw new Error("Unsupported live browser input.");
@@ -274,6 +417,7 @@ export async function liveBrowser(
       unsubscribe();
       stopNotices();
       clearInterval(heartbeat);
+      if (fieldPoll) clearInterval(fieldPoll);
       await cdp.send("Page.stopScreencast").catch(() => {});
       await cdp.detach().catch(() => {});
     },

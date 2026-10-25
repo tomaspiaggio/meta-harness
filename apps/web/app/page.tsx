@@ -632,18 +632,37 @@ function Conversation() {
             .map((request) => (
               <div
                 key={request.id}
-                className="my-4 grid gap-3 rounded-lg border border-warning bg-warning/5 p-4 text-sm"
+                className="my-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warning bg-warning/5 px-3 py-2 text-sm"
               >
-                <p className="font-medium">
-                  Sign-in needed — the agent is paused
+                <p className="min-w-0 flex-1">
+                  <span className="font-medium">Sign-in needed.</span>{" "}
+                  <span className="text-muted-foreground">
+                    {request.message}
+                  </span>
                 </p>
-                <p className="text-muted-foreground">{request.message}</p>
+                {!browserOpen && (
+                  <Button size="sm" onClick={() => setBrowserOpen(true)}>
+                    <Globe2 /> Sign in
+                  </Button>
+                )}
                 <Button
                   size="sm"
-                  className="justify-self-start"
-                  onClick={() => setBrowserOpen(true)}
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    void perform(async () => {
+                      await post("browser", {
+                        action: "dismiss",
+                        workspaceId,
+                        sessionId,
+                      });
+                      setBrowserOpen(false);
+                      await refresh.current();
+                      refreshTree();
+                    })
+                  }
                 >
-                  <Globe2 /> Open browser to sign in
+                  Dismiss
                 </Button>
               </div>
             ))}

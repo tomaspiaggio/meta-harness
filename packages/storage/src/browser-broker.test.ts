@@ -129,6 +129,9 @@ test("browser host loss prefers the task worker, fences old commands and keeps l
     const requests = await store.inputsForSession(session.id);
     assert.equal(requests.length, 1);
     assert.equal(requests[0].kind, "browser-login");
+    // A new message moves on: the card does not linger in the session.
+    await store.submitMessage("owner-moves-on", session.id, "Never mind");
+    assert.equal((await store.inputsForSession(session.id)).length, 0);
     // Both hosts are healthy; the Pi task should use its own browser.
     assert.equal((await broker.ensure("tech", pi.id)).workerId, pi.id);
     let identity = await broker.ensure("business", mac.id);

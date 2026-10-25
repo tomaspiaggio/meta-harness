@@ -665,6 +665,13 @@ export class HarnessStore extends ControlStore {
         prompt,
         interruptsTurnId,
       );
+      // A new message moves the conversation on; the agent asks again if it
+      // still needs a sign-in.
+      if (!previous)
+        await this.resolveBrowserLogins(
+          sessionId,
+          "Superseded by a new message",
+        );
       for (const attachmentId of attachmentIds)
         await this.db
           .prepare(
@@ -889,6 +896,13 @@ export class HarnessStore extends ControlStore {
     return (await this.db
       .prepare("SELECT * FROM input_requests WHERE id = ?")
       .get(id)) as unknown as InputRequest;
+  }
+  async resolveBrowserLogins(sessionId: string, response: string) {
+    await this.db
+      .prepare(
+        "UPDATE input_requests SET status = 'answered', response = ?, resolvedAt = ? WHERE sessionId = ? AND kind = 'browser-login' AND status = 'pending'",
+      )
+      .run(response, Date.now(), sessionId);
   }
   async inputsForSession(sessionId: string): Promise<InputRequest[]> {
     return (await this.db

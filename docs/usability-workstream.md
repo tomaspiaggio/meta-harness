@@ -80,8 +80,27 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
       home-screen app opens without Safari's bar. Needs a check on the real iPhone.
 - [x] Sliding top nav replaced on phones by the section name plus the sections in
       the drawer, which closes after navigating.
-- [x] Phone layout: full-screen browser view, no input zoom on focus, panel
-      controls wrap. Checked at 390×844.
+- [x] Phone layout: no input zoom on focus, panel controls wrap. Checked at
+      390×844.
+
+## Round 3 (owner feedback, 2026-10-25)
+
+- [x] Google sign-in stuck on "Verifying it's you" on the Mac worker: taps on
+      "Try another way" did nothing (reproduced through the live UI). Every page
+      now reports that passkeys are unavailable before site scripts run, so
+      Google shows "Continue / Try another way" instead of opening Chrome's
+      invisible passkey dialog; "Try another way" leads to the password option.
+- [x] Tapping a workspace in the phone drawer closed the drawer. It now expands
+      the workspace's sessions in place; "New session" or a session navigates.
+- [x] The browser no longer takes over the screen or opens by itself. It is a
+      card in the conversation, opened from the sign-in card or "Watch live",
+      with an optional Full screen.
+- [x] Fixed email/password/code inputs replaced by the fields the page is
+      asking for right now (read from the page, refreshed as it changes), with
+      the right phone keyboard. Values already in the page are shown; only
+      fields you change are sent. The agent fills what it knows first.
+- [x] The sign-in card no longer stays forever: it is compact, has Dismiss, and
+      a new message in the session resolves it.
 
 ## Found while testing
 

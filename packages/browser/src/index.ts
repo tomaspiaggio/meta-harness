@@ -134,7 +134,7 @@ import { installCursor } from "./cursor";
 import { browserDisplay } from "./display";
 import { BrowserDownloads } from "./downloads";
 import { ExtensionRelay, extensionPairing } from "./extension-relay";
-import { type NativeNotice, tameNativeUi } from "./native";
+import { disablePasskeys, type NativeNotice, tameNativeUi } from "./native";
 import { readGoogleSheet } from "./sheets";
 
 export class BrowserActionNotStarted extends Error {}
@@ -488,6 +488,7 @@ export class BrowserHost {
       context.setDefaultTimeout(10000);
       await this.restrictNetwork(context);
       await installCursor(context);
+      await disablePasskeys(context);
       if (identity.stateCipher) {
         const state = openState<{
           cookies: Parameters<BrowserContext["addCookies"]>[0];

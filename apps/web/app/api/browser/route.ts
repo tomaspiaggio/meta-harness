@@ -112,6 +112,13 @@ export async function POST(request: Request) {
         ),
       });
     }
+    if (body.action === "dismiss") {
+      await store.resolveBrowserLogins(
+        requiredText(body.sessionId, "Session ID", 100),
+        "Dismissed",
+      );
+      return Response.json({ ok: true });
+    }
     const identity = await broker.ensure(workspaceId);
     if (body.action === "takeover")
       return Response.json({

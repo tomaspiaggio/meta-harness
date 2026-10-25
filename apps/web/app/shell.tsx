@@ -353,12 +353,16 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
                     >
                       <Link
                         href={conversationHref(workspace.id)}
-                        onClick={() =>
+                        onClick={(event) => {
+                          // On a phone the drawer closes after navigating, so
+                          // a workspace tap only opens its sessions; "New
+                          // session" or a session navigates.
+                          if (isMobile) event.preventDefault();
                           setExpanded((state) => ({
                             ...state,
-                            [workspace.id]: true,
-                          }))
-                        }
+                            [workspace.id]: isMobile ? !open : true,
+                          }));
+                        }}
                       >
                         {open ? <FolderOpen /> : <Folder />}
                         <span className="truncate">{workspace.name}</span>

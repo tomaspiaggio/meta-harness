@@ -65,7 +65,6 @@ export function BrowserPanel({
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [controlling, setControlling] = useState(false);
-  const [typed, setTyped] = useState("");
   const [notice, setNotice] = useState("");
   const [zoomed, setZoomed] = useState(false);
   const [tap, setTap] = useState<{ x: number; y: number; key: number } | null>(
@@ -91,7 +90,9 @@ export function BrowserPanel({
       disabled: boolean;
     }[];
   } | null>(null);
-  const [dismissed, setDismissed] = useState(false);
+  const [fields, setFields] = useState<PageField[] | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const card = useRef<HTMLElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   // Phones only open a keyboard for a focused text field, never for a canvas.
   const keyboard = useRef<HTMLTextAreaElement>(null);
@@ -117,7 +118,8 @@ export function BrowserPanel({
   const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleRef = useRef(false);
   const wheelHandler = useRef<(event: WheelEvent) => void>(() => {});
-  const visible = open || (needsLogin && !dismissed);
+  // The browser is for when something needs a person; it never opens itself.
+  const visible = open;
   const site = (() => {
     try {
       return new URL(url || browser?.lastUrl || "").hostname.replace(
@@ -130,8 +132,10 @@ export function BrowserPanel({
   })();
   visibleRef.current = visible;
   useEffect(() => {
-    if (!needsLogin) setDismissed(false);
-  }, [needsLogin]);
+    if (visible)
+      card.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    else setExpanded(false);
+  }, [visible]);
 
   async function request(body: Record<string, unknown>) {
     const response = await fetch("/api/browser", {
@@ -221,6 +225,7 @@ export function BrowserPanel({
       const ws = new WebSocket(target);
       socket.current = ws;
       setControlling(takeControl);
+      setFields(null);
       held.current.clear();
       let streamKey: CryptoKey | null = null;
       ws.onmessage = async (event) => {
@@ -248,9 +253,14 @@ export function BrowserPanel({
             return;
           }
           if (
-            ["downloads", "download", "notice", "select", "targets"].includes(
-              message.type,
-            ) &&
+            [
+              "downloads",
+              "download",
+              "notice",
+              "select",
+              "targets",
+              "fields",
+            ].includes(message.type) &&
             streamKey
           ) {
             const decrypted = await crypto.subtle.decrypt(
@@ -265,6 +275,7 @@ export function BrowserPanel({
               );
             else if (message.type === "select") setPicker(value);
             else if (message.type === "targets") setTargets(value);
+            else if (message.type === "fields") setFields(value);
             else if (message.type === "downloads") setDownloads(value);
             else {
               const active = downloading.current;
@@ -539,601 +550,632 @@ export function BrowserPanel({
   const activity = !onSteps && steps.length > 0 && (
     <BrowserSteps steps={steps} />
   );
-  if (!visible || typeof document === "undefined") return activity;
+  if (!visible) return activity;
+  const close = () => {
+    if (controlling) void release().then(() => onOpenChange(false));
+    else onOpenChange(false);
+  };
   return (
     <>
-      {createPortal(
-        <section
-          aria-label="Workspace browser"
-          onKeyDownCapture={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              if (controlling) void release();
-              else {
-                setDismissed(true);
-                onOpenChange(false);
-              }
-            }
-          }}
-          className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-card pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] sm:inset-auto sm:bottom-4 sm:right-4 sm:top-20 sm:w-[calc(100vw-2rem)] sm:max-w-6xl sm:rounded-xl sm:border sm:pt-0 sm:pb-0 sm:shadow-2xl lg:left-[18rem] lg:w-auto"
-        >
-          <div className="flex flex-wrap items-center gap-2 border-b p-3">
-            <strong className="text-sm" title={browser?.name}>
-              Browser
-            </strong>
-            <span className="text-xs text-muted-foreground">{host}</span>
+      <section
+        ref={card}
+        aria-label="Workspace browser"
+        onKeyDownCapture={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            if (expanded) setExpanded(false);
+            else if (controlling) void release();
+            else close();
+          }
+        }}
+        className={
+          expanded
+            ? "fixed inset-0 z-50 flex flex-col overflow-y-auto bg-card pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+            : "my-4 flex flex-col overflow-hidden rounded-lg border bg-card text-sm"
+        }
+      >
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-2">
+          <strong className="text-sm" title={browser?.name}>
+            Browser
+          </strong>
+          <span
+            role="status"
+            data-testid="browser-stream-status"
+            className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+          >
             <span
-              role="status"
-              data-testid="browser-stream-status"
-              className="flex items-center gap-1.5 text-xs"
-            >
-              <span
-                aria-hidden
-                className={`size-2 rounded-full ${phase === "Live" ? "bg-success" : phase === "Disconnected" ? "bg-destructive" : "bg-warning"}`}
-              />
+              aria-hidden
+              className={`size-2 shrink-0 rounded-full ${phase === "Live" ? "bg-success" : phase === "Disconnected" ? "bg-destructive" : "bg-warning"}`}
+            />
+            <span className="truncate">
               {phase} · {controlling ? "You have control" : "Watching"}
               {latency !== null && controlling ? ` · ${latency} ms` : ""}
+              {host ? ` · ${host}` : ""}
             </span>
-            <div className="ml-auto flex flex-wrap justify-end gap-2">
-              {phase === "Disconnected" && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => void connect(false)}
-                >
-                  Reconnect
-                </Button>
-              )}
-              {controlling ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => void release()}
-                >
-                  Give control back
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  variant={needsLogin ? "default" : "outline"}
-                  disabled={busy}
-                  onClick={() => void connect(true)}
-                >
-                  {needsLogin ? "1. Take control to sign in" : "Take control"}
-                </Button>
-              )}
-              {needsLogin && (
-                <Button
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => void release(true)}
-                >
-                  {controlling ? "2. Done — continue task" : "Continue task"}
-                </Button>
-              )}
+          </span>
+          <div className="ml-auto flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-pressed={expanded}
+              onClick={() => setExpanded(!expanded)}
+            >
+              {expanded ? "Shrink" : "Full screen"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="Close browser view"
+              onClick={close}
+            >
+              <X />
+            </Button>
+          </div>
+        </div>
+        {needsLogin && (
+          <p
+            role="note"
+            className="border-b bg-warning/10 px-3 py-2 text-xs text-muted-foreground"
+          >
+            <strong className="font-medium text-foreground">
+              The agent is waiting for you to sign in
+              {site ? ` to ${site}` : ""}.
+            </strong>{" "}
+            {controlling
+              ? "Fill what the page asks for below, or tap the page. Press Continue task once you see the signed-in page."
+              : "Take control to sign in. Your password goes only to the site; the agent never sees it."}
+          </p>
+        )}
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+          {phase === "Disconnected" && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void connect(false)}
+            >
+              Reconnect
+            </Button>
+          )}
+          {controlling ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void release()}
+            >
+              Give control back
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant={needsLogin ? "default" : "outline"}
+              disabled={busy}
+              onClick={() => void connect(true)}
+            >
+              Take control
+            </Button>
+          )}
+          {needsLogin && (
+            <Button
+              size="sm"
+              variant={controlling ? "default" : "outline"}
+              disabled={busy}
+              onClick={() => void release(true)}
+            >
+              Continue task
+            </Button>
+          )}
+          {controlling && (
+            <>
               <Button
                 size="sm"
                 variant="ghost"
-                aria-label="Close browser view"
-                onClick={() => {
-                  if (controlling)
-                    void release().then(() => {
-                      setDismissed(true);
-                      onOpenChange(false);
-                    });
-                  else {
-                    setDismissed(true);
-                    onOpenChange(false);
-                  }
-                }}
-              >
-                <X />
-                <span className="hidden sm:inline">Close</span>
-              </Button>
-            </div>
-          </div>
-          {needsLogin && (
-            <div
-              role="note"
-              className="grid gap-1 border-b bg-warning/10 px-3 py-2 text-sm"
-            >
-              <strong className="font-medium">
-                The agent is paused until you sign in
-                {site ? ` to ${site}` : ""}.
-              </strong>
-              <span className="text-xs text-muted-foreground">
-                {controlling
-                  ? `Use “Sign in privately” below, or tap and type on the page.${/google/.test(site) ? " If Google asks for a passkey, tap “Try another way” and use your password." : ""} When you see the signed-in page, press Done — continue task.`
-                  : "Press Take control, complete the login in this browser, then press Continue task. Your password goes only to the site; the agent and conversation never see it."}
-              </span>
-            </div>
-          )}
-          {controlling && downloads.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm">
-              <span>Downloads on this worker:</span>
-              {downloads.map((item) => (
-                <Button
-                  key={item.id}
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    downloading.current = {
-                      id: item.id,
-                      chunks: [],
-                      offset: 0,
-                    };
-                    input({ type: "download", id: item.id, offset: 0 });
-                  }}
-                >
-                  Download {item.name}
-                </Button>
-              ))}
-            </div>
-          )}
-          <form
-            className="flex items-center gap-2 border-b px-3 py-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              input({
-                type: "navigate",
-                url: /^https?:/.test(url) ? url : `https://${url}`,
-              });
-            }}
-          >
-            <Input
-              aria-label="Browser address"
-              placeholder="Address"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              disabled={!controlling}
-              className="h-8 border-0 bg-transparent text-xs"
-            />
-            {controlling && (
-              <Button size="sm" variant="ghost" type="submit">
-                Go
-              </Button>
-            )}
-          </form>
-          {error && (
-            <div className="p-3">
-              <ErrorNote>{error}</ErrorNote>
-            </div>
-          )}
-          <div
-            className={`relative flex min-h-0 flex-1 bg-muted sm:bg-neutral-950 ${zoomed ? "items-start justify-start overflow-auto" : "items-center justify-center"}`}
-            aria-busy={!hasFrame}
-          >
-            <canvas
-              ref={canvas}
-              width={1280}
-              height={800}
-              tabIndex={0}
-              aria-label="Remote browser"
-              data-ready={hasFrame}
-              className={
-                zoomed
-                  ? "block h-auto w-[250%] max-w-none outline-none"
-                  : "block h-auto max-h-full w-auto max-w-full touch-none outline-none focus:ring-2 focus:ring-primary"
-              }
-              // Zoomed, one finger pans; a tap (no movement) still clicks.
-              style={zoomed ? { touchAction: "pan-x pan-y" } : undefined}
-              onPointerDown={(event) => {
-                if (!controlling) return;
-                if (event.pointerType === "touch") {
-                  touchStart.current = { x: event.clientX, y: event.clientY };
-                  return;
-                }
-                event.currentTarget.setPointerCapture(event.pointerId);
-                pointer(event, "mousePressed");
-              }}
-              onPointerUp={(event) => {
-                if (event.pointerType === "touch") {
-                  const start = touchStart.current;
-                  touchStart.current = null;
-                  if (
-                    !controlling ||
-                    !start ||
-                    Math.hypot(
-                      event.clientX - start.x,
-                      event.clientY - start.y,
-                    ) > 10
-                  )
-                    return;
-                  // Taps click on release, so a pan never leaves the remote
-                  // mouse pressed.
-                  pointer(event, "mousePressed");
-                  pointer(event, "mouseReleased");
-                  const box =
-                    event.currentTarget.parentElement?.getBoundingClientRect();
-                  if (box)
-                    setTap({
-                      x:
-                        event.clientX -
-                        box.left +
-                        (event.currentTarget.parentElement?.scrollLeft ?? 0),
-                      y:
-                        event.clientY -
-                        box.top +
-                        (event.currentTarget.parentElement?.scrollTop ?? 0),
-                      key: Date.now(),
-                    });
-                } else pointer(event, "mouseReleased");
-                // Focus inside the tap so iOS/Android show the keyboard; typed
-                // characters are forwarded to whatever the tap focused remotely.
-                if (controlling && event.pointerType !== "mouse")
-                  keyboard.current?.focus({ preventScroll: true });
-              }}
-              onPointerCancel={() => {
-                touchStart.current = null;
-              }}
-              onPointerMove={(event) => {
-                if (
-                  controlling &&
-                  event.pointerType !== "touch" &&
-                  Date.now() - hoverAt.current > 35
-                ) {
-                  hoverAt.current = Date.now();
-                  pointer(event, "mouseMoved");
-                }
-              }}
-              onContextMenu={(event) => event.preventDefault()}
-              onKeyDown={(event) => {
-                if (!controlling) return;
-                event.preventDefault();
-                event.stopPropagation();
-                if (event.key === "Escape") {
-                  void release();
-                  return;
-                }
-                if (
-                  event.key.length === 1 &&
-                  !event.ctrlKey &&
-                  !event.metaKey &&
-                  !event.altKey
-                )
-                  input({ type: "text", text: event.key });
-                else {
-                  held.current.add(event.key);
-                  input({
-                    type: "key",
-                    event: "down",
-                    key: event.key === " " ? "Space" : event.key,
-                  });
-                }
-              }}
-              onKeyUp={(event) => {
-                if (held.current.delete(event.key))
-                  input({ type: "key", event: "up", key: event.key });
-              }}
-              onBlur={() => {
-                for (const key of held.current)
-                  input({ type: "key", event: "up", key });
-                held.current.clear();
-              }}
-              onPaste={(event) => {
-                if (controlling) {
-                  event.preventDefault();
-                  input({
-                    type: "text",
-                    text: event.clipboardData.getData("text/plain"),
-                  });
-                }
-              }}
-            />
-            {controlling && (
-              <textarea
-                ref={keyboard}
-                aria-label="Phone keyboard for the remote page"
-                autoCapitalize="off"
-                autoCorrect="off"
-                autoComplete="off"
-                spellCheck={false}
-                rows={1}
-                className="pointer-events-none absolute bottom-0 left-0 h-8 w-full resize-none opacity-0"
-                style={{ fontSize: 16 }}
-                onInput={(event) => {
-                  const value = event.currentTarget.value;
-                  event.currentTarget.value = "";
-                  if (value) input({ type: "text", text: value });
-                }}
-                onKeyDown={(event) => {
-                  // Keys that produce no text still need to reach the page.
-                  if (["Backspace", "Enter", "Tab"].includes(event.key)) {
-                    event.preventDefault();
-                    input({ type: "key", event: "down", key: event.key });
-                    input({ type: "key", event: "up", key: event.key });
-                  }
-                }}
-              />
-            )}
-            {tap && (
-              <span
-                key={tap.key}
-                aria-hidden
-                className="pointer-events-none absolute size-10 -translate-x-1/2 -translate-y-1/2 animate-ping rounded-full border-4 border-primary"
-                style={{ left: tap.x, top: tap.y }}
-              />
-            )}
-            {targets && (
-              <div
-                role="dialog"
-                aria-label="Buttons on this page"
-                className="fixed inset-x-0 bottom-0 z-[60] max-h-[70vh] overflow-y-auto rounded-t-xl border-t bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-sm shadow-2xl sm:absolute sm:max-h-[75%]"
-              >
-                <div className="mb-2 flex items-center justify-between">
-                  <strong>Buttons and links on this page</strong>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setTargets(null)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-                {!targets.length && (
-                  <p className="text-muted-foreground">
-                    No buttons found. Tap the page directly or use Zoom.
-                  </p>
-                )}
-                <ul className="grid gap-1">
-                  {targets.map((target) => (
-                    <li key={target.ref}>
-                      <button
-                        type="button"
-                        className="w-full rounded-md px-3 py-2.5 text-left hover:bg-accent"
-                        onClick={() => {
-                          input({ type: "press-target", ref: target.ref });
-                          setTargets(null);
-                        }}
-                      >
-                        {target.name}
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          {target.role}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {notice && (
-              <div
-                role="status"
-                className="absolute inset-x-2 top-2 flex items-start gap-2 rounded-md bg-background/95 p-2 text-xs shadow"
-              >
-                <span className="min-w-0 flex-1">{notice}</span>
-                <button
-                  type="button"
-                  aria-label="Dismiss notice"
-                  onClick={() => setNotice("")}
-                >
-                  <X className="size-4" />
-                </button>
-              </div>
-            )}
-            {picker && (
-              <div
-                role="dialog"
-                aria-label={picker.label}
-                className="fixed inset-x-0 bottom-0 z-[60] max-h-[70vh] overflow-y-auto rounded-t-xl border-t bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-sm shadow-2xl sm:absolute sm:max-h-[70%]"
-              >
-                <div className="mb-2 flex items-center justify-between">
-                  <strong>{picker.label}</strong>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setPicker(null)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-                <ul className="grid gap-1">
-                  {picker.options.map((option) => (
-                    <li key={`${option.value}:${option.label}`}>
-                      <button
-                        type="button"
-                        disabled={option.disabled}
-                        className={`w-full rounded-md px-3 py-2 text-left hover:bg-accent disabled:opacity-40 ${option.selected ? "bg-accent font-medium" : ""}`}
-                        onClick={() => {
-                          input({
-                            type: "choose",
-                            x: picker.x,
-                            y: picker.y,
-                            value: option.value,
-                          });
-                          setPicker(null);
-                        }}
-                      >
-                        {option.label || option.value || "(empty)"}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {!hasFrame && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-white">
-                {phase === "Disconnected"
-                  ? "Stream disconnected. Reconnect to view the browser."
-                  : "Connecting to the browser…"}
-              </div>
-            )}
-          </div>
-          {controlling && (
-            <div className="flex gap-2 border-t px-3 py-2">
-              <Button
-                size="sm"
-                variant="outline"
                 onClick={() => input({ type: "targets" })}
               >
                 Buttons on this page
               </Button>
               <Button
                 size="sm"
-                variant="outline"
+                variant="ghost"
                 aria-pressed={zoomed}
                 onClick={() => setZoomed(!zoomed)}
               >
                 {zoomed ? "Fit page" : "Zoom in"}
               </Button>
+            </>
+          )}
+        </div>
+        {error && (
+          <div className="px-3 pb-2">
+            <ErrorNote>{error}</ErrorNote>
+          </div>
+        )}
+        {controlling && <PageFields fields={fields} send={input} />}
+        {controlling && downloads.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2">
+            <span>Downloads on this worker:</span>
+            {downloads.map((item) => (
+              <Button
+                key={item.id}
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  downloading.current = {
+                    id: item.id,
+                    chunks: [],
+                    offset: 0,
+                  };
+                  input({ type: "download", id: item.id, offset: 0 });
+                }}
+              >
+                Download {item.name}
+              </Button>
+            ))}
+          </div>
+        )}
+        <form
+          className="flex items-center gap-2 border-t px-3 py-1"
+          onSubmit={(event) => {
+            event.preventDefault();
+            input({
+              type: "navigate",
+              url: /^https?:/.test(url) ? url : `https://${url}`,
+            });
+          }}
+        >
+          <Input
+            aria-label="Browser address"
+            placeholder="Address"
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            disabled={!controlling}
+            className="h-8 border-0 bg-transparent px-0 text-xs shadow-none"
+          />
+          {controlling && (
+            <Button size="sm" variant="ghost" type="submit">
+              Go
+            </Button>
+          )}
+        </form>
+        <div
+          className={`relative flex bg-muted ${expanded ? "min-h-0 flex-1" : "aspect-[16/10] max-h-[60vh]"} ${zoomed ? "items-start justify-start overflow-auto" : "items-center justify-center"}`}
+          aria-busy={!hasFrame}
+        >
+          <canvas
+            ref={canvas}
+            width={1280}
+            height={800}
+            tabIndex={0}
+            aria-label="Remote browser"
+            data-ready={hasFrame}
+            className={
+              zoomed
+                ? "block h-auto w-[250%] max-w-none outline-none"
+                : "block h-auto max-h-full w-auto max-w-full touch-none outline-none focus:ring-2 focus:ring-primary"
+            }
+            // Zoomed, one finger pans; a tap (no movement) still clicks.
+            style={zoomed ? { touchAction: "pan-x pan-y" } : undefined}
+            onPointerDown={(event) => {
+              if (!controlling) return;
+              if (event.pointerType === "touch") {
+                touchStart.current = { x: event.clientX, y: event.clientY };
+                return;
+              }
+              event.currentTarget.setPointerCapture(event.pointerId);
+              pointer(event, "mousePressed");
+            }}
+            onPointerUp={(event) => {
+              if (event.pointerType === "touch") {
+                const start = touchStart.current;
+                touchStart.current = null;
+                if (
+                  !controlling ||
+                  !start ||
+                  Math.hypot(event.clientX - start.x, event.clientY - start.y) >
+                    10
+                )
+                  return;
+                // Taps click on release, so a pan never leaves the remote
+                // mouse pressed.
+                pointer(event, "mousePressed");
+                pointer(event, "mouseReleased");
+                const box =
+                  event.currentTarget.parentElement?.getBoundingClientRect();
+                if (box)
+                  setTap({
+                    x:
+                      event.clientX -
+                      box.left +
+                      (event.currentTarget.parentElement?.scrollLeft ?? 0),
+                    y:
+                      event.clientY -
+                      box.top +
+                      (event.currentTarget.parentElement?.scrollTop ?? 0),
+                    key: Date.now(),
+                  });
+              } else pointer(event, "mouseReleased");
+              // Focus inside the tap so iOS/Android show the keyboard; typed
+              // characters are forwarded to whatever the tap focused remotely.
+              if (controlling && event.pointerType !== "mouse")
+                keyboard.current?.focus({ preventScroll: true });
+            }}
+            onPointerCancel={() => {
+              touchStart.current = null;
+            }}
+            onPointerMove={(event) => {
+              if (
+                controlling &&
+                event.pointerType !== "touch" &&
+                Date.now() - hoverAt.current > 35
+              ) {
+                hoverAt.current = Date.now();
+                pointer(event, "mouseMoved");
+              }
+            }}
+            onContextMenu={(event) => event.preventDefault()}
+            onKeyDown={(event) => {
+              if (!controlling) return;
+              event.preventDefault();
+              event.stopPropagation();
+              if (event.key === "Escape") {
+                void release();
+                return;
+              }
+              if (
+                event.key.length === 1 &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                !event.altKey
+              )
+                input({ type: "text", text: event.key });
+              else {
+                held.current.add(event.key);
+                input({
+                  type: "key",
+                  event: "down",
+                  key: event.key === " " ? "Space" : event.key,
+                });
+              }
+            }}
+            onKeyUp={(event) => {
+              if (held.current.delete(event.key))
+                input({ type: "key", event: "up", key: event.key });
+            }}
+            onBlur={() => {
+              for (const key of held.current)
+                input({ type: "key", event: "up", key });
+              held.current.clear();
+            }}
+            onPaste={(event) => {
+              if (controlling) {
+                event.preventDefault();
+                input({
+                  type: "text",
+                  text: event.clipboardData.getData("text/plain"),
+                });
+              }
+            }}
+          />
+          {controlling && (
+            <textarea
+              ref={keyboard}
+              aria-label="Phone keyboard for the remote page"
+              autoCapitalize="off"
+              autoCorrect="off"
+              autoComplete="off"
+              spellCheck={false}
+              rows={1}
+              className="pointer-events-none absolute bottom-0 left-0 h-8 w-full resize-none opacity-0"
+              style={{ fontSize: 16 }}
+              onInput={(event) => {
+                const value = event.currentTarget.value;
+                event.currentTarget.value = "";
+                if (value) input({ type: "text", text: value });
+              }}
+              onKeyDown={(event) => {
+                // Keys that produce no text still need to reach the page.
+                if (["Backspace", "Enter", "Tab"].includes(event.key)) {
+                  event.preventDefault();
+                  input({ type: "key", event: "down", key: event.key });
+                  input({ type: "key", event: "up", key: event.key });
+                }
+              }}
+            />
+          )}
+          {tap && (
+            <span
+              key={tap.key}
+              aria-hidden
+              className="pointer-events-none absolute size-10 -translate-x-1/2 -translate-y-1/2 animate-ping rounded-full border-4 border-primary"
+              style={{ left: tap.x, top: tap.y }}
+            />
+          )}
+          {notice && (
+            <div
+              role="status"
+              className="absolute inset-x-2 top-2 flex items-start gap-2 rounded-md bg-background/95 p-2 text-xs shadow"
+            >
+              <span className="min-w-0 flex-1">{notice}</span>
+              <button
+                type="button"
+                aria-label="Dismiss notice"
+                onClick={() => setNotice("")}
+              >
+                <X className="size-4" />
+              </button>
             </div>
           )}
-          {controlling && <SealedSignIn send={input} />}
-          {controlling && (
-            <form
-              className="flex items-center gap-2 border-t px-3 py-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (typed) input({ type: "text", text: typed });
-                setTyped("");
-              }}
-            >
-              <Input
-                aria-label="Type into the page"
-                placeholder="Tap a field on the page, then type here"
-                value={typed}
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-                onChange={(event) => setTyped(event.target.value)}
-                className="h-9 min-w-0 flex-1 text-base sm:text-sm"
-              />
-              <Button size="sm" type="submit" variant="outline">
-                Type
-              </Button>
-              {(["Backspace", "Tab", "Enter"] as const).map((key) => (
-                <Button
-                  key={key}
-                  size="sm"
+          {!hasFrame && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4 text-center text-sm text-muted-foreground">
+              {phase === "Disconnected"
+                ? "Stream disconnected. Reconnect to view the browser."
+                : "Connecting to the browser…"}
+            </div>
+          )}
+        </div>
+        <p className="px-3 py-2 text-xs text-muted-foreground">
+          {controlling
+            ? "The agent is paused while you have control. Tap or click the page; typing and paste go to the field you tapped."
+            : "Read-only live view. Watching never interrupts the agent."}
+        </p>
+      </section>
+      {targets && (
+        <Sheet
+          title="Buttons and links on this page"
+          onClose={() => setTargets(null)}
+        >
+          {!targets.length && (
+            <p className="text-muted-foreground">
+              No buttons found. Tap the page directly or use Zoom.
+            </p>
+          )}
+          <ul className="grid gap-1">
+            {targets.map((target) => (
+              <li key={target.ref}>
+                <button
                   type="button"
-                  variant="ghost"
+                  className="w-full rounded-md px-3 py-2.5 text-left hover:bg-accent"
                   onClick={() => {
-                    input({ type: "key", event: "down", key });
-                    input({ type: "key", event: "up", key });
+                    input({ type: "press-target", ref: target.ref });
+                    setTargets(null);
                   }}
                 >
-                  {key === "Backspace" ? "⌫" : key}
-                </Button>
-              ))}
-            </form>
-          )}
-          <p className="px-3 py-2 text-xs text-muted-foreground">
-            {controlling
-              ? "You control the browser and the agent is paused. Click and type on the page (paste works). Esc or Give control back returns it without sending a message."
-              : "Live, read-only view of what the agent sees. Watching never interrupts the agent, and closing sends nothing."}
-          </p>
-        </section>,
-        document.body,
+                  {target.name}
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    {target.role}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Sheet>
+      )}
+      {picker && (
+        <Sheet title={picker.label} onClose={() => setPicker(null)}>
+          <ul className="grid gap-1">
+            {picker.options.map((option) => (
+              <li key={`${option.value}:${option.label}`}>
+                <button
+                  type="button"
+                  disabled={option.disabled}
+                  className={`w-full rounded-md px-3 py-2 text-left hover:bg-accent disabled:opacity-40 ${option.selected ? "bg-accent font-medium" : ""}`}
+                  onClick={() => {
+                    input({
+                      type: "choose",
+                      x: picker.x,
+                      y: picker.y,
+                      value: option.value,
+                    });
+                    setPicker(null);
+                  }}
+                >
+                  {option.label || option.value || "(empty)"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Sheet>
       )}
       {activity}
     </>
   );
 }
 
-const sealedFields = [
-  {
-    field: "username",
-    label: "Email or username",
-    type: "email",
-    autoComplete: "username",
-  },
-  {
-    field: "password",
-    label: "Password",
-    type: "password",
-    autoComplete: "current-password",
-  },
-  {
-    field: "code",
-    label: "Verification code",
-    type: "text",
-    autoComplete: "one-time-code",
-  },
-] as const;
+function Sheet({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      role="dialog"
+      aria-label={title}
+      className="fixed inset-x-0 bottom-0 z-[60] mx-auto max-h-[70vh] w-full max-w-xl overflow-y-auto rounded-t-xl border bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-sm shadow-2xl"
+    >
+      <div className="mb-2 flex items-center justify-between">
+        <strong>{title}</strong>
+        <Button size="sm" variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+      </div>
+      {children}
+    </div>,
+    document.body,
+  );
+}
+
+type PageField = {
+  ref: string;
+  label: string;
+  kind: "text" | "email" | "password" | "code" | "tel" | "number" | "select";
+  value?: string;
+  filled: boolean;
+  options?: { value: string; label: string }[];
+};
 
 /**
- * Phone-friendly sign-in. Each value is encrypted with this view's key, typed
- * into the matching field on the remote page and submitted. It is cleared here
- * and never stored, logged, or shown to the agent or the conversation.
+ * The fields the remote page is asking for right now, mirrored as real inputs
+ * so phones get the right keyboard and password managers can help. Only the
+ * fields you change are sent, encrypted to the worker and typed into the page;
+ * nothing is stored or shown to the agent.
  */
-function SealedSignIn({
+function PageFields({
+  fields,
   send,
 }: {
+  fields: PageField[] | null;
   send: (
     value: Record<string, unknown>,
     settled?: (error?: string) => void,
   ) => void;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
-  const [status, setStatus] = useState<Record<string, string>>({});
+  const [status, setStatus] = useState("");
+  const key = fields?.map((field) => `${field.ref}:${field.kind}`).join("|");
+  // A new step on the page (new set of fields) starts a fresh form.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset per page step
+  useEffect(() => {
+    setValues({});
+  }, [key]);
+  if (!fields) return null;
+  if (!fields.length)
+    return (
+      <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+        This page isn’t asking for anything to type. Use “Buttons on this page”
+        or tap the page.
+      </p>
+    );
+  const changed = fields.filter((field) => field.ref in values);
+  const submit = (andSubmit: boolean) => {
+    if (!changed.length && !andSubmit) return;
+    setStatus("Sending…");
+    send(
+      {
+        type: "fill",
+        submit: andSubmit,
+        fields: (changed.length ? changed : fields.slice(-1)).map((field) => ({
+          ref: field.ref,
+          value: values[field.ref] ?? field.value ?? "",
+        })),
+      },
+      (error) => setStatus(error ?? (andSubmit ? "Sent ✓" : "Filled ✓")),
+    );
+    // Secrets leave this form as soon as they are sent.
+    setValues((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(
+          ([ref]) =>
+            fields.find((field) => field.ref === ref)?.kind !== "password",
+        ),
+      ),
+    );
+  };
   return (
-    <details className="border-t px-3 py-2 text-sm" open>
-      <summary className="cursor-pointer font-medium">
-        Sign in privately
-        <span className="ml-2 font-normal text-xs text-muted-foreground">
-          Typed straight into the page; never saved or shown to the agent
-        </span>
-      </summary>
-      <div className="mt-2 grid gap-2">
-        {sealedFields.map((item) => (
-          <form
-            key={item.field}
-            className="grid gap-1"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const value = values[item.field] ?? "";
-              if (!value) return;
-              setStatus((current) => ({
-                ...current,
-                [item.field]: "Sending…",
-              }));
-              send({ type: "credential", field: item.field, value }, (error) =>
-                setStatus((current) => ({
-                  ...current,
-                  [item.field]: error ?? "Entered and submitted ✓",
-                })),
-              );
-              setValues((current) => ({ ...current, [item.field]: "" }));
-            }}
-          >
-            <div className="flex gap-2">
+    <form
+      className="grid gap-2 border-t px-3 py-3"
+      autoComplete="on"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit(true);
+      }}
+    >
+      <p className="text-xs text-muted-foreground">
+        This page is asking for the following. Change only what you need; it is
+        typed straight into the page, never saved or shown to the agent.
+      </p>
+      {fields.map((field) => {
+        const value = values[field.ref] ?? field.value ?? "";
+        const update = (next: string) =>
+          setValues((current) => ({ ...current, [field.ref]: next }));
+        return (
+          <div key={field.ref} className="grid gap-1">
+            <label
+              htmlFor={`page-field-${field.ref}`}
+              className="text-xs font-medium"
+            >
+              {field.label}
+              {field.filled && field.kind === "password" && (
+                <span className="ml-2 font-normal text-muted-foreground">
+                  already filled
+                </span>
+              )}
+            </label>
+            {field.kind === "select" ? (
+              <select
+                id={`page-field-${field.ref}`}
+                value={value}
+                onChange={(event) => update(event.target.value)}
+                className="h-9 rounded-md border bg-background px-2 text-base sm:text-sm"
+              >
+                {field.options?.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label || option.value}
+                  </option>
+                ))}
+              </select>
+            ) : (
               <Input
-                aria-label={item.label}
-                placeholder={item.label}
-                type={item.type}
-                autoComplete={item.autoComplete}
+                id={`page-field-${field.ref}`}
+                type={
+                  field.kind === "password"
+                    ? "password"
+                    : field.kind === "email"
+                      ? "email"
+                      : field.kind === "tel"
+                        ? "tel"
+                        : "text"
+                }
+                inputMode={
+                  field.kind === "code" || field.kind === "number"
+                    ? "numeric"
+                    : undefined
+                }
+                autoComplete={
+                  field.kind === "password"
+                    ? "current-password"
+                    : field.kind === "email"
+                      ? "username"
+                      : field.kind === "code"
+                        ? "one-time-code"
+                        : "off"
+                }
                 autoCapitalize="off"
                 autoCorrect="off"
                 spellCheck={false}
-                value={values[item.field] ?? ""}
-                onChange={(event) =>
-                  setValues((current) => ({
-                    ...current,
-                    [item.field]: event.target.value,
-                  }))
-                }
-                className="h-9 min-w-0 flex-1"
+                value={value}
+                onChange={(event) => update(event.target.value)}
+                className="h-9 text-base sm:text-sm"
               />
-              <Button size="sm" variant="outline" className="h-9">
-                Enter
-              </Button>
-            </div>
-            {status[item.field] && (
-              <p className="text-xs text-muted-foreground" role="status">
-                {status[item.field]}
-              </p>
             )}
-          </form>
-        ))}
-        <p className="text-xs text-muted-foreground">
-          Go step by step: send the email, wait for the next screen, then the
-          password, then any code. If a site asks for a passkey, tap “Try
-          another way” on the page first.
-        </p>
+          </div>
+        );
+      })}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" type="submit">
+          Fill and continue
+        </Button>
+        <Button
+          size="sm"
+          type="button"
+          variant="outline"
+          disabled={!changed.length}
+          onClick={() => submit(false)}
+        >
+          Fill only
+        </Button>
+        {status && (
+          <span role="status" className="text-xs text-muted-foreground">
+            {status}
+          </span>
+        )}
       </div>
-    </details>
+    </form>
   );
 }

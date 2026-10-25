@@ -8,6 +8,7 @@ import { test } from "node:test";
 import type { BrowserAssignment } from "@harness/core/browser";
 import { boxCenter } from "./grounding";
 import { BrowserHost } from "./index";
+import { pageFields } from "./live";
 
 test("grounding boxes are normalized 0..1000 and resolve to viewport centers", () => {
   const size = { width: 1280, height: 800 };
@@ -150,6 +151,67 @@ test("real Chromium: ref, coordinate, keyboard and scroll actions use real input
     await assert.rejects(
       run("click", { description: "the Go button" }),
       process.env.HARNESS_GROUNDING_API_KEY ? /./ : /not configured/,
+    );
+  } finally {
+    await host.close();
+    server.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("real Chromium: sign-in fields are read from the page and passkeys are unavailable", {
+  skip: process.env.HARNESS_TEST_BROWSER !== "1",
+  timeout: 60000,
+}, async () => {
+  const root = await mkdtemp(join(tmpdir(), "harness-fields-"));
+  const server = createServer((_request, response) => {
+    response.setHeader("Content-Type", "text/html");
+    response.end(`<html><body><form onsubmit="document.title='sent:'+this.code.value;return false">
+      <label>Work email <input name="email" type="email" value="owner@example.com"></label>
+      <label>Password <input name="pw" type="password" value="prefilled"></label>
+      <input name="code" aria-label="Verification code" autocomplete="one-time-code">
+      <select aria-label="Region"><option value="us">US</option><option value="eu">EU</option></select>
+      <input type="hidden" name="csrf" value="x"><input type="checkbox" aria-label="Remember me">
+      <input aria-label="Disabled" disabled>
+    </form><script>PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then((value) => { document.title = "passkeys:" + value; });</script></body></html>`);
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const host = new BrowserHost(root, {
+    backend: "managed",
+    headless: true,
+    allowTestLoopback: true,
+  });
+  try {
+    const live = await host.livePage({
+      stateKey: randomBytes(32).toString("base64"),
+      identity: { id: "fields", generation: 1 },
+      command: { id: "live", action: "manual", arguments: "{}" },
+    } as unknown as BrowserAssignment);
+    const page = live.current();
+    await page.goto(`http://localhost:${address.port}/`);
+    // Page scripts, not Patchright's isolated world, must see no passkeys.
+    await page.waitForFunction(() => document.title.startsWith("passkeys:"));
+    assert.equal(
+      await page.title(),
+      "passkeys:false",
+      "Sites see no passkey support, so they offer a password instead",
+    );
+    const fields = await pageFields(page);
+    assert.deepEqual(
+      fields.map((field) => [field.label, field.kind, field.value ?? null]),
+      [
+        ["Work email", "email", "owner@example.com"],
+        ["Password", "password", null],
+        ["Verification code", "code", null],
+        ["Region", "select", "us"],
+      ],
+    );
+    assert.ok(fields[1].filled, "A filled password is reported, not read");
+    assert.deepEqual(
+      fields[3].options?.map((option) => option.value),
+      ["us", "eu"],
     );
   } finally {
     await host.close();

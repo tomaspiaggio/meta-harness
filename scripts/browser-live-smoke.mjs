@@ -443,17 +443,26 @@ try {
   await until(
     () =>
       evaluate(
-        '[...document.querySelectorAll("button")].some(button => button.textContent.trim() === "1. Take control to sign in")',
+        '[...document.querySelectorAll("button")].some(button => button.textContent.trim() === "Sign in")',
       ),
     "A login wait did not expose Sign in",
   );
+  assert.equal(
+    await evaluate(
+      "Boolean(document.querySelector(\"[aria-label='Workspace browser']\"))",
+    ),
+    false,
+    "A login wait opened the browser by itself",
+  );
+  await cli("find", "role", "button", "click", "--name", "Sign in", "--exact");
+  await ready();
   await cli(
     "find",
     "role",
     "button",
     "click",
     "--name",
-    "1. Take control to sign in",
+    "Take control",
     "--exact",
   );
   await ready();
@@ -478,17 +487,24 @@ try {
     "button",
     "click",
     "--name",
-    "1. Take control to sign in",
+    "Take control",
     "--exact",
   );
   await ready();
+  await until(
+    () =>
+      evaluate(
+        'document.body.textContent.includes("This page is asking for") || document.body.textContent.includes("isn’t asking for anything")',
+      ),
+    "Page fields were not offered while in control",
+  );
   await cli(
     "find",
     "role",
     "button",
     "click",
     "--name",
-    "2. Done — continue task",
+    "Continue task",
     "--exact",
   );
   await ready();
