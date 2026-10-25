@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ModelPicker } from "../model-picker";
 import { ErrorNote, PageHeading, Shell, useTree } from "../shell";
+import { BackupsCard } from "./backups";
 import { GoogleIntegrationSetup } from "./GoogleIntegrationSetup";
 import { GoogleWorkspaceLimits } from "./GoogleWorkspaceLimits";
 import { Integrations } from "./integrations";
@@ -230,6 +231,7 @@ function Settings() {
       </Card>
       <NotificationsCard onError={setError} />
       <WorkersCard api={api} onError={setError} />
+      <BackupsCard api={api} onError={setError} />
       <Card>
         <CardHeader>
           <CardTitle>Workspace access</CardTitle>

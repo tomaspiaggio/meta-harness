@@ -241,3 +241,24 @@ Sources: https://headscale.net/stable/ref/dns/ ;
 https://developers.google.com/identity/protocols/oauth2/web-server#redirect-uri-validation ;
 https://better-auth.com/docs/authentication/google ;
 https://caddyserver.com/docs/automatic-https#dns-challenge
+
+## Encrypted backups
+
+`scripts/backup.mjs` runs hourly from a user timer (`meta-harness-backup.timer`).
+It snapshots SQLite with `VACUUM INTO` while control runs, adds `workflow/`,
+`objects/`, `encryption-key`, `admin-token` and the files listed in
+`HARNESS_BACKUP_EXTRA` (the control env with its auth secret), encrypts the
+bundle to the owner's public key and uploads it with rclone (Drive scope
+`drive.file`). The control host cannot decrypt its own backups; the private key
+is kept by the owner. Retention: hourly for 2 days, daily for 30 days, weekly
+for 26 weeks. Settings → Backups shows the last run; failures and 3 missed
+hours send a push notification.
+
+Restore on a stopped control host:
+
+```sh
+gpg --import meta-harness-backup-private.asc
+rclone copy "drive:Meta Harness backups/<file>" .
+gpg --output control.tar.gz --decrypt <file>
+tar -xzf control.tar.gz   # control/ is the data directory; extra/ holds env files
+```

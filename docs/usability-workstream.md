@@ -140,6 +140,9 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
       units, which iOS Home Screen apps can leave stale (page cut off above the
       bottom of the screen). Needs a look on the iPhone.
 
+- [x] Hourly encrypted backups of the Pi control plane to Drive (owner key
+      in Dashlane), with status in Settings and a push when they fail.
+
 ## Next: skills
 
 - [ ] Skills the owner asks for, stored like decisions, available to agents,

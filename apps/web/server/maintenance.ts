@@ -1,3 +1,4 @@
+import { alertBackups } from "./backup";
 import { BrowserBroker } from "./browser";
 import { cleanupDeleted } from "./deletion";
 import { flushDispatch } from "./dispatcher";
@@ -38,6 +39,7 @@ export function maintain(): Promise<void> {
       generateTitles,
       deliverTelegramInbox,
       deliverNotifications,
+      alertBackups,
     ]) {
       try {
         await job();
