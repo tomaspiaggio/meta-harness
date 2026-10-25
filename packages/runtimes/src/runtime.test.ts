@@ -206,6 +206,7 @@ test("only the attempt-scoped harness MCP server is approved for unattended Code
   );
   assert.ok(args.includes('approval_policy="never"'));
   assert.ok(args.includes('sandbox_mode="workspace-write"'));
+  assert.ok(args.includes("sandbox_workspace_write.network_access=true"));
   assert.ok(
     !commandFor("codex", null).args.some((value) =>
       value.includes("default_tools_approval_mode"),

@@ -117,6 +117,10 @@ export function commandFor(
         'approval_policy="never"',
         "-c",
         'sandbox_mode="workspace-write"',
+        // Agents clone repositories, call gh and install packages; Linux
+        // workspace-write otherwise has no network at all.
+        "-c",
+        "sandbox_workspace_write.network_access=true",
         ...(tools
           ? [
               "-c",

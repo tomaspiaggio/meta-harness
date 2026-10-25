@@ -87,6 +87,35 @@ export function conversationHref(
   if (sessionId) query.set("session", sessionId);
   return `/?${query}`;
 }
+/**
+ * A home-screen app keeps running the code it first loaded. After a deploy it
+ * would keep calling actions the server no longer has, so reload into the new
+ * version when the app comes back to the foreground or sits idle.
+ */
+function useLatestBuild() {
+  useEffect(() => {
+    const check = async () => {
+      if (document.hidden) return;
+      const typing = document.activeElement?.matches("input, textarea");
+      try {
+        const response = await fetch("/api/version", { cache: "no-store" });
+        const { build } = await response.json();
+        if (build && build !== process.env.HARNESS_BUILD && !typing)
+          location.reload();
+      } catch {
+        // Offline or mid-deploy: check again later.
+      }
+    };
+    document.addEventListener("visibilitychange", check);
+    const timer = setInterval(check, 5 * 60000);
+    void check();
+    return () => {
+      document.removeEventListener("visibilitychange", check);
+      clearInterval(timer);
+    };
+  }, []);
+}
+
 export function Shell({
   children,
   actions,
@@ -94,6 +123,7 @@ export function Shell({
   children: React.ReactNode;
   actions?: React.ReactNode;
 }) {
+  useLatestBuild();
   const pathname = usePathname();
   const section =
     sections.find((item) =>
