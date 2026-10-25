@@ -281,6 +281,17 @@ That worker becomes the new home. Files, clones and uncommitted work stay on
 the old machine, and the agent is told so. A complete Claude SDK checkpoint
 still moves with its memory. Interrupted native turns are never retried.
 
+Agents can move themselves between steps. `machines_list` shows the machines,
+their labels and whether they are online. `continue_on(labels, message, reason)`
+queues the agent's next step in the same session with per-step labels
+(`turns.requiredLabels`, combined with the session's), for example to verify on
+the machine with the chip tools after coding elsewhere, and back to any machine
+afterwards. The reason is stored (`turns.placementReason`) and shown in the
+chat, which also marks a step that ran on a different machine than the one
+before. Agents are told to push before moving. At most five self-queued steps
+run in a row without an outside message. On a task from another session the
+report waits for the last step.
+
 ## Sessions handing work to sessions
 
 A planning session can hand work to the owner's other sessions with

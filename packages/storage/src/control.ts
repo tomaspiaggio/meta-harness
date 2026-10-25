@@ -486,7 +486,15 @@ export class ControlStore extends SqliteStore {
       .get(worker.id, session.provider, now);
     if (cooldown)
       return `${session.provider} is waiting for its provider reset (${new Date(Number(cooldown.retryAt)).toISOString()})`;
-    const missing = missingLabels(labelList(session.requiredLabels), worker);
+    const missing = missingLabels(
+      [
+        ...new Set([
+          ...labelList(session.requiredLabels),
+          ...labelList(turn.requiredLabels),
+        ]),
+      ],
+      worker,
+    );
     if (missing.length) return `Needs a machine labelled ${missing.join(", ")}`;
     if (await this.leavesHome(session, worker)) {
       // The agent's memory of this conversation lives on the machine that ran

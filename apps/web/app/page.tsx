@@ -517,13 +517,28 @@ function Conversation() {
               </p>
             </div>
           )}
-          {turns.map((turn) => (
+          {turns.map((turn, index) => (
             <article
               key={turn.id}
               className="animate-in fade-in border-b py-7 first:pt-0 last:border-0"
             >
               <div className="rounded-lg bg-muted px-4 py-3">
-                {turn.delegation ? (
+                {turn.id.startsWith("continue:") ? (
+                  <>
+                    <Role className="flex-wrap normal-case tracking-normal">
+                      Next step queued by the agent ·{" "}
+                      {turn.requiredLabels
+                        ? `needs ${turn.requiredLabels.split(",").join(", ")}`
+                        : "any machine"}
+                    </Role>
+                    {turn.placementReason && (
+                      <p className="mb-2 text-sm text-muted-foreground">
+                        Why: {turn.placementReason}
+                      </p>
+                    )}
+                    <MarkdownMessage>{turn.prompt}</MarkdownMessage>
+                  </>
+                ) : turn.delegation ? (
                   <>
                     <Role className="flex-wrap normal-case tracking-normal">
                       {turn.delegation.role === "report" ? (
@@ -577,7 +592,7 @@ function Conversation() {
               </div>
               <p className="mt-1.5 px-1 font-mono text-[11px] text-muted-foreground">
                 {turn.worker
-                  ? `Picked up by ${turn.worker.name}${turn.worker.hostname && turn.worker.hostname !== turn.worker.name ? ` · ${turn.worker.hostname}` : ""}`
+                  ? `Picked up by ${turn.worker.name}${turn.worker.hostname && turn.worker.hostname !== turn.worker.name ? ` · ${turn.worker.hostname}` : ""}${movedFrom(turns, index) ? ` · moved from ${movedFrom(turns, index)}` : ""}`
                   : isTerminal(turn.status)
                     ? "No worker ran this message"
                     : "Waiting for a worker to pick this up"}
@@ -1025,6 +1040,18 @@ function Conversation() {
       </div>
     </section>
   );
+}
+/** The machine the previous step ran on, when this step ran elsewhere. */
+function movedFrom(
+  turns: { worker?: { name: string } | null }[],
+  index: number,
+): string | null {
+  const current = turns[index]?.worker?.name;
+  const previous = turns
+    .slice(0, index)
+    .reverse()
+    .find((turn) => turn.worker)?.worker?.name;
+  return current && previous && previous !== current ? previous : null;
 }
 function Role({
   children,

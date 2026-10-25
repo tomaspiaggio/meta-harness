@@ -65,6 +65,8 @@ export class SqliteStore implements TurnStore {
         ["stopRequestedAt", "INTEGER"],
         ["model", "TEXT"],
         ["interruptsTurnId", "TEXT"],
+        ["requiredLabels", "TEXT"],
+        ["placementReason", "TEXT"],
       ]) {
         if (!turnColumns.some((column) => column.name === name))
           raw.exec(`ALTER TABLE turns ADD COLUMN ${name} ${type}`);

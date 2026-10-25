@@ -177,3 +177,123 @@ test("a busy home machine keeps its conversation for two minutes, then another t
     await store.close();
   }
 });
+
+test("an agent continues its own conversation on a labelled machine, with a reason, and cannot loop", async () => {
+  const { store, mac, pi, session } = await setup();
+  try {
+    await store.setWorkerLabels(mac.id, ["asap7"]);
+    await queue(store, "code", session.id);
+    const coding = await store.claimForWorker(pi.id);
+    assert.equal(coding?.claim.turn.id, "code");
+    const next = await store.continueOn({
+      turnId: "continue:verify",
+      callerTurnId: "code",
+      labels: ["asap7"],
+      message: "Verify branch chip/x with the layout check.",
+      reason: "Verification needs the chip tools on the Mac.",
+    });
+    assert.equal(next.requiredLabels, "asap7");
+    assert.equal(
+      next.placementReason,
+      "Verification needs the chip tools on the Mac.",
+    );
+    // Retrying the tool call does not queue it twice.
+    await store.continueOn({
+      turnId: "continue:verify",
+      callerTurnId: "code",
+      labels: ["asap7"],
+      message: "again",
+      reason: "again",
+    });
+    assert.equal((await store.listTurns(session.id)).length, 2);
+    await finish(
+      store,
+      pi.id,
+      "code",
+      coding.claim.turn.generation,
+      "thread-pi",
+    );
+    for (const turnId of await store.pendingDispatch())
+      await store.enqueue(turnId);
+    // Only the machine with asap7 takes the verification step.
+    assert.equal(await store.claimForWorker(pi.id), null);
+    const verifying = await store.claimForWorker(mac.id);
+    assert.equal(verifying?.claim.turn.id, "continue:verify");
+    // The Mac starts fresh with the conversation so far.
+    assert.equal(verifying?.claim.session.nativeId, null);
+    assert.match(
+      String(await store.conversationSoFar("continue:verify")),
+      /Message code/,
+    );
+
+    // Five self-queued steps in a row is the limit.
+    let caller = "continue:verify";
+    for (let step = 2; step <= 5; step++) {
+      await store.continueOn({
+        turnId: `continue:${step}`,
+        callerTurnId: caller,
+        labels: [],
+        message: `Step ${step}`,
+        reason: "More work",
+      });
+      caller = `continue:${step}`;
+    }
+    await assert.rejects(
+      store.continueOn({
+        turnId: "continue:6",
+        callerTurnId: caller,
+        labels: [],
+        message: "Step 6",
+        reason: "More work",
+      }),
+      /continued itself 5 times/,
+    );
+  } finally {
+    await store.close();
+  }
+});
+
+test("a task's report waits for the agent's last continuation", async () => {
+  const { store, mac, session } = await setup();
+  try {
+    const planner = await store.createSession("tech", "Planner", "codex");
+    const plan = await store.submitMessage("plan", planner.id, "Plan");
+    const { turn: task } = await store.sendDelegation({
+      turnId: "task:1",
+      callerTurnId: plan.id,
+      toSessionId: session.id,
+      message: "Code and verify",
+    });
+    await store.continueOn({
+      turnId: "continue:verify",
+      callerTurnId: task.id,
+      labels: [],
+      message: "Verify",
+      reason: "Next step",
+    });
+    const db = store.databaseConnection();
+    await db
+      .prepare("UPDATE turns SET status = 'completed' WHERE id = ?")
+      .run(task.id);
+    assert.deepEqual(await store.pendingDelegationReports(), []);
+    assert.equal(
+      (await store.delegationForTurn("continue:verify"))?.role,
+      "continue",
+    );
+    await db
+      .prepare(
+        "UPDATE turns SET status = 'completed', output = 'Verified.' WHERE id = ?",
+      )
+      .run("continue:verify");
+    assert.deepEqual(await store.pendingDelegationReports(), [
+      "continue:verify",
+    ]);
+    assert.match(
+      String((await store.deliverDelegationReport("continue:verify"))?.prompt),
+      /Verified/,
+    );
+    void mac;
+  } finally {
+    await store.close();
+  }
+});

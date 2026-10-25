@@ -76,6 +76,8 @@ export async function POST(
       // A session that moved to a machine without its agent's memory gets the
       // conversation so far, so any machine can continue it.
       const { claim } = assignment;
+      if (claim.turn.id.startsWith("continue:"))
+        claim.turn.prompt = `[Meta Harness: you queued this step for yourself with continue_on${claim.turn.requiredLabels ? ` on a machine labelled ${claim.turn.requiredLabels}` : ""} (reason: ${claim.turn.placementReason ?? "not given"}). Continue the work from your note below.]\n\n${claim.turn.prompt}`;
       if (claim.session.provider !== "demo" && !claim.session.nativeId) {
         const earlier = await store.conversationSoFar(claim.turn.id);
         if (earlier) claim.turn.prompt = `${earlier}\n\n${claim.turn.prompt}`;

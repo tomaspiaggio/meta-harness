@@ -161,6 +161,30 @@ const tools = [
     },
   },
   {
+    name: "continue_on",
+    description:
+      "Continue this conversation in a new step that runs only on machines with these labels (an empty list: any machine), for example to verify on the machine with the chip tools after coding elsewhere, or to go back to any machine afterwards. Check machines_list first. Only move at a natural break: files, clones and uncommitted work stay on this machine, so commit and push what the next step needs before calling this. If the next step runs on another machine, its agent starts fresh with the conversation so far instead of your memory. Write the message as a self-contained note to yourself (what to do next, which branch or commit, how to check it) and give the owner a one-sentence reason. Then end your turn; the step is queued and does not wait for you. On a task from another session, call task_report done only in the last step.",
+    inputSchema: {
+      ...object,
+      properties: {
+        labels: {
+          type: "array",
+          items: { type: "string" },
+          description: "Labels the next machine must have; [] for any",
+        },
+        message: text,
+        reason: text,
+      },
+      required: ["labels", "message", "reason"],
+    },
+  },
+  {
+    name: "machines_list",
+    description:
+      "The owner's machines with their labels (agents, browser, tools such as asap7) and whether each is online, plus the labels this session and this step require. Use it to decide where work can run and to explain waits.",
+    inputSchema: { ...object, properties: {} },
+  },
+  {
     name: "task_report",
     description: `Report on the task this turn is working on (only for turns that work on a task from another session). status: progress (a checkpoint; you keep working), done, question (you need an answer from the session that gave the task; end your turn after this), or blocked. Only the last done/question/blocked report of a turn is sent, when the turn ends. ${REPORT_RULES}`,
     inputSchema: {
@@ -402,6 +426,42 @@ export async function POST(request: Request) {
           round: delegation.rounds,
           queued_turn: sent.id,
           note: "Queued. Its report will arrive in this session as a new message when that turn ends; finish your turn instead of waiting.",
+        };
+      } else if (parameters?.name === "continue_on") {
+        const next = await store.continueOn({
+          turnId: `continue:${createHash("sha256")
+            .update(`${grant.turnId}:${String(id)}`)
+            .digest("hex")
+            .slice(0, 32)}`,
+          callerTurnId: turn.id,
+          labels: args.labels,
+          message: requiredText(args.message, "Message", 20000),
+          reason: requiredText(args.reason, "Reason", 500),
+        });
+        await flushDispatch();
+        result = {
+          queued_turn: next.id,
+          labels: next.requiredLabels?.split(",") ?? [],
+          note: "Queued after this turn. End your turn now; the next step continues from your note.",
+        };
+      } else if (parameters?.name === "machines_list") {
+        const { workerLabels, labelList } = await import(
+          "@harness/core/scheduling"
+        );
+        const workers = await store.listWorkers();
+        result = {
+          machines: workers
+            .filter((worker) => !worker.draining && worker.report)
+            .map((worker) => ({
+              name: worker.name,
+              labels: workerLabels(worker),
+              online: !!worker.seenAt && worker.seenAt > Date.now() - 30000,
+            })),
+          session_labels: labelList(session.requiredLabels),
+          step_labels: labelList(turn.requiredLabels),
+          this_machine:
+            workers.find((worker) => worker.id === grant.workerId)?.name ??
+            null,
         };
       } else if (parameters?.name === "task_report") {
         const delegation = await store.reportDelegation(

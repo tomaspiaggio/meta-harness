@@ -50,6 +50,10 @@ export interface Turn {
   error: string | null;
   stopRequestedAt?: number | null;
   interruptsTurnId?: string | null;
+  /** Labels only this turn needs, set when an agent continues elsewhere. */
+  requiredLabels?: string | null;
+  /** Why the agent moved this step, shown to the owner. */
+  placementReason?: string | null;
   createdAt: number;
 }
 export interface ClaimedTurn {

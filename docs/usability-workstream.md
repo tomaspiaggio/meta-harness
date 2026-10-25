@@ -171,6 +171,11 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
       real project checkout. Verified live: Claude and Codex each read and
       wrote in the folder, ran git, and followed its CLAUDE.md; a sandboxed
       Claude session could not write or run commands.
+- [x] Agents move themselves between steps: `continue_on` (labels, note,
+      reason) and `machines_list`. The chat shows the reason and "moved
+      from". Verified live with Codex: step 1 on one worker queued a step
+      needing `asap7`, which waited while that machine was off and then ran
+      there.
 - [ ] Owner: set the Litho folder, label the Mac, require it on the chip session.
 
 ## Next: skills

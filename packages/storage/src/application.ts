@@ -37,7 +37,11 @@ import {
   parseAgentDefaults,
   parseModel,
 } from "@harness/core/models";
-import type { WorkerRecord, WorkerReport } from "@harness/core/scheduling";
+import {
+  parseLabels,
+  type WorkerRecord,
+  type WorkerReport,
+} from "@harness/core/scheduling";
 import { ControlStore } from "./control";
 import { connectPostgres, LocalDatabase, type SqlDatabase } from "./database";
 import { deleteResource } from "./deletion";
@@ -103,6 +107,8 @@ const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 
 export const MAX_DELEGATION_ROUNDS = 6;
+/** Turns an agent may queue for itself in a row before an outside message. */
+export const MAX_CONTINUATIONS = 5;
 export const DELEGATION_REPORTS = [
   "progress",
   "done",
@@ -135,7 +141,7 @@ export interface DelegationView extends Delegation {
 export interface DelegationTurn {
   turnId: string;
   delegationId: string;
-  role: "task" | "reply" | "report";
+  role: "task" | "reply" | "report" | "continue";
   round: number;
   reportStatus: string | null;
   report: string | null;
@@ -1770,6 +1776,71 @@ ${blocks.reverse().join("\n\n---\n\n")}
           now,
         );
       return { delegation, turn };
+    });
+  }
+  /**
+   * The agent continues this conversation in a new turn that only machines
+   * with these labels run (none: any machine), for example to verify on the
+   * machine with the chip tools after coding elsewhere. A task's report waits
+   * for the continuation to finish.
+   */
+  async continueOn(input: {
+    turnId: string;
+    callerTurnId: string;
+    labels: unknown;
+    message: string;
+    reason: string;
+  }): Promise<Turn> {
+    const labels = parseLabels(input.labels);
+    const message = requiredText(input.message, "Message", 20000);
+    const reason = requiredText(input.reason, "Reason", 500);
+    return this.transaction(async () => {
+      const existing = (await this.db
+        .prepare("SELECT * FROM turns WHERE id = ?")
+        .get(input.turnId)) as unknown as Turn | undefined;
+      if (existing) return existing;
+      const caller = await this.getTurn(input.callerTurnId);
+      // Count the agent's own continuations since the last outside message.
+      const recent = (await this.db
+        .prepare(
+          "SELECT id FROM turns WHERE sessionId = ? AND rowid <= (SELECT rowid FROM turns WHERE id = ?) ORDER BY rowid DESC LIMIT ?",
+        )
+        .all(caller.sessionId, caller.id, MAX_CONTINUATIONS + 1)) as {
+        id: string;
+      }[];
+      let chain = 0;
+      while (chain < recent.length && recent[chain].id.startsWith("continue:"))
+        chain++;
+      if (chain >= MAX_CONTINUATIONS)
+        throw new HarnessError(
+          `This conversation already continued itself ${chain} times in a row. Finish here and report what is left, or ask the owner with request_input.`,
+          409,
+        );
+      const turn = await this.createTurn(
+        input.turnId,
+        caller.sessionId,
+        message,
+      );
+      await this.db
+        .prepare(
+          "UPDATE turns SET requiredLabels = ?, placementReason = ? WHERE id = ?",
+        )
+        .run(labels.join(",") || null, reason, turn.id);
+      const link = await this.delegationForTurn(caller.id);
+      if (link && link.role !== "report") {
+        // The task's report comes from the continuation, when the work ends.
+        await this.db
+          .prepare(
+            "UPDATE delegation_turns SET reportedAt = ? WHERE turnId = ?",
+          )
+          .run(Date.now(), caller.id);
+        await this.db
+          .prepare(
+            "INSERT INTO delegation_turns(turnId, delegationId, role, round, createdAt) VALUES (?, ?, 'continue', ?, ?)",
+          )
+          .run(turn.id, link.delegationId, link.round, Date.now());
+      }
+      return await this.getTurn(turn.id);
     });
   }
   /**
