@@ -124,6 +124,28 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
 - [x] One unconfirmed page load blocked the agent from ever reopening that URL.
       `navigate` is now a repeatable read; clicks/fills keep the strict ledger.
 
+## Round 5–6 (2026-10-25)
+
+- [x] Agents are told they run inside Meta Harness (control URL, workers, host,
+      workspace, session) so the owner can refer to it without explaining.
+- [x] Codex gets network in its sandbox (`gh`, package installs work).
+- [x] Apps reload themselves after a deploy (build id check).
+- [x] Web Push instead of Telegram-only: Settings → Notifications turns it on
+      per device (iPhone: the Home Screen app). Notifies on needs input or
+      sign-in, schedule review, failed or interrupted tasks; "result ready" is
+      opt-in. Only events from the last 15 minutes are pushed.
+- [x] Checked on the owner's iPhone: notifications arrive.
+- [x] Page titles no longer break into fragments on phones ("Set / tin / gs").
+- [x] The app frame is pinned to the screen instead of sized in viewport
+      units, which iOS Home Screen apps can leave stale (page cut off above the
+      bottom of the screen). Needs a look on the iPhone.
+
+## Next: skills
+
+- [ ] Skills the owner asks for, stored like decisions, available to agents,
+      global or per workspace; agents propose skills for repeated work
+      (Hermes-style). Scope decision pending.
+
 ## Known bugs from handoff
 
 - [x] `/api/state` without a workspace returned 500 after the seeded `business`
