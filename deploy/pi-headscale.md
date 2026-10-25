@@ -254,7 +254,8 @@ is kept by the owner. Retention: hourly for 2 days, daily for 30 days, weekly
 for 26 weeks. Settings → Backups shows the last run; failures and 3 missed
 hours send a push notification.
 
-Restore on a stopped control host:
+Full recovery runbook, including a rebuild on a new host:
+[`docs/restore.md`](../docs/restore.md). Short version, on a stopped control host:
 
 ```sh
 gpg --import meta-harness-backup-private.asc
