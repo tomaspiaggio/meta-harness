@@ -124,6 +124,7 @@ export async function deleteResource(
           "turn_knowledge",
           "checkpoints",
           "delegation_turns",
+          "session_notes",
         ])
           await db.prepare(`DELETE FROM ${table} WHERE turnId = ?`).run(turnId);
       }
@@ -141,6 +142,11 @@ export async function deleteResource(
           .prepare("DELETE FROM delegations WHERE id = ?")
           .run(delegation.id);
       }
+      await db
+        .prepare(
+          "DELETE FROM session_notes WHERE fromSessionId = ? OR toSessionId = ?",
+        )
+        .run(sessionId, sessionId);
       for (const attachment of await db
         .prepare("SELECT objectKey FROM attachments WHERE sessionId = ?")
         .all(sessionId))

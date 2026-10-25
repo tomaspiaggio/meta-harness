@@ -67,6 +67,9 @@ type State = {
     publications?: Decision[];
     attachments?: Attachment[];
     delegation?: DelegationTag | null;
+    note?: {
+      from: { id: string; title: string; workspaceId: string } | null;
+    } | null;
   })[];
 };
 const initial: State = { workspaces: [], sessions: [], turns: [] };
@@ -523,7 +526,14 @@ function Conversation() {
               className="animate-in fade-in border-b py-7 first:pt-0 last:border-0"
             >
               <div className="rounded-lg bg-muted px-4 py-3">
-                {turn.id.startsWith("continue:") ? (
+                {turn.note ? (
+                  <>
+                    <Role className="flex-wrap normal-case tracking-normal">
+                      Note from <SessionLink session={turn.note.from} />
+                    </Role>
+                    <MarkdownMessage>{turn.prompt}</MarkdownMessage>
+                  </>
+                ) : turn.id.startsWith("continue:") ? (
                   <>
                     <Role className="flex-wrap normal-case tracking-normal">
                       Next step queued by the agent ·{" "}

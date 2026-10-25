@@ -52,6 +52,10 @@ CREATE TABLE IF NOT EXISTS delegation_turns (
  reportStatus TEXT, report TEXT, reportedAt INTEGER, createdAt INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS delegation_turns_delegation ON delegation_turns(delegationId);
+CREATE TABLE IF NOT EXISTS session_notes (
+ turnId TEXT PRIMARY KEY, fromSessionId TEXT NOT NULL, toSessionId TEXT NOT NULL, createdAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS session_notes_pair ON session_notes(fromSessionId, toSessionId, createdAt);
 CREATE TABLE IF NOT EXISTS browser_identities (
  id TEXT PRIMARY KEY, workspaceId TEXT NOT NULL REFERENCES workspaces(id), name TEXT NOT NULL,
  workerId TEXT, status TEXT NOT NULL DEFAULT 'idle', mode TEXT NOT NULL DEFAULT 'agent',

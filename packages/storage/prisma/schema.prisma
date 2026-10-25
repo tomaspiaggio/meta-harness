@@ -382,6 +382,16 @@ model DelegationTurns {
   @@map("delegation_turns")
 }
 
+model SessionNotes {
+  turnId        String @id
+  fromSessionId String
+  toSessionId   String
+  createdAt     BigInt
+
+  @@index([fromSessionId, toSessionId, createdAt], map: "session_notes_pair")
+  @@map("session_notes")
+}
+
 model BrowserIdentities {
   stateCipher                String?
   id                         String            @id
