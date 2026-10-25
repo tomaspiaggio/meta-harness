@@ -12,6 +12,7 @@ model Workspaces {
   id                              String              @id
   name                            String
   instructions                    String
+  folder                          String?
   sessions_workspaceId            Sessions[]          @relation("sessions_workspaceId")
   tasks_workspaceId               Tasks[]             @relation("tasks_workspaceId")
   browser_identities_workspaceId  BrowserIdentities[] @relation("browser_identities_workspaceId")
@@ -32,6 +33,7 @@ model Sessions {
   readThroughSequence           BigInt               @default(0)
   ownerWorkerId                 String?
   requiredLabels                String?
+  sandboxed                     Int                  @default(0)
   checkpointId                  String?
   nativeRevision                Int                  @default(0)
   related_workspaceId           Workspaces           @relation("sessions_workspaceId", fields: [workspaceId], references: [id], onDelete: Restrict)

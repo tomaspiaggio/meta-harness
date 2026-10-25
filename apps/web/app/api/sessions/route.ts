@@ -27,6 +27,13 @@ export async function PATCH(request: Request) {
           body.model,
         ),
       );
+    if (body.action === "sandboxed")
+      return Response.json(
+        await (await getStore()).setSessionSandboxed(
+          requiredText(body.id, "Session ID", 100),
+          body.sandboxed,
+        ),
+      );
     if (body.action === "labels")
       return Response.json(
         await (await getStore()).setSessionLabels(

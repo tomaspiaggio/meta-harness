@@ -118,7 +118,7 @@ export class SqliteStore implements TurnStore {
     if (!initialized) {
       if (!raw.prepare("SELECT 1 FROM workspaces LIMIT 1").get()) {
         const seed = raw.prepare(
-          "INSERT OR IGNORE INTO workspaces VALUES (?, ?, ?)",
+          "INSERT OR IGNORE INTO workspaces(id, name, instructions) VALUES (?, ?, ?)",
         );
         for (const [id, name, instructions] of [
           ["business", "Business", "Find and develop customer opportunities."],
@@ -175,7 +175,9 @@ export class SqliteStore implements TurnStore {
         ],
       ])
         await this.db
-          .prepare("INSERT OR IGNORE INTO workspaces VALUES (?, ?, ?)")
+          .prepare(
+            "INSERT OR IGNORE INTO workspaces(id, name, instructions) VALUES (?, ?, ?)",
+          )
           .run(id, name, instructions);
     });
   }
@@ -190,7 +192,9 @@ export class SqliteStore implements TurnStore {
   ): Promise<Workspace> {
     const workspace = { id: crypto.randomUUID(), name, instructions };
     await this.db
-      .prepare("INSERT INTO workspaces VALUES (?, ?, ?)")
+      .prepare(
+        "INSERT INTO workspaces(id, name, instructions) VALUES (?, ?, ?)",
+      )
       .run(workspace.id, name, instructions);
     return workspace;
   }

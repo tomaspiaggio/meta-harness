@@ -129,9 +129,16 @@ object lifecycle cleanup separately from durable attachment retention.
 ## Native runtimes and credentials
 
 The default adapters start CLI processes on demand and exit after a turn. Codex
-uses `exec`/`exec resume` with workspace-write policy and ignored user configuration.
-Claude uses print/resume, explicit MCP configuration, `dontAsk` and narrow file
-publication permissions. Unsupported permission prompts are denied; durable input
+uses `exec`/`exec resume` with ignored user configuration. Claude uses
+print/resume and explicit MCP configuration. Agents run with full permissions by
+default (the owner runs their own sessions that way); a sandboxed session (or a
+worker with `HARNESS_AGENT_PERMISSIONS=sandboxed`, or an isolated Linux worker)
+uses Codex workspace-write and Claude `dontAsk` with narrow file publication
+permissions. The native cwd stays the session's scratch directory, because Claude
+keys its memory by directory; a workspace folder (`workspaces.folder`, `~/`
+resolved per machine) is added with `--add-dir`/`additionalDirectories`, its
+CLAUDE.md is loaded, and the agent is told to work there or that the folder is
+missing on this machine. Unsupported permission prompts are denied; durable input
 questions use the harness MCP tool and finish the native process instead of
 keeping it alive indefinitely. CLI environment filtering omits control-plane,
 Telegram and cloud-administration secrets. Claude API-only bare mode is opt-in;

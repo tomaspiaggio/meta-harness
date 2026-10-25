@@ -130,6 +130,7 @@ function Conversation() {
   const [labelsBusy, setLabelsBusy] = useState(false);
   // Labels chosen before the first message create the session with them.
   const [draftLabels, setDraftLabels] = useState<string[]>([]);
+  const [draftSandboxed, setDraftSandboxed] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -177,6 +178,7 @@ function Conversation() {
     setBrowserSteps([]);
     setAdvanced(false);
     setDraftLabels([]);
+    setDraftSandboxed(false);
   }, [routeKey]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: initialize defaults after the composer location resets
   useEffect(() => {
@@ -355,6 +357,12 @@ function Conversation() {
           await post<Session>(
             "sessions",
             { id, action: "labels", labels: draftLabels },
+            "PATCH",
+          );
+        if (draftSandboxed)
+          await post<Session>(
+            "sessions",
+            { id, action: "sandboxed", sandboxed: true },
             "PATCH",
           );
         draftSession.current = { location: routeKey, id };
@@ -840,6 +848,37 @@ function Conversation() {
               labels={sessionLabels}
               provider={selected?.provider ?? provider}
               disabled={busy || labelsBusy}
+              workspace={workspace}
+              sandboxed={sessionId ? !!selected?.sandboxed : draftSandboxed}
+              onSandboxed={(sandboxed) => {
+                if (!sessionId) {
+                  setDraftSandboxed(sandboxed);
+                  return;
+                }
+                setLabelsBusy(true);
+                setError("");
+                void post<Session>(
+                  "sessions",
+                  { id: sessionId, action: "sandboxed", sandboxed },
+                  "PATCH",
+                )
+                  .then(() => refresh.current())
+                  .catch((reason) => setError(reason.message))
+                  .finally(() => setLabelsBusy(false));
+              }}
+              onFolder={(folder) => {
+                setLabelsBusy(true);
+                setError("");
+                void post(
+                  "workspaces",
+                  { id: workspaceId, folder: folder || null },
+                  "PATCH",
+                )
+                  .then(() => refresh.current())
+                  .then(() => refreshTree())
+                  .catch((reason) => setError(reason.message))
+                  .finally(() => setLabelsBusy(false));
+              }}
               onChange={(labels) => {
                 if (!sessionId) {
                   setDraftLabels(labels);

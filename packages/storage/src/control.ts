@@ -134,6 +134,17 @@ export class ControlStore extends SqliteStore {
         raw.exec("ALTER TABLE sessions ADD COLUMN ownerWorkerId TEXT");
       if (!columns.includes("checkpointId"))
         raw.exec("ALTER TABLE sessions ADD COLUMN checkpointId TEXT");
+      if (
+        !raw
+          .prepare("PRAGMA table_info(workspaces)")
+          .all()
+          .some((column) => column.name === "folder")
+      )
+        raw.exec("ALTER TABLE workspaces ADD COLUMN folder TEXT");
+      if (!columns.includes("sandboxed"))
+        raw.exec(
+          "ALTER TABLE sessions ADD COLUMN sandboxed INTEGER NOT NULL DEFAULT 0",
+        );
       if (!columns.includes("requiredLabels"))
         raw.exec("ALTER TABLE sessions ADD COLUMN requiredLabels TEXT");
       if (
@@ -249,6 +260,35 @@ export class ControlStore extends SqliteStore {
       draining: Number(row.draining),
       labels: labelList(row.labels as string | null),
     }));
+  }
+  /** Where agents of this workspace work, on machines that have the folder. */
+  async setWorkspaceFolder(id: string, folder: unknown) {
+    await this.getWorkspace(id);
+    const value = typeof folder === "string" ? folder.trim() : "";
+    if (folder !== null && folder !== undefined && typeof folder !== "string")
+      throw new HarnessError("Folder must be a path.");
+    if (
+      value &&
+      (value.length > 500 ||
+        /[\0\n\r]/.test(value) ||
+        !(value.startsWith("/") || value.startsWith("~/")))
+    )
+      throw new HarnessError(
+        "Use an absolute folder path, or one starting with ~/ for the home folder.",
+      );
+    await this.db
+      .prepare("UPDATE workspaces SET folder = ? WHERE id = ?")
+      .run(value.replace(/\/+$/, "") || null, id);
+    return await this.getWorkspace(id);
+  }
+  async setSessionSandboxed(id: string, sandboxed: unknown): Promise<Session> {
+    if (typeof sandboxed !== "boolean")
+      throw new HarnessError("Choose sandboxed or full access.");
+    await this.getSession(id);
+    await this.db
+      .prepare("UPDATE sessions SET sandboxed = ? WHERE id = ?")
+      .run(sandboxed ? 1 : 0, id);
+    return await this.getSession(id);
   }
   async renameWorker(id: string, name: string): Promise<void> {
     const result = await this.db

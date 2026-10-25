@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { RuntimeEvent, RuntimeInput } from "@harness/core";
 import { ProviderUnavailableError } from "@harness/core";
-import { commandFor, createRuntime, decodeEvent } from "./index";
+import { commandFor, createRuntime, decodeEvent, fullAccess } from "./index";
 
 test("Codex and Claude events normalize text and preserve native identity", async () => {
   assert.deepEqual(
@@ -55,18 +55,47 @@ test("Codex and Claude events normalize text and preserve native identity", asyn
     /offline/,
   );
 });
-test("continuation uses an explicit native ID and never bypasses permissions", () => {
+test("continuation uses an explicit native ID; sandboxed sessions never bypass permissions", () => {
   for (const provider of ["claude", "codex"] as const) {
-    const command = commandFor(provider, "specific-native-session");
+    const command = commandFor(
+      provider,
+      "specific-native-session",
+      undefined,
+      null,
+      undefined,
+      false,
+    );
     assert.ok(command.args.includes("specific-native-session"));
     assert.ok(!command.args.some((arg) => arg.includes("dangerously")));
+    assert.ok(!command.args.some((arg) => arg.includes("danger-full-access")));
     assert.ok(!command.args.includes("--last"));
   }
-  const claude = commandFor("claude", null);
+  const claude = commandFor("claude", null, undefined, null, undefined, false);
   assert.equal(
     claude.args[claude.args.indexOf("--allowedTools") + 1],
     "Edit(./DECISION_UPDATES.json)",
   );
+});
+test("full access is the default, like the owner's own sessions, and reaches the working folder", () => {
+  assert.equal(fullAccess({}), true);
+  assert.equal(fullAccess({ HARNESS_AGENT_PERMISSIONS: "sandboxed" }), false);
+  assert.equal(fullAccess({ HARNESS_ISOLATE_AGENTS: "1" }), false);
+  const claude = commandFor(
+    "claude",
+    null,
+    undefined,
+    null,
+    "/work/litho",
+    true,
+  );
+  assert.ok(claude.args.includes("--dangerously-skip-permissions"));
+  assert.ok(!claude.args.includes("--allowedTools"));
+  assert.equal(
+    claude.args[claude.args.indexOf("--add-dir") + 1],
+    "/work/litho",
+  );
+  const codex = commandFor("codex", null, undefined, null, "/work/litho", true);
+  assert.ok(codex.args.includes('sandbox_mode="danger-full-access"'));
 });
 test("structured provider limits become a cooldown rather than successful assistant output", async () => {
   const resetsAt = Math.floor(Date.now() / 1000) + 300;
@@ -200,7 +229,14 @@ test("only the attempt-scoped harness MCP server is approved for unattended Code
     url: "https://fixture.invalid/api/tools",
     token: "fixture-token",
   };
-  const args = commandFor("codex", "existing-native", tools).args;
+  const args = commandFor(
+    "codex",
+    "existing-native",
+    tools,
+    null,
+    undefined,
+    false,
+  ).args;
   assert.ok(
     args.includes('mcp_servers.harness.default_tools_approval_mode="approve"'),
   );

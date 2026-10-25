@@ -166,7 +166,12 @@ stack on this Mac; "live" means the Pi control plane plus real workers.
       another continues with the conversation so far. Verified live with
       Codex: stopped the first worker after turn 1; the second answered a
       question about turn 1 correctly.
-- [ ] Label the Mac for the chip session once it exists in the harness.
+- [x] Agents run with full permissions by default; a session can be sandboxed
+      under Advanced. A workspace working folder (Advanced) gives agents the
+      real project checkout. Verified live: Claude and Codex each read and
+      wrote in the folder, ran git, and followed its CLAUDE.md; a sandboxed
+      Claude session could not write or run commands.
+- [ ] Owner: set the Litho folder, label the Mac, require it on the chip session.
 
 ## Next: skills
 

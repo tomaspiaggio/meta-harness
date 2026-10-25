@@ -1,0 +1,2 @@
+ALTER TABLE "workspaces" ADD COLUMN "folder" TEXT;
+ALTER TABLE "sessions" ADD COLUMN "sandboxed" INTEGER NOT NULL DEFAULT 0;

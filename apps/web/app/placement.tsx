@@ -89,12 +89,20 @@ export function PlacementPanel({
   provider,
   disabled,
   onChange,
+  workspace,
+  onFolder,
+  sandboxed,
+  onSandboxed,
 }: {
   placement: Placement | null | undefined;
   labels: string[];
   provider: string;
   disabled?: boolean;
   onChange: (labels: string[]) => void;
+  workspace?: { name: string; folder?: string | null };
+  onFolder: (folder: string) => void;
+  sandboxed: boolean;
+  onSandboxed: (sandboxed: boolean) => void;
 }) {
   const agent = provider === "codex" ? "Codex" : "Claude";
   const fits = (placement?.machines ?? []).filter((machine) =>
@@ -120,6 +128,54 @@ export function PlacementPanel({
             : `No machine that runs ${agent} has ${labels.join(" and ")} yet, so messages wait. Add the label to a machine in Settings → Machines.`
           : `No labels: any online machine that runs ${agent} picks it up${fits.length ? ` (${names})` : ""}. It prefers the machine that ran it last and moves on when that one is off or busy.`}
       </p>
+      <div className="mt-1 grid gap-1">
+        <label
+          htmlFor="workspace-folder"
+          className="font-medium text-foreground"
+        >
+          Working folder for every session in{" "}
+          {workspace?.name ?? "this workspace"}
+        </label>
+        <Input
+          id="workspace-folder"
+          key={workspace?.folder ?? ""}
+          defaultValue={workspace?.folder ?? ""}
+          placeholder="e.g. ~/Documents/Projects/litho"
+          disabled={disabled}
+          maxLength={500}
+          className="h-7 text-xs"
+          onBlur={(event) => {
+            const value = event.currentTarget.value.trim();
+            if (value !== (workspace?.folder ?? "")) onFolder(value);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+        />
+        <span className="text-muted-foreground">
+          Agents work there on machines that have it and follow its
+          CLAUDE.md/AGENTS.md. Require a label so the session only runs where
+          the folder exists. Empty: each session gets a private folder.
+        </span>
+      </div>
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={sandboxed}
+          disabled={disabled}
+          onChange={(event) => onSandboxed(event.target.checked)}
+        />
+        <span>
+          <span className="font-medium text-foreground">Sandboxed</span>
+          <span className="text-muted-foreground">
+            {" "}
+            — restrict this session's agent to its private folder. Off (the
+            default): full permissions, like running Claude Code with
+            --dangerously-skip-permissions.
+          </span>
+        </span>
+      </label>
     </div>
   );
 }
