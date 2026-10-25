@@ -117,13 +117,12 @@ try {
     await evaluate(
       'document.querySelector("[data-testid=browser-stream-status]").textContent',
     ),
-    /Watching/,
+    /Live/,
   );
   const before = await api(
     `state?workspace=${workspace.id}&session=${session.id}`,
   );
-  await cli("find", "role", "button", "click", "--name", "Take control");
-  await ready();
+  // No takeover: the open view accepts input while the browser is shared.
   await cli("find", "label", "Browser address", "fill", pageUrl);
   await cli("find", "role", "button", "click", "--name", "Go", "--exact");
   await until(
@@ -219,22 +218,13 @@ try {
     ),
     "Downloaded credential fixture was truncated or changed",
   );
-  await cli("press", "Escape");
-  await until(
-    () =>
-      evaluate(
-        'document.querySelector("[data-testid=browser-stream-status]").textContent.includes("Watching")',
-      ),
-    "Escape did not release control",
-  );
-  await ready();
   const after = await api(
     `state?workspace=${workspace.id}&session=${session.id}`,
   );
   assert.equal(
     after.turns.length,
     before.turns.length,
-    "Inspecting/releasing the browser sent a message",
+    "Using the browser sent a message",
   );
   // Exercise a real agent browser read and its UI activity through the same broker,
   // without buying a model call or letting a fixture's Demo lane race the claim.
@@ -368,6 +358,9 @@ try {
       "Close browser view",
     );
     await evaluate(
+      `[...document.querySelectorAll('[aria-label="Browser activity"] button[aria-expanded]')].forEach((button) => button.getAttribute("aria-expanded") === "false" && button.click());true`,
+    );
+    await evaluate(
       `document.querySelector('[aria-label="Browser steps, oldest first"]').scrollIntoView({block:"start"});true`,
     );
     await until(
@@ -385,17 +378,17 @@ try {
       "Activity timeline overflows",
     );
     await evaluate(
-      `document.querySelector('button[aria-label^="Expand screenshot"]').click();true`,
+      `document.querySelector('button[aria-label^="View step"]').click();true`,
     );
     await until(
       () =>
         evaluate(
-          `Boolean(document.querySelector('button[aria-label^="Expand screenshot"][aria-expanded="true"]'))`,
+          `Boolean(document.querySelector('[role="dialog"][aria-label^="Step"] img'))`,
         ),
-      "Screenshot cannot expand",
+      "Screenshot viewer did not open",
     );
     await evaluate(
-      `document.querySelector('button[aria-label^="Expand screenshot"][aria-expanded="true"]').click();true`,
+      `document.querySelector('[role="dialog"] button[aria-label="Close"]').click();true`,
     );
     await cli("screenshot", `/tmp/${browserName}-activity.png`);
     const identity = (
@@ -444,46 +437,51 @@ try {
       ),
     "A login wait did not expose Sign in",
   );
+  assert.equal(
+    await evaluate(
+      "Boolean(document.querySelector(\"[aria-label='Workspace browser']\"))",
+    ),
+    false,
+    "A login wait opened the browser by itself",
+  );
   await cli("find", "role", "button", "click", "--name", "Sign in", "--exact");
   await ready();
-  await cli("focus", "canvas");
-  await cli("press", "Escape");
-  await ready();
+  await until(
+    () =>
+      evaluate(
+        'document.body.textContent.includes("This page is asking for") || document.body.textContent.includes("isn’t asking for anything")',
+      ),
+    "Page fields were not offered",
+  );
   const waiting = await api(
     `state?workspace=${workspace.id}&session=${session.id}`,
   );
   assert.equal(
     waiting.turns.length,
     before.turns.length + 1,
-    "Release during login sent a message",
+    "Opening the browser during login sent a message",
   );
   assert(
     waiting.inputRequests.some((input) => input.kind === "browser-login"),
-    "Release silently resolved a login wait",
+    "Opening the browser silently resolved a login wait",
   );
-  await cli("find", "role", "button", "click", "--name", "Sign in", "--exact");
-  await ready();
-  await cli(
-    "find",
-    "role",
-    "button",
-    "click",
-    "--name",
-    "Continue task",
-    "--exact",
-  );
-  await ready();
+  // The owner's next message is what resumes the agent.
+  await api("turns", {
+    id: crypto.randomUUID(),
+    sessionId: session.id,
+    prompt: "Signed in, continue.",
+  });
   const resumed = await api(
     `state?workspace=${workspace.id}&session=${session.id}`,
   );
   assert.equal(
     resumed.turns.length,
     before.turns.length + 2,
-    "Explicit Continue did not submit exactly one instruction",
+    "A reply did not submit exactly one instruction",
   );
   assert(
     !resumed.inputRequests.some((input) => input.kind === "browser-login"),
-    "Explicit Continue left the login wait pending",
+    "A reply left the login wait pending",
   );
   await cli("find", "role", "button", "click", "--name", "Close browser view");
   await cli("find", "role", "button", "click", "--name", "Open browser");
@@ -524,18 +522,6 @@ try {
   );
   throw error;
 } finally {
-  if (workspace && session) {
-    const state = await api(
-      `browser?workspace=${workspace.id}&session=${session.id}`,
-    ).catch(() => null);
-    if (state?.browser?.mode === "human")
-      await api("browser", {
-        action: "return",
-        workspaceId: workspace.id,
-        sessionId: session.id,
-        generation: state.browser.generation,
-      }).catch(() => {});
-  }
   await cli("close").catch(() => {});
   if (workspace) {
     const cleanup = new HarnessStore(join(directory, "harness.sqlite"));

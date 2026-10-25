@@ -6,7 +6,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { RuntimeInput } from "@harness/core";
 import { runtimeEnvironment } from "./environment";
-import { decodeEvent } from "./index";
+import { decodeEvent, fullAccess } from "./index";
 import { claudeUserMessage, inputPrompt } from "./input";
 
 /** Loaded only for active Claude turns with an external native-session store. */
@@ -33,6 +33,9 @@ export async function runClaudeSdk(
       Object.keys(process.env).map((key) => [key, undefined]),
     ),
     ...runtimeEnvironment("claude", process.env, input.environment),
+    ...(input.workingFolder
+      ? { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1" }
+      : {}),
     ...(input.identity
       ? {
           HOME: input.identity.home,
@@ -92,11 +95,21 @@ export async function runClaudeSdk(
       },
       sessionStoreFlush: "eager",
       resume: input.session.nativeId ?? undefined,
-      permissionMode: "dontAsk",
-      allowedTools: [
-        "Edit(./DECISION_UPDATES.json)",
-        ...(input.tools ? ["mcp__harness__*"] : []),
-      ],
+      ...(fullAccess() && !input.session.sandboxed
+        ? {
+            permissionMode: "bypassPermissions" as const,
+            allowDangerouslySkipPermissions: true,
+          }
+        : {
+            permissionMode: "dontAsk" as const,
+            allowedTools: [
+              "Edit(./DECISION_UPDATES.json)",
+              ...(input.tools ? ["mcp__harness__*"] : []),
+            ],
+          }),
+      ...(input.workingFolder
+        ? { additionalDirectories: [input.workingFolder] }
+        : {}),
       settingSources: [],
       mcpServers: input.tools
         ? {

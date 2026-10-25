@@ -12,6 +12,7 @@ model Workspaces {
   id                              String              @id
   name                            String
   instructions                    String
+  folder                          String?
   sessions_workspaceId            Sessions[]          @relation("sessions_workspaceId")
   tasks_workspaceId               Tasks[]             @relation("tasks_workspaceId")
   browser_identities_workspaceId  BrowserIdentities[] @relation("browser_identities_workspaceId")
@@ -31,6 +32,8 @@ model Sessions {
   titleSource                   String               @default("prompt")
   readThroughSequence           BigInt               @default(0)
   ownerWorkerId                 String?
+  requiredLabels                String?
+  sandboxed                     Int                  @default(0)
   checkpointId                  String?
   nativeRevision                Int                  @default(0)
   related_workspaceId           Workspaces           @relation("sessions_workspaceId", fields: [workspaceId], references: [id], onDelete: Restrict)
@@ -69,6 +72,8 @@ model Turns {
   createdAt                   BigInt
   stopRequestedAt             BigInt?
   interruptsTurnId            String?
+  requiredLabels              String?
+  placementReason             String?
   rowid                       BigInt                @unique @default(autoincrement())
   related_sessionId           Sessions              @relation("turns_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
   session_attention_turnId    SessionAttention?     @relation("session_attention_turnId")
@@ -110,6 +115,7 @@ model Workers {
   tokenHash                   String
   report                      String?
   seenAt                      BigInt?
+  labels                      String?
   draining                    Int                 @default(0)
   worker_claims_workerId      WorkerClaims[]      @relation("worker_claims_workerId")
   provider_cooldowns_workerId ProviderCooldowns[] @relation("provider_cooldowns_workerId")
@@ -325,6 +331,55 @@ model NotificationOutbox {
 
   @@index([status, nextAt], map: "notifications_due")
   @@map("notification_outbox")
+}
+
+model PushSubscriptions {
+  endpoint   String  @id
+  p256dh     String
+  auth       String
+  label      String
+  results    Int     @default(0)
+  createdAt  BigInt
+  lastSeenAt BigInt
+  lastSentAt BigInt?
+  error      String?
+
+  @@map("push_subscriptions")
+}
+
+model Delegations {
+  id            String  @id
+  fromSessionId String
+  toSessionId   String
+  title         String
+  status        String  @default("open")
+  rounds        Int     @default(1)
+  progress      String?
+  progressAt    BigInt?
+  reportStatus  String?
+  report        String?
+  reportAt      BigInt?
+  closedNote    String?
+  createdAt     BigInt
+  updatedAt     BigInt
+
+  @@index([fromSessionId], map: "delegations_from")
+  @@index([toSessionId], map: "delegations_to")
+  @@map("delegations")
+}
+
+model DelegationTurns {
+  turnId       String  @id
+  delegationId String
+  role         String
+  round        Int
+  reportStatus String?
+  report       String?
+  reportedAt   BigInt?
+  createdAt    BigInt
+
+  @@index([delegationId], map: "delegation_turns_delegation")
+  @@map("delegation_turns")
 }
 
 model BrowserIdentities {

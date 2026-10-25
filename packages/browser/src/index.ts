@@ -1,6 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, readFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import {
@@ -29,8 +29,29 @@ export { browserBackend } from "./personal-chrome";
 export function managedBrowserExecutable(): string | undefined {
   if (process.env.HARNESS_BROWSER_EXECUTABLE)
     return process.env.HARNESS_BROWSER_EXECUTABLE;
-  if (process.platform === "linux")
+  if (process.platform === "linux" && managedBrowserChannel() === "chromium")
     return ["/usr/bin/chromium", "/usr/bin/chromium-browser"].find(existsSync);
+}
+
+const installedChrome: Partial<Record<NodeJS.Platform, string>> = {
+  darwin: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  linux: "/opt/google/chrome/chrome",
+};
+/**
+ * Google rejects sign-in from Chrome for Testing and from a user agent that
+ * announces HeadlessChrome. An installed stable Chrome is preferred; an explicit
+ * executable or HARNESS_BROWSER_CHANNEL=chromium keeps the bundled build.
+ */
+export function managedBrowserChannel(): "chrome" | "chromium" {
+  const requested = process.env.HARNESS_BROWSER_CHANNEL;
+  if (requested === "chrome" || requested === "chromium") return requested;
+  if (process.env.HARNESS_BROWSER_EXECUTABLE) return "chromium";
+  const chrome = installedChrome[process.platform];
+  return chrome && existsSync(chrome) ? "chrome" : "chromium";
+}
+/** Remove the headless marker; the rest of the user agent stays truthful. */
+export function visibleUserAgent(value: string): string {
+  return value.replace(/HeadlessChrome\//, "Chrome/");
 }
 
 type Context = {
@@ -43,6 +64,9 @@ type Context = {
   userKey?: string;
   display?: Awaited<ReturnType<typeof browserDisplay>>;
   downloads?: BrowserDownloads;
+  listeners: Set<(page: Page) => void>;
+  notices?: NativeNotice[];
+  noticeListeners?: Set<(value: NativeNotice) => void>;
 };
 function privateAddress(address: string): boolean {
   if (address.includes(":"))
@@ -96,6 +120,8 @@ export async function validateBrowserUrl(
 export function safeBrowserUrl(value: string): string {
   try {
     const url = new URL(value);
+    // about:blank and other opaque URLs have a "null" origin.
+    if (!["http:", "https:"].includes(url.protocol)) return "about:blank";
     return `${url.origin}${url.pathname}`;
   } catch {
     return "about:blank";
@@ -103,9 +129,12 @@ export function safeBrowserUrl(value: string): string {
 }
 
 import { redactFormValues } from "./accessibility";
+import { performAction, pointerActions } from "./actions";
+import { installCursor } from "./cursor";
 import { browserDisplay } from "./display";
 import { BrowserDownloads } from "./downloads";
 import { ExtensionRelay, extensionPairing } from "./extension-relay";
+import { disablePasskeys, type NativeNotice, tameNativeUi } from "./native";
 import { readGoogleSheet } from "./sheets";
 
 export class BrowserActionNotStarted extends Error {}
@@ -117,6 +146,7 @@ export class BrowserHost {
     { generation: number; promise: Promise<Context> }
   >();
   private attachedBrowser?: Browser;
+  private userAgents = new Map<string, string>();
   private relay?: ExtensionRelay;
   readonly backend: BrowserBackend;
   constructor(
@@ -146,6 +176,7 @@ export class BrowserHost {
   static async available(): Promise<boolean> {
     if (["personal-chrome", "extension"].includes(browserBackend()))
       return true;
+    if (managedBrowserChannel() === "chrome") return true;
     const executable = managedBrowserExecutable();
     if (executable) return existsSync(executable);
     const cache = process.env.PLAYWRIGHT_BROWSERS_PATH;
@@ -190,10 +221,12 @@ export class BrowserHost {
     );
     for (const [id, context] of this.contexts) {
       const generation = allowed.get(id);
-      if (
-        generation === undefined ||
-        Date.now() - context.lastUsed > (this.options.idleMs ?? 120000)
-      ) {
+      // A browser waiting on a sign-in page keeps its progress (typed email,
+      // challenge step) long enough for the owner to come back to it.
+      const idle = browserLoginState(context.page.url())
+        ? Math.max(this.options.idleMs ?? 120000, 15 * 60000)
+        : (this.options.idleMs ?? 120000);
+      if (generation === undefined || Date.now() - context.lastUsed > idle) {
         await this.release(context);
         this.contexts.delete(id);
       } else context.generation = generation;
@@ -210,6 +243,7 @@ export class BrowserHost {
     await this.disconnectIfIdle();
     const { rm } = await import("node:fs/promises");
     await rm(join(this.root, id), { recursive: true, force: true });
+    await rm(join(this.root, `${id}-chrome`), { recursive: true, force: true });
   }
   async close() {
     await Promise.allSettled(
@@ -311,6 +345,7 @@ export class BrowserHost {
         page,
         lastUsed: Date.now(),
         generation: identity.generation,
+        listeners: new Set(),
       };
       this.contexts.set(identity.id, result);
       return result;
@@ -381,7 +416,12 @@ export class BrowserHost {
     if (!/^[a-zA-Z0-9_-]{1,100}$/.test(identity.id))
       throw new Error("Invalid browser identity path.");
     const { chromium } = await import("patchright");
-    const path = join(this.root, identity.id);
+    const channel = managedBrowserChannel();
+    // Chrome must not open a profile written by the newer bundled build.
+    const path = join(
+      this.root,
+      channel === "chrome" ? `${identity.id}-chrome` : identity.id,
+    );
     await mkdir(path, { recursive: true, mode: 0o700 });
     if ((await lstat(path)).isSymbolicLink())
       throw new Error("Browser profile cannot be a symlink.");
@@ -390,24 +430,65 @@ export class BrowserHost {
       process.env.HARNESS_BROWSER_VIRTUAL_DISPLAY === "1"
         ? await browserDisplay()
         : undefined;
-    const context = await chromium
-      .launchPersistentContext(path, {
-        channel: "chromium",
-        headless: display ? false : (this.options.headless ?? true),
+    const headless = display ? false : (this.options.headless ?? true);
+    const launch = (userAgent?: string) =>
+      chromium.launchPersistentContext(path, {
+        channel,
+        headless,
         ...(display ? { env: { ...process.env, ...display.env } } : {}),
-        executablePath: managedBrowserExecutable(),
+        ...(channel === "chromium"
+          ? { executablePath: managedBrowserExecutable() }
+          : {}),
+        ...(userAgent ? { userAgent } : {}),
         viewport: { width: 1280, height: 800 },
         deviceScaleFactor: 1,
         acceptDownloads: true,
         serviceWorkers: "block",
-      })
-      .catch(async (error) => {
-        await display?.close();
-        throw error;
       });
+    // The cached user agent survives worker restarts, so only the very first
+    // launch on a host needs the extra relaunch below.
+    const agents = join(this.root, "user-agents.json");
+    const agentKey = `${channel}:${managedBrowserExecutable() ?? ""}`;
+    if (headless && !this.userAgents.has(channel))
+      try {
+        const cached = JSON.parse(await readFile(agents, "utf8"))[agentKey];
+        if (typeof cached === "string" && cached.startsWith("Mozilla/"))
+          this.userAgents.set(channel, cached);
+      } catch {}
+    let context = await launch(
+      headless ? this.userAgents.get(channel) : undefined,
+    ).catch(async (error) => {
+      await display?.close();
+      throw error;
+    });
+    if (headless) {
+      // The real version is only known after launching. Browser.getVersion
+      // reports the default (HeadlessChrome) agent even under an override, so
+      // relaunch only when no agent is known yet or Chrome has updated.
+      const session = await context.newCDPSession(
+        context.pages()[0] ?? (await context.newPage()),
+      );
+      const wanted = visibleUserAgent(
+        (await session.send("Browser.getVersion")).userAgent,
+      );
+      await session.detach().catch(() => {});
+      if (this.userAgents.get(channel) !== wanted) {
+        this.userAgents.set(channel, wanted);
+        await writeFile(agents, JSON.stringify({ [agentKey]: wanted }), {
+          mode: 0o600,
+        }).catch(() => {});
+        await context.close();
+        context = await launch(wanted).catch(async (error) => {
+          await display?.close();
+          throw error;
+        });
+      }
+    }
     try {
       context.setDefaultTimeout(10000);
       await this.restrictNetwork(context);
+      await installCursor(context);
+      await disablePasskeys(context);
       if (identity.stateCipher) {
         const state = openState<{
           cookies: Parameters<BrowserContext["addCookies"]>[0];
@@ -430,10 +511,18 @@ export class BrowserHost {
         }, state.origins);
       }
       const downloads = new BrowserDownloads(join(path, "harness-downloads"));
-      const watch = (page: Page) =>
+      const notices: NativeNotice[] = [];
+      const noticeListeners = new Set<(value: NativeNotice) => void>();
+      const watch = (page: Page) => {
         page.on("download", (download) => {
           void downloads.receive(download).catch(() => {});
         });
+        void tameNativeUi(page, (value) => {
+          notices.push(value);
+          notices.splice(0, Math.max(0, notices.length - 5));
+          for (const listener of noticeListeners) listener(value);
+        });
+      };
       context.pages().forEach(watch);
       context.on("page", watch);
       const page = context.pages()[0] ?? (await context.newPage());
@@ -445,7 +534,23 @@ export class BrowserHost {
         page,
         lastUsed: Date.now(),
         generation: identity.generation,
+        listeners: new Set(),
+        notices,
+        noticeListeners,
       };
+      // The newest open tab is the active one, as in a person's browser.
+      const activate = (next: Page) => {
+        result.page = next;
+        for (const listener of result.listeners) listener(next);
+      };
+      context.on("page", (opened) => {
+        activate(opened);
+        opened.on("close", () => {
+          const remaining = context.pages().filter((item) => !item.isClosed());
+          const last = remaining.at(-1);
+          if (result.page === opened && last) activate(last);
+        });
+      });
       this.contexts.set(identity.id, result);
       return result;
     } catch (error) {
@@ -467,8 +572,27 @@ export class BrowserHost {
       );
     const context = await this.get(assignment);
     context.lastUsed = Date.now();
+    // A profile reopened after its idle timeout starts blank. Return to the
+    // page that asked for sign-in so the viewer sees the real login screen.
+    const last = assignment.identity.lastUrl;
+    // Google sign-in URLs lose their required parameters when stored; reopen
+    // the account chooser instead of a 400 page.
+    const resume =
+      last && /^https:\/\/accounts\.google\.com\//.test(last)
+        ? "https://accounts.google.com/"
+        : last;
+    if (context.page.url() === "about:blank" && resume)
+      await this.liveNavigate(context.page, resume).catch(() => {});
     return {
-      page: context.page,
+      current: () => context.page,
+      onPage: (listener: (page: Page) => void) => {
+        context.listeners.add(listener);
+        return () => context.listeners.delete(listener);
+      },
+      onNotice: (listener: (value: NativeNotice) => void) => {
+        context.noticeListeners?.add(listener);
+        return () => context.noticeListeners?.delete(listener);
+      },
       downloads: context.downloads,
       touch: () => {
         context.lastUsed = Date.now();
@@ -491,6 +615,7 @@ export class BrowserHost {
     }
     const args = JSON.parse(command.arguments) as Record<string, unknown>;
     const page = context.page;
+    const actionStarted = Date.now();
     context.lastUsed = Date.now();
     if (command.action === "manual") {
       if (
@@ -588,21 +713,9 @@ export class BrowserHost {
         "Browser input and model capture are paused while the user controls it.",
       );
     let targetLabel = "";
-    if (["click", "fill"].includes(command.action)) {
-      const target = page.locator(String(args.selector)).first();
-      targetLabel = await target.evaluate((element) =>
-        (
-          element.getAttribute("aria-label") ||
-          element.getAttribute("placeholder") ||
-          element.getAttribute("title") ||
-          element.getAttribute("name") ||
-          (element.tagName === "INPUT" ? "field" : element.textContent) ||
-          "element"
-        )
-          .trim()
-          .slice(0, 100),
-      );
-    }
+    let point: { x: number; y: number } | undefined;
+    let snapshot: string | undefined;
+    let dropdown: unknown;
     if (command.action === "navigate")
       await page.goto(
         await validateBrowserUrl(
@@ -611,23 +724,14 @@ export class BrowserHost {
         ),
         { waitUntil: "domcontentloaded", timeout: 20000 },
       );
-    else if (command.action === "click")
-      await page.locator(String(args.selector)).first().click();
-    else if (command.action === "fill") {
-      const locator = page.locator(String(args.selector)).first();
-      const [type, autocomplete] = await Promise.all([
-        locator.getAttribute("type"),
-        locator.getAttribute("autocomplete"),
-      ]);
-      if (
-        type === "password" ||
-        /password|one-time-code/i.test(autocomplete ?? "")
-      )
-        throw new Error(
-          "This field requires manual login. Request browser takeover.",
-        );
-      await locator.fill(String(args.text ?? "").slice(0, 4000));
-    } else if (
+    else if (pointerActions.includes(command.action))
+      ({
+        targetLabel = "",
+        point,
+        snapshot,
+        dropdown,
+      } = await performAction(page, command.action, args));
+    else if (
       !["screenshot", "read", "sheet_read", "status"].includes(command.action)
     )
       throw new Error("Unsupported browser action.");
@@ -635,15 +739,33 @@ export class BrowserHost {
       url: safeBrowserUrl(page.url()),
       title: await page.title(),
       ...(targetLabel ? { targetLabel } : {}),
+      ...(point ? { point } : {}),
+      ...(dropdown ? { dropdown } : {}),
+      ...(context.notices?.some((notice) => notice.at >= actionStarted)
+        ? {
+            dialogs: context.notices
+              .filter((notice) => notice.at >= actionStarted)
+              .map(
+                (notice) =>
+                  `${notice.kind} ${notice.kind === "alert" ? "acknowledged" : "cancelled"}: ${notice.message}`,
+              ),
+          }
+        : {}),
+      ...(snapshot
+        ? { snapshot: redactFormValues(snapshot).slice(0, 20000) }
+        : {}),
     };
     const login = browserLoginState(page.url());
     if (login) {
       result.login = login;
+      // The requested page, not the login wall, is where the owner resumes:
+      // reopening it lets the site issue a fresh sign-in redirect.
+      if (command.action === "navigate") result.resumeUrl = String(args.url);
       result.status = "needs_login";
       result.hint =
         login === "rejected"
           ? "Google rejected this browser. The requested source was not read. Human sign-in in a supported browser is required; do not weaken account security."
-          : "Account sign-in is required. The requested source was not read. Request manual takeover and wait.";
+          : "Account sign-in is required. The requested source was not read. Call needs_login and finish the turn; the owner will reply after signing in.";
     } else if (command.action === "sheet_read")
       Object.assign(
         result,
@@ -667,7 +789,7 @@ export class BrowserHost {
         .first();
       result.text = (await content.innerText()).slice(0, 16000);
       result.accessibility = redactFormValues(
-        await content.ariaSnapshot(),
+        await content.ariaSnapshot({ mode: "ai" }),
       ).slice(0, 16000);
       if (result.loading)
         result.hint =

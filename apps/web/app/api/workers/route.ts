@@ -65,6 +65,29 @@ export async function POST(request: Request) {
     return failure(error);
   }
 }
+/** The owner renames or labels a machine, so sessions can require it. */
+export async function PATCH(request: Request) {
+  try {
+    const body = await jsonBody(request);
+    const store = await getStore();
+    const id = requiredText(body.id, "Worker ID", 100);
+    if (body.name !== undefined) {
+      await store.renameWorker(
+        id,
+        requiredText(body.name, "Machine name", 100),
+      );
+      return Response.json({ ok: true });
+    }
+    return Response.json(
+      await (await getStore()).setWorkerLabels(
+        requiredText(body.id, "Worker ID", 100),
+        body.labels,
+      ),
+    );
+  } catch (error) {
+    return failure(error);
+  }
+}
 export async function DELETE(request: Request) {
   try {
     const body = await jsonBody(request);

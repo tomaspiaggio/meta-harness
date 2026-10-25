@@ -47,6 +47,64 @@ export interface WorkerRecord {
   report: WorkerReport | null;
   seenAt: number | null;
   draining: number;
+  /** Labels the owner gave this machine, such as "asap7" or "mac". */
+  labels?: string[];
+}
+const LABEL = /^[a-z0-9][a-z0-9._-]{0,39}$/;
+/** Owner labels: lowercase words, digits, dots, dashes and underscores. */
+export function parseLabels(value: unknown): string[] {
+  const items =
+    typeof value === "string"
+      ? value.split(/[\s,]+/)
+      : Array.isArray(value)
+        ? value
+        : value === null || value === undefined
+          ? []
+          : null;
+  if (!items || items.some((item) => typeof item !== "string"))
+    throw new HarnessError("Labels must be a list of words.");
+  const labels = [
+    ...new Set(
+      (items as string[])
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+  const invalid = labels.find((label) => !LABEL.test(label));
+  if (invalid)
+    throw new HarnessError(
+      `"${invalid}" is not a valid label. Use up to 40 lowercase letters, digits, dots, dashes or underscores.`,
+    );
+  if (labels.length > 16) throw new HarnessError("Use at most 16 labels.");
+  return labels;
+}
+/** Stored as a comma-separated list; labels never contain commas. */
+export function labelList(stored: string | null | undefined): string[] {
+  return stored ? stored.split(",").filter(Boolean) : [];
+}
+/**
+ * Everything a machine offers, like Kubernetes node labels: the agents it
+ * runs, "browser" when it has one, labels set in its environment, and labels
+ * the owner added.
+ */
+export function workerLabels(worker: WorkerRecord): string[] {
+  const report = worker.report;
+  return [
+    ...new Set([
+      ...(report?.providers ?? []).filter((provider) => provider !== "demo"),
+      ...(report?.browserHost ? ["browser"] : []),
+      ...(report?.labels ?? []).map((label) => label.toLowerCase()),
+      ...(worker.labels ?? []),
+    ]),
+  ];
+}
+/** Labels a session requires that this machine lacks. */
+export function missingLabels(
+  required: string[],
+  worker: WorkerRecord,
+): string[] {
+  const offered = workerLabels(worker);
+  return required.filter((label) => !offered.includes(label));
 }
 export interface Allocation {
   profile: ResourceProfile;
@@ -72,7 +130,9 @@ export function admissionReason(
     return "All agent slots are occupied";
   if (provider !== "demo" && report.memoryPressure === "critical")
     return "Host memory pressure is critical; waiting for it to ease";
-  if (provider !== "demo" && report.loadPerCpu > report.maxLoadPerCpu)
+  // Agent turns mostly wait on a remote model; only builds add real CPU work.
+  // A host busy with other work (a laptop) still takes conversation turns.
+  if (profile === "build" && report.loadPerCpu > report.maxLoadPerCpu)
     return "Host CPU load is above the configured threshold";
   const needs = requirements(profile, provider);
   const used = allocations.reduce(

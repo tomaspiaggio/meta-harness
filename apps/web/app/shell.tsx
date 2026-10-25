@@ -48,6 +48,7 @@ import {
   SidebarProvider,
   SidebarRail,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -55,6 +56,7 @@ import { cn } from "@/lib/utils";
 
 import { AccountMenu } from "./account-menu";
 import { DeleteDialog, type DeleteTarget } from "./delete-dialog";
+import { refreshPush } from "./push-client";
 
 type Tree = {
   defaults?: AgentDefaults;
@@ -86,6 +88,36 @@ export function conversationHref(
   if (sessionId) query.set("session", sessionId);
   return `/?${query}`;
 }
+/**
+ * A home-screen app keeps running the code it first loaded. After a deploy it
+ * would keep calling actions the server no longer has, so reload into the new
+ * version when the app comes back to the foreground or sits idle.
+ */
+function useLatestBuild() {
+  useEffect(() => {
+    const check = async () => {
+      if (document.hidden) return;
+      const typing = document.activeElement?.matches("input, textarea");
+      try {
+        const response = await fetch("/api/version", { cache: "no-store" });
+        const { build } = await response.json();
+        if (build && build !== process.env.HARNESS_BUILD && !typing)
+          location.reload();
+      } catch {
+        // Offline or mid-deploy: check again later.
+      }
+    };
+    document.addEventListener("visibilitychange", check);
+    const timer = setInterval(check, 5 * 60000);
+    void check();
+    void refreshPush().catch(() => {});
+    return () => {
+      document.removeEventListener("visibilitychange", check);
+      clearInterval(timer);
+    };
+  }, []);
+}
+
 export function Shell({
   children,
   actions,
@@ -93,6 +125,7 @@ export function Shell({
   children: React.ReactNode;
   actions?: React.ReactNode;
 }) {
+  useLatestBuild();
   const pathname = usePathname();
   const section =
     sections.find((item) =>
@@ -133,14 +166,20 @@ export function Shell({
   const refresh = useCallback(() => load.current(), []);
   return (
     <TreeContext.Provider value={{ tree, refresh }}>
-      <SidebarProvider className="h-svh">
+      <SidebarProvider className="fixed inset-0 min-h-0">
         <Suspense fallback={null}>
           <AppSidebar tree={tree} refresh={refresh} />
         </Suspense>
         <SidebarInset className="min-h-0 overflow-hidden">
-          <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
+          <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3 pt-[env(safe-area-inset-top)] box-content">
             <SidebarTrigger className="-ml-1" />
-            <Tabs value={section} className="min-w-0 overflow-x-auto">
+            <span className="min-w-0 truncate text-sm font-medium md:hidden">
+              {sections.find((item) => item.href === section)?.label}
+            </span>
+            <Tabs
+              value={section}
+              className="hidden min-w-0 overflow-x-auto md:block"
+            >
               <TabsList variant="line" className="h-12 w-max gap-0 p-0">
                 {sections.map((item) => (
                   <TabsTrigger
@@ -186,6 +225,12 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
   const [title, setTitle] = useState("");
   const [savingTitle, setSavingTitle] = useState(false);
   const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
+  const { isMobile, setOpenMobile } = useSidebar();
+  const location = `${pathname}?${params}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: close the phone drawer after each navigation
+  useEffect(() => {
+    if (isMobile) setOpenMobile(false);
+  }, [location]);
   return (
     <Sidebar collapsible="offcanvas">
       <DeleteDialog
@@ -215,6 +260,26 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
         </Link>
       </SidebarHeader>
       <SidebarContent>
+        {isMobile && (
+          <SidebarGroup>
+            <SidebarMenu>
+              {sections.map((item) => (
+                <SidebarMenuItem key={item.href}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={
+                      item.href === "/"
+                        ? pathname === "/"
+                        : pathname.startsWith(item.href)
+                    }
+                  >
+                    <Link href={item.href}>{item.label}</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroup>
+        )}
         <SidebarGroup>
           <SidebarGroupLabel className="font-mono uppercase tracking-wider">
             Workspaces
@@ -315,18 +380,24 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
                       asChild
                       isActive={current && !sessionId}
                       tooltip={workspace.name}
+                      // Leave room for the count badge and both actions.
+                      className="pr-28"
                     >
                       <Link
                         href={conversationHref(workspace.id)}
-                        onClick={() =>
+                        onClick={(event) => {
+                          // On a phone the drawer closes after navigating, so
+                          // a workspace tap only opens its sessions; "New
+                          // session" or a session navigates.
+                          if (isMobile) event.preventDefault();
                           setExpanded((state) => ({
                             ...state,
-                            [workspace.id]: true,
-                          }))
-                        }
+                            [workspace.id]: isMobile ? !open : true,
+                          }));
+                        }}
                       >
                         {open ? <FolderOpen /> : <Folder />}
-                        <span>{workspace.name}</span>
+                        <span className="truncate">{workspace.name}</span>
                       </Link>
                     </SidebarMenuButton>
                     <SidebarMenuBadge
@@ -616,8 +687,8 @@ export function PageHeading({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="mb-6 flex items-end justify-between gap-4">
-      <div>
+    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
+      <div className="shrink-0">
         <div className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
           {eyebrow}
         </div>

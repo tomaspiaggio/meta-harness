@@ -45,7 +45,9 @@ test("Claude SDK normalizes transcript keys across directories without changing 
         process.env.CLAUDE_CONFIG_DIR,
       );
       assert.equal(options.env?.HARNESS_WORKER_TOKEN_FILE, undefined);
-      assert.deepEqual(options.allowedTools, ["Edit(./DECISION_UPDATES.json)"]);
+      // Full access by default, like the owner's own sessions.
+      assert.equal(options.permissionMode, "bypassPermissions");
+      assert.equal(options.allowDangerouslySkipPermissions, true);
       if (!options.sessionStore) throw new Error("Missing store");
       await options.sessionStore.append(
         { projectKey: "-mac-session", sessionId: "native-id" },

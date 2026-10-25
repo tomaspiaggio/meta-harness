@@ -5,7 +5,7 @@ import type { Attachment } from "@harness/core/attachments";
 import type { Schedule } from "@harness/core/automations";
 import type { Decision } from "@harness/core/knowledge";
 import { type AgentProvider, defaultAgentDefaults } from "@harness/core/models";
-import { ArrowUp, Globe2, Square } from "lucide-react";
+import { ArrowUp, Globe2, SlidersHorizontal, Square } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -28,9 +28,17 @@ import {
   type PendingFile,
   uploadAttachment,
 } from "./attachment-input";
-import { BrowserPanel } from "./browser-panel";
+import { BrowserPanel, type BrowserStep } from "./browser-panel";
+import { BrowserSteps } from "./browser-steps";
+import {
+  DelegationsCard,
+  type DelegationTag,
+  type DelegationView,
+  SessionLink,
+} from "./delegations";
 import { MarkdownMessage } from "./markdown";
 import { ModelPicker } from "./model-picker";
+import { type Placement, PlacementPanel } from "./placement";
 import { ScheduleCard } from "./schedule-card";
 import {
   conversationHref,
@@ -45,6 +53,8 @@ type State = {
   workspaces: Workspace[];
   sessions: Session[];
   schedules?: Schedule[];
+  delegations?: DelegationView[];
+  placement?: Placement | null;
   inputRequests?: {
     id: string;
     sessionId: string;
@@ -52,9 +62,11 @@ type State = {
     message: string;
   }[];
   turns: (Turn & {
+    worker?: { name: string; hostname: string | null } | null;
     waitingReason?: string | null;
     publications?: Decision[];
     attachments?: Attachment[];
+    delegation?: DelegationTag | null;
   })[];
 };
 const initial: State = { workspaces: [], sessions: [], turns: [] };
@@ -114,12 +126,18 @@ function Conversation() {
   const [models, setModels] = useState(defaultAgentDefaults.models);
   const choicesEdited = useRef(false);
   const [modelBusy, setModelBusy] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [labelsBusy, setLabelsBusy] = useState(false);
+  // Labels chosen before the first message create the session with them.
+  const [draftLabels, setDraftLabels] = useState<string[]>([]);
+  const [draftSandboxed, setDraftSandboxed] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [dragging, setDragging] = useState(false);
   const [browserOpen, setBrowserOpen] = useState(false);
+  const [browserSteps, setBrowserSteps] = useState<BrowserStep[]>([]);
   const draftSession = useRef<{ location: string; id: string } | null>(null);
   const routeKey = `${workspaceId}:${sessionId ?? ""}`;
   const currentLocation = useRef(routeKey);
@@ -141,6 +159,9 @@ function Conversation() {
   const turns = state.turns.filter((t) => t.sessionId === sessionId);
   const workspace = state.workspaces.find((w) => w.id === workspaceId);
   const selected = state.sessions.find((s) => s.id === sessionId);
+  const sessionLabels = sessionId
+    ? (selected?.requiredLabels ?? "").split(",").filter(Boolean)
+    : draftLabels;
   const active = turns.some((turn) => !isTerminal(turn.status));
   const activeTurn =
     turns.find((turn) => turn.status === "running") ??
@@ -154,6 +175,10 @@ function Conversation() {
     setFiles([]);
     setPrompt("");
     setBrowserOpen(false);
+    setBrowserSteps([]);
+    setAdvanced(false);
+    setDraftLabels([]);
+    setDraftSandboxed(false);
   }, [routeKey]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: initialize defaults after the composer location resets
   useEffect(() => {
@@ -328,6 +353,18 @@ function Conversation() {
           model: provider === "demo" ? null : models[provider],
         });
         id = session.id;
+        if (draftLabels.length)
+          await post<Session>(
+            "sessions",
+            { id, action: "labels", labels: draftLabels },
+            "PATCH",
+          );
+        if (draftSandboxed)
+          await post<Session>(
+            "sessions",
+            { id, action: "sandboxed", sandboxed: true },
+            "PATCH",
+          );
         draftSession.current = { location: routeKey, id };
         setState((s) => ({ ...s, sessions: [session, ...s.sessions] }));
         refreshTree();
@@ -480,16 +517,63 @@ function Conversation() {
               </p>
             </div>
           )}
-          {turns.map((turn) => (
+          {turns.map((turn, index) => (
             <article
               key={turn.id}
               className="animate-in fade-in border-b py-7 first:pt-0 last:border-0"
             >
               <div className="rounded-lg bg-muted px-4 py-3">
-                <Role>You</Role>
-                <div className="whitespace-pre-wrap break-words">
-                  {turn.prompt}
-                </div>
+                {turn.id.startsWith("continue:") ? (
+                  <>
+                    <Role className="flex-wrap normal-case tracking-normal">
+                      Next step queued by the agent ·{" "}
+                      {turn.requiredLabels
+                        ? `needs ${turn.requiredLabels.split(",").join(", ")}`
+                        : "any machine"}
+                    </Role>
+                    {turn.placementReason && (
+                      <p className="mb-2 text-sm text-muted-foreground">
+                        Why: {turn.placementReason}
+                      </p>
+                    )}
+                    <MarkdownMessage>{turn.prompt}</MarkdownMessage>
+                  </>
+                ) : turn.delegation ? (
+                  <>
+                    <Role className="flex-wrap normal-case tracking-normal">
+                      {turn.delegation.role === "report" ? (
+                        <>
+                          Report from{" "}
+                          <SessionLink session={turn.delegation.peer} />
+                          {turn.delegation.status && (
+                            <StatusBadge status={turn.delegation.status} />
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {turn.delegation.role === "task"
+                            ? "Task from"
+                            : "Follow-up from"}{" "}
+                          <SessionLink session={turn.delegation.peer} />
+                          {turn.delegation.round > 1 &&
+                            ` · round ${turn.delegation.round}`}
+                        </>
+                      )}
+                    </Role>
+                    <MarkdownMessage>
+                      {turn.delegation.role === "report"
+                        ? turn.prompt.replace(/^[^\n]*\n+/, "")
+                        : turn.prompt}
+                    </MarkdownMessage>
+                  </>
+                ) : (
+                  <>
+                    <Role>You</Role>
+                    <div className="whitespace-pre-wrap break-words">
+                      {turn.prompt}
+                    </div>
+                  </>
+                )}
                 {!!turn.attachments?.length && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {turn.attachments.map((file) => (
@@ -506,6 +590,13 @@ function Conversation() {
                   </div>
                 )}
               </div>
+              <p className="mt-1.5 px-1 font-mono text-[11px] text-muted-foreground">
+                {turn.worker
+                  ? `Picked up by ${turn.worker.name}${turn.worker.hostname && turn.worker.hostname !== turn.worker.name ? ` · ${turn.worker.hostname}` : ""}${movedFrom(turns, index) ? ` · moved from ${movedFrom(turns, index)}` : ""}`
+                  : isTerminal(turn.status)
+                    ? "No worker ran this message"
+                    : "Waiting for a worker to pick this up"}
+              </p>
               <div className="px-0.5 pt-5">
                 <Role className="text-primary">
                   {selected?.provider ?? "agent"}
@@ -547,6 +638,10 @@ function Conversation() {
                           "Waiting for an eligible worker…")}
                   </p>
                 )}
+                <BrowserSteps
+                  steps={browserSteps.filter((step) => step.turnId === turn.id)}
+                  onWatch={() => setBrowserOpen(true)}
+                />
                 {turn.model && (
                   <p className="mb-2 text-xs text-muted-foreground">
                     {turn.model}
@@ -580,15 +675,19 @@ function Conversation() {
               sessionId={sessionId}
               open={browserOpen}
               onOpenChange={setBrowserOpen}
+              onSteps={setBrowserSteps}
               needsLogin={state.inputRequests?.some(
                 (request) =>
                   request.sessionId === sessionId &&
                   request.kind === "browser-login",
               )}
-              onResume={() => {
-                void refresh.current();
-                refreshTree();
-              }}
+            />
+          )}
+          {sessionId && (
+            <DelegationsCard
+              sessionId={sessionId}
+              delegations={state.delegations ?? []}
+              onChange={() => void refresh.current()}
             />
           )}
           {state.schedules
@@ -605,6 +704,50 @@ function Conversation() {
                   refreshTree();
                 }}
               />
+            ))}
+          {state.inputRequests
+            ?.filter(
+              (request) =>
+                request.sessionId === sessionId &&
+                request.kind === "browser-login",
+            )
+            .slice(0, 1)
+            .map((request) => (
+              <div
+                key={request.id}
+                className="my-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warning bg-warning/5 px-3 py-2 text-sm"
+              >
+                <p className="min-w-0 flex-1">
+                  <span className="font-medium">Sign-in needed.</span>{" "}
+                  <span className="text-muted-foreground">
+                    {request.message}
+                  </span>
+                </p>
+                {!browserOpen && (
+                  <Button size="sm" onClick={() => setBrowserOpen(true)}>
+                    <Globe2 /> Sign in
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    void perform(async () => {
+                      await post("browser", {
+                        action: "dismiss",
+                        workspaceId,
+                        sessionId,
+                      });
+                      setBrowserOpen(false);
+                      await refresh.current();
+                      refreshTree();
+                    })
+                  }
+                >
+                  Dismiss
+                </Button>
+              </div>
             ))}
           {state.inputRequests
             ?.filter(
@@ -714,6 +857,61 @@ function Conversation() {
               keep their model.
             </p>
           )}
+          {advanced && (
+            <PlacementPanel
+              placement={state.placement}
+              labels={sessionLabels}
+              provider={selected?.provider ?? provider}
+              disabled={busy || labelsBusy}
+              workspace={workspace}
+              sandboxed={sessionId ? !!selected?.sandboxed : draftSandboxed}
+              onSandboxed={(sandboxed) => {
+                if (!sessionId) {
+                  setDraftSandboxed(sandboxed);
+                  return;
+                }
+                setLabelsBusy(true);
+                setError("");
+                void post<Session>(
+                  "sessions",
+                  { id: sessionId, action: "sandboxed", sandboxed },
+                  "PATCH",
+                )
+                  .then(() => refresh.current())
+                  .catch((reason) => setError(reason.message))
+                  .finally(() => setLabelsBusy(false));
+              }}
+              onFolder={(folder) => {
+                setLabelsBusy(true);
+                setError("");
+                void post(
+                  "workspaces",
+                  { id: workspaceId, folder: folder || null },
+                  "PATCH",
+                )
+                  .then(() => refresh.current())
+                  .then(() => refreshTree())
+                  .catch((reason) => setError(reason.message))
+                  .finally(() => setLabelsBusy(false));
+              }}
+              onChange={(labels) => {
+                if (!sessionId) {
+                  setDraftLabels(labels);
+                  return;
+                }
+                setLabelsBusy(true);
+                setError("");
+                void post<Session>(
+                  "sessions",
+                  { id: sessionId, action: "labels", labels },
+                  "PATCH",
+                )
+                  .then(() => refresh.current())
+                  .catch((reason) => setError(reason.message))
+                  .finally(() => setLabelsBusy(false));
+              }}
+            />
+          )}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <FilePicker files={files} disabled={busy} onFiles={addFiles} />
             {sessionId && (
@@ -728,6 +926,18 @@ function Conversation() {
                 <Globe2 />
               </Button>
             )}
+            <Button
+              type="button"
+              variant={advanced ? "secondary" : "ghost"}
+              size="sm"
+              aria-expanded={advanced}
+              title="Advanced: which machines run this conversation"
+              onClick={() => setAdvanced(!advanced)}
+              className="text-xs text-muted-foreground"
+            >
+              <SlidersHorizontal />
+              {sessionLabels.length ? sessionLabels.join(", ") : "Advanced"}
+            </Button>
             {!sessionId ? (
               <ToggleGroup
                 type="single"
@@ -830,6 +1040,18 @@ function Conversation() {
       </div>
     </section>
   );
+}
+/** The machine the previous step ran on, when this step ran elsewhere. */
+function movedFrom(
+  turns: { worker?: { name: string } | null }[],
+  index: number,
+): string | null {
+  const current = turns[index]?.worker?.name;
+  const previous = turns
+    .slice(0, index)
+    .reverse()
+    .find((turn) => turn.worker)?.worker?.name;
+  return current && previous && previous !== current ? previous : null;
 }
 function Role({
   children,

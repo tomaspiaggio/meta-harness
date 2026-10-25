@@ -139,7 +139,9 @@ export class BrowserBroker {
         .run(JSON.stringify({ execution: "not_started" }), id);
       await this.db
         .prepare(
-          "UPDATE browser_identities SET stateCipher = CASE WHEN workerId = ? THEN stateCipher ELSE NULL END, lastUrl = CASE WHEN workerId = ? THEN lastUrl ELSE NULL END, workerId = ?, generation = generation + 1, leaseUntil = ?, status = 'starting', mode = 'agent', userPublicKey = NULL, expiresAt = NULL, frame = NULL, frameAt = NULL, error = NULL, updatedAt = ? WHERE id = ?",
+          // An idle release clears workerId; keep lastUrl then, so a reopened
+          // browser returns to the page that needed sign-in, not about:blank.
+          "UPDATE browser_identities SET stateCipher = CASE WHEN workerId = ? THEN stateCipher ELSE NULL END, lastUrl = CASE WHEN workerId = ? OR workerId IS NULL THEN lastUrl ELSE NULL END, workerId = ?, generation = generation + 1, leaseUntil = ?, status = 'starting', mode = 'agent', userPublicKey = NULL, expiresAt = NULL, frame = NULL, frameAt = NULL, error = NULL, updatedAt = ? WHERE id = ?",
         )
         .run(candidate, candidate, candidate, now + 30000, now, id);
       browser = await this.get(id);
@@ -439,9 +441,14 @@ export class BrowserBroker {
         )
         .run(
           error ? "error" : "ready",
-          typeof result?.url === "string"
-            ? result.url.slice(0, 4000)
-            : browser.lastUrl,
+          typeof result?.resumeUrl === "string"
+            ? result.resumeUrl.slice(0, 4000)
+            : // A sign-in page's stripped URL cannot be reopened (Google answers
+              // 400); keep the page that led to it so the site redirects again.
+              typeof result?.url === "string" &&
+                !(result.login && browser.lastUrl)
+              ? result.url.slice(0, 4000)
+              : browser.lastUrl,
           result?.frame
             ? JSON.stringify(result.frame)
             : typeof result?.image === "string"
@@ -592,7 +599,10 @@ export class BrowserBroker {
       .run(now - 90000);
     await this.db
       .prepare(
-        "UPDATE browser_identities SET mode = 'paused', generation = generation + 1, userPublicKey = NULL, expiresAt = NULL, frame = NULL WHERE mode = 'human' AND expiresAt <= ?",
+        // An abandoned takeover returns the browser to the agent. Nothing else
+        // ever clears 'paused' while the host keeps its lease, so pausing here
+        // locked agents out until the host went idle.
+        "UPDATE browser_identities SET mode = 'agent', generation = generation + 1, userPublicKey = NULL, expiresAt = NULL, frame = NULL WHERE mode = 'human' AND expiresAt <= ?",
       )
       .run(now);
     await this.db
@@ -600,6 +610,14 @@ export class BrowserBroker {
         "UPDATE browser_commands SET status = 'unknown_outcome', error = 'Browser execution lease expired.' WHERE status = 'running' AND browserId IN (SELECT id FROM browser_identities WHERE leaseUntil <= ?)",
       )
       .run(now);
+  }
+}
+
+function siteName(value: unknown): string {
+  try {
+    return ` to ${new URL(String(value)).hostname.replace(/^www\./, "")}`;
+  } catch {
+    return "";
   }
 }
 
@@ -624,7 +642,7 @@ export async function browserTool(
         url: browser.lastUrl,
         workerId: browser.workerId,
         instruction:
-          "This host uses its own browser login state. If the required account is signed out, navigate to the login page and call needs_login for interactive takeover. Never request passwords in chat.",
+          "This host uses its own browser login state. If the required account is signed out, navigate to the page you need and call needs_login; the owner signs in in the shared browser and replies. Never request passwords in chat.",
       },
     };
   if (action === "needs_login") {
@@ -633,23 +651,39 @@ export async function browserTool(
       session.id,
       grant.turnId,
       "browser-login",
-      "Sign in to the workspace browser using the Sign in button, then return control to continue.",
+      `The agent needs you to sign in${siteName(browser.lastUrl)}. Open the browser, sign in, then reply here.`,
     );
     return {
       result: {
         status: "needs_login",
         instruction:
-          "Finish the turn and wait for the user to return browser control.",
+          "Finish the turn. The owner signs in in the shared browser and replies with a new message when done.",
       },
     };
   }
   if (
-    !["navigate", "click", "fill", "read", "sheet_read", "screenshot"].includes(
-      action,
-    )
+    ![
+      "navigate",
+      "click",
+      "fill",
+      "type",
+      "press",
+      "hover",
+      "scroll",
+      "select",
+      "wait",
+      "snapshot",
+      "read",
+      "sheet_read",
+      "screenshot",
+    ].includes(action)
   )
     throw new HarnessError("Unsupported browser action.");
-  const mutating = ["navigate", "click", "fill"].includes(action);
+  // Page loads, scrolling and reads are safe to repeat; only input that can
+  // change external state goes through the operation ledger.
+  const mutating = ["click", "fill", "type", "press", "select"].includes(
+    action,
+  );
   const operationKey = mutating
     ? requiredText(args.operation_id, "Stable operation_id", 100)
     : crypto.randomUUID();
@@ -718,7 +752,7 @@ export async function browserTool(
     }
     const result = JSON.parse(command.result ?? "{}");
     const image =
-      !["read", "sheet_read"].includes(action) &&
+      !["read", "sheet_read", "snapshot"].includes(action) &&
       typeof result.image === "string"
         ? result.image
         : undefined;
@@ -729,8 +763,8 @@ export async function browserTool(
         grant.turnId,
         "browser-login",
         result.login === "rejected"
-          ? "Google rejected this browser. Sign-in has not completed; open the browser to resolve access before continuing."
-          : "Sign in to the workspace browser, then choose Continue task.",
+          ? "Google rejected this browser's sign-in. Open the browser and try again (choose “Try another way” if Google asks for a passkey), then reply here."
+          : `The agent needs you to sign in${siteName(typeof result.resumeUrl === "string" ? result.resumeUrl : result.url)}. Open the browser, sign in, then reply here.`,
       );
     delete result.image;
     if (mutating)

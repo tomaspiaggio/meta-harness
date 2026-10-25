@@ -14,6 +14,8 @@ export interface Workspace {
   id: string;
   name: string;
   instructions: string;
+  /** Folder agents work in, on machines that have it, e.g. ~/Projects/litho. */
+  folder?: string | null;
 }
 export interface Session {
   model?: string | null;
@@ -28,6 +30,10 @@ export interface Session {
   provider: Provider;
   nativeId: string | null;
   ownerWorkerId?: string | null;
+  /** Comma-separated labels a machine needs to run this session. */
+  requiredLabels?: string | null;
+  /** 1 keeps this session's agent in the restricted sandbox. */
+  sandboxed?: number;
   createdAt: number;
 }
 export interface Turn {
@@ -44,6 +50,10 @@ export interface Turn {
   error: string | null;
   stopRequestedAt?: number | null;
   interruptsTurnId?: string | null;
+  /** Labels only this turn needs, set when an agent continues elsewhere. */
+  requiredLabels?: string | null;
+  /** Why the agent moved this step, shown to the owner. */
+  placementReason?: string | null;
   createdAt: number;
 }
 export interface ClaimedTurn {
@@ -56,6 +66,8 @@ export interface RuntimeInput {
   tools?: { url: string; token: string };
   identity?: { uid: number; gid: number; home: string };
   environment?: Record<string, string>;
+  /** The workspace folder on this machine, when it exists here. */
+  workingFolder?: string;
   turnId?: string;
   sessionStore?: NativeSessionStore;
   session: Session;
@@ -161,7 +173,7 @@ export async function executeTurn(
   sessionStore?: NativeSessionStore,
   context: Pick<
     RuntimeInput,
-    "attachments" | "environment" | "tools" | "identity"
+    "attachments" | "environment" | "tools" | "identity" | "workingFolder"
   > = {},
 ): Promise<void> {
   const { turn, session, workspace } = claim;

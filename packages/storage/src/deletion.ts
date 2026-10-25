@@ -123,8 +123,23 @@ export async function deleteResource(
           "worker_events",
           "turn_knowledge",
           "checkpoints",
+          "delegation_turns",
         ])
           await db.prepare(`DELETE FROM ${table} WHERE turnId = ?`).run(turnId);
+      }
+      // Tasks this session gave or received go with it; the other session
+      // keeps its own turns.
+      for (const delegation of await db
+        .prepare(
+          "SELECT id FROM delegations WHERE fromSessionId = ? OR toSessionId = ?",
+        )
+        .all(sessionId, sessionId)) {
+        await db
+          .prepare("DELETE FROM delegation_turns WHERE delegationId = ?")
+          .run(delegation.id);
+        await db
+          .prepare("DELETE FROM delegations WHERE id = ?")
+          .run(delegation.id);
       }
       for (const attachment of await db
         .prepare("SELECT objectKey FROM attachments WHERE sessionId = ?")

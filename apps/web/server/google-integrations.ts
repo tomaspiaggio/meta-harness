@@ -1,4 +1,11 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  randomBytes,
+  randomUUID,
+} from "node:crypto";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { HarnessError } from "@harness/core";
 import { createGoogleAdapter, googleDefinition } from "@harness/integrations";
 import {
@@ -6,6 +13,7 @@ import {
   type GoogleOAuthConfig,
   oauthHash,
 } from "@harness/integrations/oauth";
+import { dataDirectory } from "@harness/storage";
 import { GoogleAuthorizationStore } from "@harness/storage/google";
 import {
   googleAuthEnabled,
@@ -13,16 +21,120 @@ import {
   googleOwnerConfig,
   requireGoogleOwner,
 } from "./google-auth";
-import { cookie } from "./hosted-auth";
+import { cookie, hosted } from "./hosted-auth";
 import { registerIntegrationAdapter } from "./integrations";
+import { encryptionKey } from "./keys";
 import { getStore } from "./store";
 
+const RESOURCE_VARIABLES = [
+  "HARNESS_GOOGLE_RESOURCE_CLIENT_ID",
+  "HARNESS_GOOGLE_RESOURCE_CLIENT_SECRET",
+  "HARNESS_GOOGLE_RESOURCE_REDIRECT_URI",
+  "HARNESS_GOOGLE_RESOURCE_KEY",
+] as const;
+type ResourceVariable = (typeof RESOURCE_VARIABLES)[number];
+const storedClientPath = () =>
+  join(dataDirectory(), "google-resource-client.json");
+
+/**
+ * Settings can save the OAuth client instead of editing the control server's
+ * environment. The secret is sealed with the control encryption key; the token
+ * key is generated once and kept, because stored refresh tokens depend on it.
+ * Deployment variables, when present, always take precedence.
+ */
+function storedClient(): Partial<Record<ResourceVariable, string>> {
+  if (hosted()) return {};
+  try {
+    const path = storedClientPath();
+    if (!existsSync(path)) return {};
+    const value = JSON.parse(readFileSync(path, "utf8")) as {
+      clientId: string;
+      redirectUri: string;
+      tokenKey: string;
+      secret: { iv: string; tag: string; data: string };
+    };
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      Buffer.from(encryptionKey("google-resource-client"), "base64"),
+      Buffer.from(value.secret.iv, "base64"),
+    );
+    decipher.setAuthTag(Buffer.from(value.secret.tag, "base64"));
+    return {
+      HARNESS_GOOGLE_RESOURCE_CLIENT_ID: value.clientId,
+      HARNESS_GOOGLE_RESOURCE_CLIENT_SECRET: Buffer.concat([
+        decipher.update(Buffer.from(value.secret.data, "base64")),
+        decipher.final(),
+      ]).toString("utf8"),
+      HARNESS_GOOGLE_RESOURCE_REDIRECT_URI: value.redirectUri,
+      HARNESS_GOOGLE_RESOURCE_KEY: value.tokenKey,
+    };
+  } catch {
+    return {};
+  }
+}
+function resourceValue(name: ResourceVariable): string | undefined {
+  return process.env[name] || storedClient()[name];
+}
+export function saveGoogleResourceClient(
+  request: Request,
+  clientId: string,
+  clientSecret: string,
+) {
+  if (hosted())
+    throw new HarnessError(
+      "Hosted deployments configure Google through their environment.",
+      409,
+    );
+  if (RESOURCE_VARIABLES.some((name) => process.env[name]))
+    throw new HarnessError(
+      "This server's environment already configures Google access. Change it there.",
+      409,
+    );
+  if (!/^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(clientId.trim()))
+    throw new HarnessError(
+      "That does not look like a Google OAuth client ID (it ends in .apps.googleusercontent.com).",
+    );
+  if (clientSecret.trim().length < 10 || clientSecret.length > 200)
+    throw new HarnessError(
+      "Paste the client secret from the same OAuth client.",
+    );
+  const tokenKey =
+    storedClient().HARNESS_GOOGLE_RESOURCE_KEY ??
+    randomBytes(32).toString("base64url");
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(
+    "aes-256-gcm",
+    Buffer.from(encryptionKey("google-resource-client"), "base64"),
+    iv,
+  );
+  const data = Buffer.concat([
+    cipher.update(clientSecret.trim(), "utf8"),
+    cipher.final(),
+  ]);
+  const path = storedClientPath();
+  writeFileSync(
+    `${path}.tmp`,
+    JSON.stringify({
+      clientId: clientId.trim(),
+      redirectUri: googleResourceSetup(request).expectedRedirectUri,
+      tokenKey,
+      secret: {
+        iv: iv.toString("base64"),
+        tag: cipher.getAuthTag().toString("base64"),
+        data: data.toString("base64"),
+      },
+    }),
+    { mode: 0o600 },
+  );
+  renameSync(`${path}.tmp`, path);
+}
+
 export function googleResourceConfig(): GoogleOAuthConfig {
-  const clientId = process.env.HARNESS_GOOGLE_RESOURCE_CLIENT_ID;
-  const clientSecret = process.env.HARNESS_GOOGLE_RESOURCE_CLIENT_SECRET;
-  const redirectUri = process.env.HARNESS_GOOGLE_RESOURCE_REDIRECT_URI;
+  const clientId = resourceValue("HARNESS_GOOGLE_RESOURCE_CLIENT_ID");
+  const clientSecret = resourceValue("HARNESS_GOOGLE_RESOURCE_CLIENT_SECRET");
+  const redirectUri = resourceValue("HARNESS_GOOGLE_RESOURCE_REDIRECT_URI");
   const keyId = process.env.HARNESS_GOOGLE_RESOURCE_KEY_ID ?? "primary";
-  const encoded = process.env.HARNESS_GOOGLE_RESOURCE_KEY;
+  const encoded = resourceValue("HARNESS_GOOGLE_RESOURCE_KEY");
   if (
     !clientId ||
     !clientSecret ||
@@ -79,6 +191,8 @@ export function googleResourceConfig(): GoogleOAuthConfig {
 const GOOGLE_RESOURCE_CALLBACK = "/api/integrations/google/callback";
 export type GoogleResourceSetup = {
   configured: boolean;
+  source: "environment" | "settings" | null;
+  canSave: boolean;
   // Names only. Values, lengths and prefixes of secrets never leave the process.
   missing: string[];
   invalid: string[];
@@ -90,13 +204,12 @@ export type GoogleResourceSetup = {
 };
 // Non-secret readiness for Settings. Owner sign-in never implies resource consent.
 export function googleResourceSetup(request: Request): GoogleResourceSetup {
-  const env = process.env;
-  const missing = [
-    "HARNESS_GOOGLE_RESOURCE_CLIENT_ID",
-    "HARNESS_GOOGLE_RESOURCE_CLIENT_SECRET",
-    "HARNESS_GOOGLE_RESOURCE_REDIRECT_URI",
-    "HARNESS_GOOGLE_RESOURCE_KEY",
-  ].filter((name) => !env[name]);
+  const fromEnvironment = RESOURCE_VARIABLES.some((name) => process.env[name]);
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    ...(fromEnvironment ? {} : storedClient()),
+  };
+  const missing = RESOURCE_VARIABLES.filter((name) => !env[name]);
   const invalid: string[] = [];
   if (
     env.HARNESS_GOOGLE_RESOURCE_KEY &&
@@ -148,6 +261,12 @@ export function googleResourceSetup(request: Request): GoogleResourceSetup {
     }
   return {
     configured,
+    source: fromEnvironment
+      ? "environment"
+      : missing.length < RESOURCE_VARIABLES.length
+        ? "settings"
+        : null,
+    canSave: !hosted() && !fromEnvironment,
     missing,
     invalid,
     expectedRedirectUri,

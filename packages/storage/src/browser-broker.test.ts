@@ -129,6 +129,9 @@ test("browser host loss prefers the task worker, fences old commands and keeps l
     const requests = await store.inputsForSession(session.id);
     assert.equal(requests.length, 1);
     assert.equal(requests[0].kind, "browser-login");
+    // A new message moves on: the card does not linger in the session.
+    await store.submitMessage("owner-moves-on", session.id, "Never mind");
+    assert.equal((await store.inputsForSession(session.id)).length, 0);
     // Both hosts are healthy; the Pi task should use its own browser.
     assert.equal((await broker.ensure("tech", pi.id)).workerId, pi.id);
     let identity = await broker.ensure("business", mac.id);
@@ -307,6 +310,31 @@ test("browser broker fences host ownership, excludes model capture during takeov
       (await store.listTurns(session.id)).length,
       1,
       "releasing control does not send a message",
+    );
+    // An abandoned takeover hands the browser back to the agent instead of
+    // leaving it paused for as long as the host keeps its lease.
+    const abandoned = await broker.takeover(
+      browser.id,
+      user.getPublicKey().toString("base64"),
+    );
+    await store
+      .databaseConnection()
+      .prepare("UPDATE browser_identities SET expiresAt = ? WHERE id = ?")
+      .run(Date.now() - 1, browser.id);
+    await broker.expire();
+    const expired = await broker.get(browser.id);
+    assert.equal(expired.mode, "agent");
+    assert.ok(expired.generation > abandoned.generation);
+    // An idle release keeps the last page, so reopening resumes there.
+    await store
+      .databaseConnection()
+      .prepare("UPDATE browser_identities SET lastUrl = ? WHERE id = ?")
+      .run("https://example.com/needs-login", browser.id);
+    await broker.release(worker.id, browser.id, expired.generation);
+    assert.equal((await broker.get(browser.id)).workerId, null);
+    assert.equal(
+      (await broker.ensure("business")).lastUrl,
+      "https://example.com/needs-login",
     );
   } finally {
     delete process.env.HARNESS_ENCRYPTION_KEY;

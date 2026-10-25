@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   HarnessError,
+  isTerminal,
   type Provider,
   requiredText,
   type Session,
@@ -36,7 +37,11 @@ import {
   parseAgentDefaults,
   parseModel,
 } from "@harness/core/models";
-import type { WorkerRecord, WorkerReport } from "@harness/core/scheduling";
+import {
+  parseLabels,
+  type WorkerRecord,
+  type WorkerReport,
+} from "@harness/core/scheduling";
 import { ControlStore } from "./control";
 import { connectPostgres, LocalDatabase, type SqlDatabase } from "./database";
 import { deleteResource } from "./deletion";
@@ -50,6 +55,30 @@ export interface ChannelBinding {
   title: string;
   revision: number;
 }
+/** A browser or home-screen app that receives Web Push notifications. */
+export interface PushSubscription {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  label: string;
+  /** Also notify when a result is ready, not only when attention is needed. */
+  results: boolean;
+  createdAt: number;
+  lastSeenAt: number;
+  lastSentAt: number | null;
+  error: string | null;
+}
+const pushRow = (row: Record<string, unknown>): PushSubscription => ({
+  endpoint: String(row.endpoint),
+  p256dh: String(row.p256dh),
+  auth: String(row.auth),
+  label: String(row.label),
+  results: Number(row.results) === 1,
+  createdAt: Number(row.createdAt),
+  lastSeenAt: Number(row.lastSeenAt),
+  lastSentAt: row.lastSentAt == null ? null : Number(row.lastSentAt),
+  error: row.error == null ? null : String(row.error),
+});
 export interface Notification {
   id: string;
   sessionId: string;
@@ -76,6 +105,95 @@ export interface InputRequest {
 }
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
+
+export const MAX_DELEGATION_ROUNDS = 6;
+/** Turns an agent may queue for itself in a row before an outside message. */
+export const MAX_CONTINUATIONS = 5;
+export const DELEGATION_REPORTS = [
+  "progress",
+  "done",
+  "question",
+  "blocked",
+] as const;
+export type DelegationReportStatus = (typeof DELEGATION_REPORTS)[number];
+export interface Delegation {
+  id: string;
+  fromSessionId: string;
+  toSessionId: string;
+  title: string;
+  status: string;
+  rounds: number;
+  progress: string | null;
+  progressAt: number | null;
+  reportStatus: string | null;
+  report: string | null;
+  reportAt: number | null;
+  closedNote: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface DelegationView extends Delegation {
+  /** queued, working, waiting-on-owner, a report status, accepted or cancelled. */
+  state: string;
+  from: { id: string; title: string; workspaceId: string };
+  to: { id: string; title: string; workspaceId: string };
+}
+export interface DelegationTurn {
+  turnId: string;
+  delegationId: string;
+  role: "task" | "reply" | "report" | "continue";
+  round: number;
+  reportStatus: string | null;
+  report: string | null;
+  reportedAt: number | null;
+  fromSessionId: string;
+  toSessionId: string;
+  title: string;
+  status: string;
+  rounds: number;
+}
+const optionalNumber = (value: unknown) =>
+  value == null ? null : Number(value);
+const optionalText = (value: unknown) => (value == null ? null : String(value));
+const delegationRow = (row: Record<string, unknown>): Delegation => ({
+  id: String(row.id),
+  fromSessionId: String(row.fromSessionId),
+  toSessionId: String(row.toSessionId),
+  title: String(row.title),
+  status: String(row.status),
+  rounds: Number(row.rounds),
+  progress: optionalText(row.progress),
+  progressAt: optionalNumber(row.progressAt),
+  reportStatus: optionalText(row.reportStatus),
+  report: optionalText(row.report),
+  reportAt: optionalNumber(row.reportAt),
+  closedNote: optionalText(row.closedNote),
+  createdAt: Number(row.createdAt),
+  updatedAt: Number(row.updatedAt),
+});
+const delegationTurnRow = (row: Record<string, unknown>): DelegationTurn => ({
+  turnId: String(row.turnId),
+  delegationId: String(row.delegationId),
+  role: String(row.role) as DelegationTurn["role"],
+  round: Number(row.round),
+  reportStatus: optionalText(row.reportStatus),
+  report: optionalText(row.report),
+  reportedAt: optionalNumber(row.reportedAt),
+  fromSessionId: String(row.fromSessionId),
+  toSessionId: String(row.toSessionId),
+  title: String(row.title),
+  status: String(row.status),
+  rounds: Number(row.rounds),
+});
+/** First line of the task, short enough for a list. */
+const delegationTitle = (message: string) => {
+  const line =
+    message
+      .split("\n")
+      .map((item) => item.replace(/^[#>*\-\s]+/, "").trim())
+      .find(Boolean) ?? "Task";
+  return line.length > 80 ? `${line.slice(0, 77)}…` : line;
+};
 
 /** Application persistence shared by local and hosted control planes. */
 export class HarnessStore extends ControlStore {
@@ -323,6 +441,42 @@ export class HarnessStore extends ControlStore {
         .run(parseModel(session.provider, model), id);
       return this.getSession(id);
     });
+  }
+  /**
+   * The earlier messages and replies of a conversation, for a fresh agent that
+   * continues it without its native memory (on another machine, or after the
+   * first agent never started). Newest turns are kept when it is too long.
+   */
+  async conversationSoFar(
+    turnId: string,
+    maxChars = 60000,
+  ): Promise<string | null> {
+    const turn = await this.getTurn(turnId);
+    const earlier = (await this.db
+      .prepare(
+        "SELECT * FROM turns WHERE sessionId = ? AND rowid < (SELECT rowid FROM turns WHERE id = ?) ORDER BY rowid DESC LIMIT 200",
+      )
+      .all(turn.sessionId, turnId)) as unknown as Turn[];
+    if (!earlier.length) return null;
+    const blocks: string[] = [];
+    let used = 0;
+    for (const item of earlier) {
+      const output = item.output.trim();
+      const reply =
+        output.length > 8000
+          ? `[…start of this reply omitted]\n${output.slice(-8000)}`
+          : output || `(no reply; the turn ${item.status})`;
+      const block = `### Message\n${item.prompt.trim()}\n\n### Your reply\n${reply}${item.error ? `\n\n(Error: ${item.error.slice(0, 500)})` : ""}`;
+      if (used + block.length > maxChars && blocks.length) break;
+      blocks.push(block);
+      used += block.length;
+    }
+    const omitted = earlier.length - blocks.length;
+    return `[Meta Harness: this conversation now runs on a machine where your agent has no memory of it, so it starts fresh. The conversation so far is below, oldest first; continue from it as if you remembered it.${omitted ? ` ${omitted} older turns are left out; use session_read for them.` : ""} Files, clones, installed tools and uncommitted changes from the earlier machine are not here: check what was pushed or saved before redoing work, and say so if something you need is missing.]
+
+${blocks.reverse().join("\n\n---\n\n")}
+
+[End of the earlier conversation. The new message follows.]`;
   }
   async deleteSession(id: string) {
     return deleteResource(this.db, "session", id);
@@ -665,6 +819,13 @@ export class HarnessStore extends ControlStore {
         prompt,
         interruptsTurnId,
       );
+      // A new message moves the conversation on; the agent asks again if it
+      // still needs a sign-in.
+      if (!previous)
+        await this.resolveBrowserLogins(
+          sessionId,
+          "Superseded by a new message",
+        );
       for (const attachmentId of attachmentIds)
         await this.db
           .prepare(
@@ -746,6 +907,62 @@ export class HarnessStore extends ControlStore {
         Date.now() + Math.min(3600000, 10000 * 2 ** Number(row.attempts)),
         id,
       );
+  }
+  async savePushSubscription(input: {
+    endpoint: string;
+    p256dh: string;
+    auth: string;
+    label: string;
+    results?: boolean;
+  }): Promise<PushSubscription> {
+    const endpoint = requiredText(input.endpoint, "Push endpoint", 1000);
+    if (!/^https:\/\//.test(endpoint))
+      throw new HarnessError("Push endpoint must use HTTPS.");
+    const now = Date.now();
+    // Re-registering on every app open keeps the row fresh; it only changes the
+    // event choice when one is given.
+    await this.db
+      .prepare(
+        "INSERT INTO push_subscriptions(endpoint,p256dh,auth,label,results,createdAt,lastSeenAt) VALUES (?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh,auth=excluded.auth,label=excluded.label,lastSeenAt=excluded.lastSeenAt,error=NULL" +
+          (input.results === undefined ? "" : ",results=excluded.results"),
+      )
+      .run(
+        endpoint,
+        requiredText(input.p256dh, "Push key", 200),
+        requiredText(input.auth, "Push secret", 100),
+        requiredText(input.label, "Device name", 100),
+        input.results ? 1 : 0,
+        now,
+        now,
+      );
+    return (await this.pushSubscription(endpoint)) as PushSubscription;
+  }
+  async pushSubscription(endpoint: string): Promise<PushSubscription | null> {
+    const row = await this.db
+      .prepare("SELECT * FROM push_subscriptions WHERE endpoint = ?")
+      .get(endpoint);
+    return row ? pushRow(row) : null;
+  }
+  async pushSubscriptions(): Promise<PushSubscription[]> {
+    return (
+      await this.db
+        .prepare("SELECT * FROM push_subscriptions ORDER BY createdAt LIMIT 50")
+        .all()
+    ).map(pushRow);
+  }
+  async removePushSubscription(endpoint: string): Promise<void> {
+    await this.db
+      .prepare("DELETE FROM push_subscriptions WHERE endpoint = ?")
+      .run(endpoint);
+  }
+  async pushSent(endpoint: string, error?: string): Promise<void> {
+    await this.db
+      .prepare(
+        error
+          ? "UPDATE push_subscriptions SET error = ? WHERE endpoint = ?"
+          : "UPDATE push_subscriptions SET lastSentAt = ?, error = NULL WHERE endpoint = ?",
+      )
+      .run(error ? error.slice(0, 300) : Date.now(), endpoint);
   }
   async channelBinding(sessionId: string): Promise<ChannelBinding | null> {
     return (await this.db
@@ -890,6 +1107,13 @@ export class HarnessStore extends ControlStore {
       .prepare("SELECT * FROM input_requests WHERE id = ?")
       .get(id)) as unknown as InputRequest;
   }
+  async resolveBrowserLogins(sessionId: string, response: string) {
+    await this.db
+      .prepare(
+        "UPDATE input_requests SET status = 'answered', response = ?, resolvedAt = ? WHERE sessionId = ? AND kind = 'browser-login' AND status = 'pending'",
+      )
+      .run(response, Date.now(), sessionId);
+  }
   async inputsForSession(sessionId: string): Promise<InputRequest[]> {
     return (await this.db
       .prepare(
@@ -916,6 +1140,17 @@ export class HarnessStore extends ControlStore {
         String(input.sessionId),
         response,
       );
+      // The owner answered a worker on a task: its continuation still works
+      // on that task and reports back when it ends.
+      const link = input.turnId
+        ? await this.delegationForTurn(String(input.turnId))
+        : null;
+      if (link && link.role !== "report")
+        await this.db
+          .prepare(
+            "INSERT OR IGNORE INTO delegation_turns(turnId, delegationId, role, round, createdAt) VALUES (?, ?, 'reply', ?, ?)",
+          )
+          .run(`input:${id}`, link.delegationId, link.round, Date.now());
     });
   }
   override async listSessions(workspaceId: string): Promise<Session[]> {
@@ -1438,6 +1673,348 @@ export class HarnessStore extends ControlStore {
     await this.requireWorkerOwnership(workerId, turnId, generation);
     if ((await this.getTurn(turnId)).stopRequestedAt)
       throw new HarnessError("This turn is stopping.", 409);
+  }
+  /** The delegation a turn belongs to: a task or reply it works on, or a report. */
+  async delegationForTurn(turnId: string): Promise<DelegationTurn | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT delegation_turns.*, delegations.fromSessionId, delegations.toSessionId, delegations.title, delegations.status, delegations.rounds FROM delegation_turns JOIN delegations ON delegations.id = delegation_turns.delegationId WHERE delegation_turns.turnId = ?",
+      )
+      .get(turnId);
+    return row ? delegationTurnRow(row) : null;
+  }
+  async getDelegation(id: string): Promise<Delegation> {
+    const row = await this.db
+      .prepare("SELECT * FROM delegations WHERE id = ?")
+      .get(id);
+    if (!row) throw new HarnessError("Task not found.", 404);
+    return delegationRow(row);
+  }
+  /**
+   * A session hands work to another session: a new task, or feedback and
+   * answers on one it already gave. The message is queued in the worker
+   * session; its result comes back as a report turn in the sender.
+   */
+  async sendDelegation(input: {
+    turnId: string;
+    callerTurnId: string;
+    message: string;
+    toSessionId?: string;
+    delegationId?: string;
+  }): Promise<{ delegation: Delegation; turn: Turn }> {
+    return this.transaction(async () => {
+      const existing = await this.delegationForTurn(input.turnId);
+      if (existing)
+        return {
+          delegation: await this.getDelegation(existing.delegationId),
+          turn: await this.getTurn(input.turnId),
+        };
+      const caller = await this.getTurn(input.callerTurnId);
+      const callerRole = await this.delegationForTurn(caller.id);
+      if (callerRole && callerRole.role !== "report")
+        throw new HarnessError(
+          `This session is working on a task from another session; it cannot hand work to other sessions. Use your own subagents for parallel work, or report back with task_report.`,
+          403,
+        );
+      const message = requiredText(input.message, "Message", 20000);
+      const now = Date.now();
+      let delegation: Delegation;
+      if (input.delegationId) {
+        delegation = await this.getDelegation(input.delegationId);
+        if (delegation.fromSessionId !== caller.sessionId)
+          throw new HarnessError("That task belongs to another session.", 403);
+        if (delegation.status !== "open")
+          throw new HarnessError(
+            `That task is ${delegation.status}. Send a new task instead.`,
+            409,
+          );
+        if (delegation.rounds >= MAX_DELEGATION_ROUNDS)
+          throw new HarnessError(
+            `This task already went back and forth ${delegation.rounds} times. Accept the work with task_close, start a new task with a narrower scope, or ask the owner with request_input.`,
+            409,
+          );
+        await this.db
+          .prepare(
+            "UPDATE delegations SET rounds = rounds + 1, updatedAt = ? WHERE id = ?",
+          )
+          .run(now, delegation.id);
+        delegation = await this.getDelegation(delegation.id);
+      } else {
+        const toSessionId = requiredText(input.toSessionId, "Session ID", 100);
+        if (toSessionId === caller.sessionId)
+          throw new HarnessError("A session cannot give itself a task.");
+        await this.getSession(toSessionId);
+        const id = `task-${hash(input.turnId).slice(0, 12)}`;
+        await this.db
+          .prepare(
+            "INSERT INTO delegations(id, fromSessionId, toSessionId, title, status, rounds, createdAt, updatedAt) VALUES (?, ?, ?, ?, 'open', 1, ?, ?)",
+          )
+          .run(
+            id,
+            caller.sessionId,
+            toSessionId,
+            delegationTitle(message),
+            now,
+            now,
+          );
+        delegation = await this.getDelegation(id);
+      }
+      const turn = await this.createTurn(
+        input.turnId,
+        delegation.toSessionId,
+        message,
+      );
+      await this.db
+        .prepare(
+          "INSERT INTO delegation_turns(turnId, delegationId, role, round, createdAt) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          turn.id,
+          delegation.id,
+          delegation.rounds === 1 ? "task" : "reply",
+          delegation.rounds,
+          now,
+        );
+      return { delegation, turn };
+    });
+  }
+  /**
+   * The agent continues this conversation in a new turn that only machines
+   * with these labels run (none: any machine), for example to verify on the
+   * machine with the chip tools after coding elsewhere. A task's report waits
+   * for the continuation to finish.
+   */
+  async continueOn(input: {
+    turnId: string;
+    callerTurnId: string;
+    labels: unknown;
+    message: string;
+    reason: string;
+  }): Promise<Turn> {
+    const labels = parseLabels(input.labels);
+    const message = requiredText(input.message, "Message", 20000);
+    const reason = requiredText(input.reason, "Reason", 500);
+    return this.transaction(async () => {
+      const existing = (await this.db
+        .prepare("SELECT * FROM turns WHERE id = ?")
+        .get(input.turnId)) as unknown as Turn | undefined;
+      if (existing) return existing;
+      const caller = await this.getTurn(input.callerTurnId);
+      // Count the agent's own continuations since the last outside message.
+      const recent = (await this.db
+        .prepare(
+          "SELECT id FROM turns WHERE sessionId = ? AND rowid <= (SELECT rowid FROM turns WHERE id = ?) ORDER BY rowid DESC LIMIT ?",
+        )
+        .all(caller.sessionId, caller.id, MAX_CONTINUATIONS + 1)) as {
+        id: string;
+      }[];
+      let chain = 0;
+      while (chain < recent.length && recent[chain].id.startsWith("continue:"))
+        chain++;
+      if (chain >= MAX_CONTINUATIONS)
+        throw new HarnessError(
+          `This conversation already continued itself ${chain} times in a row. Finish here and report what is left, or ask the owner with request_input.`,
+          409,
+        );
+      const turn = await this.createTurn(
+        input.turnId,
+        caller.sessionId,
+        message,
+      );
+      await this.db
+        .prepare(
+          "UPDATE turns SET requiredLabels = ?, placementReason = ? WHERE id = ?",
+        )
+        .run(labels.join(",") || null, reason, turn.id);
+      const link = await this.delegationForTurn(caller.id);
+      if (link && link.role !== "report") {
+        // The task's report comes from the continuation, when the work ends.
+        await this.db
+          .prepare(
+            "UPDATE delegation_turns SET reportedAt = ? WHERE turnId = ?",
+          )
+          .run(Date.now(), caller.id);
+        await this.db
+          .prepare(
+            "INSERT INTO delegation_turns(turnId, delegationId, role, round, createdAt) VALUES (?, ?, 'continue', ?, ?)",
+          )
+          .run(turn.id, link.delegationId, link.round, Date.now());
+      }
+      return await this.getTurn(turn.id);
+    });
+  }
+  /**
+   * The worker reports on its task. Progress is recorded for the owner and the
+   * sender to look at; any other status is delivered to the sender when the
+   * worker's turn ends.
+   */
+  async reportDelegation(
+    turnId: string,
+    status: string,
+    summary: string,
+  ): Promise<Delegation> {
+    const link = await this.delegationForTurn(turnId);
+    if (!link || link.role === "report")
+      throw new HarnessError(
+        "This turn is not working on a task from another session.",
+        409,
+      );
+    if (!DELEGATION_REPORTS.includes(status as DelegationReportStatus))
+      throw new HarnessError(
+        `Status must be one of ${DELEGATION_REPORTS.join(", ")}.`,
+      );
+    const text = requiredText(summary, "Report", 20000);
+    const now = Date.now();
+    if (status === "progress")
+      await this.db
+        .prepare(
+          "UPDATE delegations SET progress = ?, progressAt = ?, updatedAt = ? WHERE id = ?",
+        )
+        .run(text, now, now, link.delegationId);
+    else
+      await this.db
+        .prepare(
+          "UPDATE delegation_turns SET reportStatus = ?, report = ? WHERE turnId = ?",
+        )
+        .run(status, text, turnId);
+    return this.getDelegation(link.delegationId);
+  }
+  async closeDelegation(
+    id: string,
+    sessionId: string | null,
+    status: "accepted" | "cancelled",
+    note?: string,
+  ): Promise<Delegation> {
+    const delegation = await this.getDelegation(id);
+    if (sessionId && delegation.fromSessionId !== sessionId)
+      throw new HarnessError("That task belongs to another session.", 403);
+    await this.db
+      .prepare(
+        "UPDATE delegations SET status = ?, closedNote = ?, updatedAt = ? WHERE id = ?",
+      )
+      .run(status, note?.slice(0, 2000) ?? null, Date.now(), id);
+    return this.getDelegation(id);
+  }
+  /** Tasks this session gave or received, each with where it stands now. */
+  async delegationsForSession(sessionId: string): Promise<DelegationView[]> {
+    const rows = await this.db
+      .prepare(
+        "SELECT * FROM delegations WHERE fromSessionId = ? OR toSessionId = ? ORDER BY updatedAt DESC LIMIT 50",
+      )
+      .all(sessionId, sessionId);
+    const views: DelegationView[] = [];
+    for (const row of rows) {
+      const delegation = delegationRow(row);
+      const titles = await this.db
+        .prepare(
+          "SELECT id, title, workspaceId FROM sessions WHERE id IN (?, ?)",
+        )
+        .all(delegation.fromSessionId, delegation.toSessionId);
+      const session = (id: string) => {
+        const found = titles.find((item) => item.id === id);
+        return found
+          ? {
+              id,
+              title: String(found.title),
+              workspaceId: String(found.workspaceId),
+            }
+          : { id, title: "Deleted session", workspaceId: "" };
+      };
+      const latest = await this.db
+        .prepare(
+          "SELECT turns.id, turns.status FROM delegation_turns JOIN turns ON turns.id = delegation_turns.turnId WHERE delegation_turns.delegationId = ? AND delegation_turns.role != 'report' ORDER BY delegation_turns.createdAt DESC LIMIT 1",
+        )
+        .get(delegation.id);
+      const waiting =
+        latest &&
+        (await this.db
+          .prepare(
+            "SELECT 1 AS present FROM input_requests WHERE turnId = ? AND status = 'pending' LIMIT 1",
+          )
+          .get(latest.id));
+      const state =
+        delegation.status !== "open"
+          ? delegation.status
+          : waiting
+            ? "waiting-on-owner"
+            : latest && !isTerminal(latest.status as Turn["status"])
+              ? latest.status === "running"
+                ? "working"
+                : "queued"
+              : (delegation.reportStatus ?? "queued");
+      views.push({
+        ...delegation,
+        state,
+        from: session(delegation.fromSessionId),
+        to: session(delegation.toSessionId),
+      });
+    }
+    return views;
+  }
+  /** Finished task turns whose result has not gone back to the sender yet. */
+  async pendingDelegationReports(): Promise<string[]> {
+    return (
+      await this.db
+        .prepare(
+          "SELECT delegation_turns.turnId FROM delegation_turns JOIN turns ON turns.id = delegation_turns.turnId WHERE delegation_turns.role != 'report' AND delegation_turns.reportedAt IS NULL AND turns.status IN ('completed', 'failed', 'interrupted', 'cancelled') ORDER BY delegation_turns.createdAt LIMIT 20",
+        )
+        .all()
+    ).map((row) => String(row.turnId));
+  }
+  /**
+   * Post the result of a finished task turn into the sender as a new turn, so
+   * the sender's agent wakes up, reviews it and decides what comes next.
+   */
+  async deliverDelegationReport(turnId: string): Promise<Turn | null> {
+    return this.transaction(async () => {
+      const link = await this.delegationForTurn(turnId);
+      if (!link || link.role === "report" || link.reportedAt) return null;
+      const turn = await this.getTurn(turnId);
+      if (!isTerminal(turn.status)) return null;
+      const now = Date.now();
+      await this.db
+        .prepare("UPDATE delegation_turns SET reportedAt = ? WHERE turnId = ?")
+        .run(now, turnId);
+      const delegation = await this.getDelegation(link.delegationId);
+      if (delegation.status !== "open") return null;
+      const question = await this.db
+        .prepare(
+          "SELECT message FROM input_requests WHERE turnId = ? AND status = 'pending' AND kind = 'question' ORDER BY createdAt DESC LIMIT 1",
+        )
+        .get(turnId);
+      let status: string;
+      let report: string;
+      if (question) {
+        status = "waiting-on-owner";
+        report = `The worker asked the owner and is waiting for an answer:\n\n> ${String(question.message).replaceAll("\n", "\n> ")}${link.report ? `\n\nIts report so far:\n\n${link.report}` : ""}`;
+      } else if (link.reportStatus && link.report) {
+        status = link.reportStatus;
+        report = link.report;
+      } else if (turn.status === "completed") {
+        status = "finished";
+        report = `The worker ended its turn without a report. Its final message:\n\n${turn.output.slice(-6000) || "(no output)"}`;
+      } else {
+        status = turn.status;
+        report = `The worker's turn ${turn.status}${turn.error ? `: ${turn.error}` : "."}${turn.output ? `\n\nLast output:\n\n${turn.output.slice(-3000)}` : ""}`;
+      }
+      await this.db
+        .prepare(
+          "UPDATE delegations SET reportStatus = ?, report = ?, reportAt = ?, updatedAt = ? WHERE id = ?",
+        )
+        .run(status, report, now, now, delegation.id);
+      const worker = await this.getSession(delegation.toSessionId);
+      const reportTurn = await this.createTurn(
+        `report:${turnId}`,
+        delegation.fromSessionId,
+        `Report from "${worker.title}" on task ${delegation.id} (${delegation.title}): ${status}\n\n${report}`,
+      );
+      await this.db
+        .prepare(
+          "INSERT OR IGNORE INTO delegation_turns(turnId, delegationId, role, round, reportStatus, report, createdAt) VALUES (?, ?, 'report', ?, ?, ?, ?)",
+        )
+        .run(reportTurn.id, delegation.id, link.round, status, report, now);
+      return reportTurn;
+    });
   }
 }
 

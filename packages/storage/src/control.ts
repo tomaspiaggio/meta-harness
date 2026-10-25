@@ -4,6 +4,7 @@ import {
   HarnessError,
   type Provider,
   type RuntimeEvent,
+  type Session,
   type Turn,
 } from "@harness/core";
 import type { FileSnapshot, SessionCheckpoint } from "@harness/core/checkpoint";
@@ -21,6 +22,9 @@ import type {
 import {
   type Allocation,
   admissionReason,
+  labelList,
+  missingLabels,
+  parseLabels,
   type ResourceProfile,
   type Task,
   type WorkerRecord,
@@ -32,6 +36,12 @@ import { SqliteStore } from "./index";
 const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 const LEASE_MS = 30000;
+// A busy home machine keeps a conversation this long before another takes it.
+const AFFINITY_MS = 2 * 60000;
+const capacityReason = (reason: string) =>
+  /^(All .* occupied|Harness .* full|Host |Preserving host memory)/.test(
+    reason,
+  );
 export interface WorkerAssignment {
   claim: ClaimedTurn;
   task: Task | null;
@@ -124,6 +134,26 @@ export class ControlStore extends SqliteStore {
         raw.exec("ALTER TABLE sessions ADD COLUMN ownerWorkerId TEXT");
       if (!columns.includes("checkpointId"))
         raw.exec("ALTER TABLE sessions ADD COLUMN checkpointId TEXT");
+      if (
+        !raw
+          .prepare("PRAGMA table_info(workspaces)")
+          .all()
+          .some((column) => column.name === "folder")
+      )
+        raw.exec("ALTER TABLE workspaces ADD COLUMN folder TEXT");
+      if (!columns.includes("sandboxed"))
+        raw.exec(
+          "ALTER TABLE sessions ADD COLUMN sandboxed INTEGER NOT NULL DEFAULT 0",
+        );
+      if (!columns.includes("requiredLabels"))
+        raw.exec("ALTER TABLE sessions ADD COLUMN requiredLabels TEXT");
+      if (
+        !raw
+          .prepare("PRAGMA table_info(workers)")
+          .all()
+          .some((column) => column.name === "labels")
+      )
+        raw.exec("ALTER TABLE workers ADD COLUMN labels TEXT");
       if (!columns.includes("nativeRevision"))
         raw.exec(
           "ALTER TABLE sessions ADD COLUMN nativeRevision INTEGER NOT NULL DEFAULT 0",
@@ -217,7 +247,7 @@ export class ControlStore extends SqliteStore {
     return (
       await this.db
         .prepare(
-          "SELECT id, name, report, seenAt, draining FROM workers ORDER BY name",
+          "SELECT id, name, report, seenAt, draining, labels FROM workers ORDER BY name",
         )
         .all()
     ).map((row) => ({
@@ -228,7 +258,60 @@ export class ControlStore extends SqliteStore {
         : null,
       seenAt: row.seenAt === null ? null : Number(row.seenAt),
       draining: Number(row.draining),
+      labels: labelList(row.labels as string | null),
     }));
+  }
+  /** Where agents of this workspace work, on machines that have the folder. */
+  async setWorkspaceFolder(id: string, folder: unknown) {
+    await this.getWorkspace(id);
+    const value = typeof folder === "string" ? folder.trim() : "";
+    if (folder !== null && folder !== undefined && typeof folder !== "string")
+      throw new HarnessError("Folder must be a path.");
+    if (
+      value &&
+      (value.length > 500 ||
+        /[\0\n\r]/.test(value) ||
+        !(value.startsWith("/") || value.startsWith("~/")))
+    )
+      throw new HarnessError(
+        "Use an absolute folder path, or one starting with ~/ for the home folder.",
+      );
+    await this.db
+      .prepare("UPDATE workspaces SET folder = ? WHERE id = ?")
+      .run(value.replace(/\/+$/, "") || null, id);
+    return await this.getWorkspace(id);
+  }
+  async setSessionSandboxed(id: string, sandboxed: unknown): Promise<Session> {
+    if (typeof sandboxed !== "boolean")
+      throw new HarnessError("Choose sandboxed or full access.");
+    await this.getSession(id);
+    await this.db
+      .prepare("UPDATE sessions SET sandboxed = ? WHERE id = ?")
+      .run(sandboxed ? 1 : 0, id);
+    return await this.getSession(id);
+  }
+  async renameWorker(id: string, name: string): Promise<void> {
+    const result = await this.db
+      .prepare("UPDATE workers SET name = ? WHERE id = ?")
+      .run(name, id);
+    if (!result.changes) throw new HarnessError("Worker not found.", 404);
+  }
+  async setWorkerLabels(id: string, labels: unknown): Promise<WorkerRecord> {
+    const result = await this.db
+      .prepare("UPDATE workers SET labels = ? WHERE id = ?")
+      .run(parseLabels(labels).join(",") || null, id);
+    if (!result.changes) throw new HarnessError("Worker not found.", 404);
+    return (await this.listWorkers()).find(
+      (worker) => worker.id === id,
+    ) as WorkerRecord;
+  }
+  /** Only machines with every one of these labels run the session. */
+  async setSessionLabels(id: string, labels: unknown): Promise<Session> {
+    await this.getSession(id);
+    await this.db
+      .prepare("UPDATE sessions SET requiredLabels = ? WHERE id = ?")
+      .run(parseLabels(labels).join(",") || null, id);
+    return await this.getSession(id);
   }
   async drainWorker(id: string, draining: boolean): Promise<void> {
     const result = await this.db
@@ -343,6 +426,37 @@ export class ControlStore extends SqliteStore {
       WHERE turns.workerId = ? AND turns.status = 'running'`)
       .all(workerId)) as unknown as Allocation[];
   }
+  /**
+   * Whether running on this machine starts a new native agent that gets the
+   * conversation from the harness instead of its own memory. Claude sessions
+   * with a complete portable checkpoint move with their memory.
+   */
+  protected async leavesHome(
+    session: Session,
+    worker: WorkerRecord,
+  ): Promise<boolean> {
+    if (
+      session.provider === "demo" ||
+      !session.nativeId ||
+      session.ownerWorkerId === worker.id
+    )
+      return false;
+    const checkpoint = await this.getCheckpoint(session.id);
+    const revision = Number(
+      (
+        await this.db
+          .prepare("SELECT nativeRevision FROM sessions WHERE id = ?")
+          .get(session.id)
+      )?.nativeRevision,
+    );
+    return !(
+      session.provider === "claude" &&
+      worker.report?.portableProviders?.includes("claude") &&
+      checkpoint &&
+      checkpoint.nativeRevision === revision &&
+      (await this.getTurn(checkpoint.turnId)).status === "completed"
+    );
+  }
   protected async reason(
     turn: Turn,
     worker: WorkerRecord,
@@ -372,33 +486,31 @@ export class ControlStore extends SqliteStore {
       .get(worker.id, session.provider, now);
     if (cooldown)
       return `${session.provider} is waiting for its provider reset (${new Date(Number(cooldown.retryAt)).toISOString()})`;
-    const owner = (
-      await this.db
-        .prepare("SELECT ownerWorkerId FROM sessions WHERE id = ?")
-        .get(session.id)
-    )?.ownerWorkerId;
-    if (
-      session.provider !== "demo" &&
-      session.nativeId &&
-      owner !== worker.id
-    ) {
-      const checkpoint = await this.getCheckpoint(session.id);
-      const currentRevision = Number(
-        (
-          await this.db
-            .prepare("SELECT nativeRevision FROM sessions WHERE id = ?")
-            .get(session.id)
-        )?.nativeRevision,
+    const missing = missingLabels(
+      [
+        ...new Set([
+          ...labelList(session.requiredLabels),
+          ...labelList(turn.requiredLabels),
+        ]),
+      ],
+      worker,
+    );
+    if (missing.length) return `Needs a machine labelled ${missing.join(", ")}`;
+    if (await this.leavesHome(session, worker)) {
+      // The agent's memory of this conversation lives on the machine that ran
+      // it last. Prefer it, but never wait for a machine that is off.
+      const owner = (await this.listWorkers()).find(
+        (candidate) => candidate.id === session.ownerWorkerId,
       );
+      const ownerReason = owner ? await this.reason(turn, owner, now) : "";
+      if (ownerReason === null)
+        return `Waiting for ${owner?.name}, which has this conversation's agent memory`;
       if (
-        session.provider !== "claude" ||
-        !worker.report.portableProviders?.includes("claude") ||
-        !checkpoint ||
-        checkpoint.nativeRevision !== currentRevision ||
-        (await this.getTurn(checkpoint.turnId)).status !== "completed"
-      ) {
-        return "Native provider state is pinned to its original worker until a complete portable checkpoint is available";
-      }
+        ownerReason &&
+        capacityReason(ownerReason) &&
+        now - turn.createdAt < AFFINITY_MS
+      )
+        return `Waiting up to 2 minutes for ${owner?.name} (busy), which has this conversation's agent memory`;
     }
     return admissionReason(
       {
@@ -545,6 +657,19 @@ export class ControlStore extends SqliteStore {
         await this.pruneClaimHistory(id);
         return null;
       }
+      if (
+        await this.leavesHome(
+          await this.getSession(candidate.sessionId),
+          worker,
+        )
+      )
+        // The new machine starts a fresh agent; the claim route gives it the
+        // conversation so far. Its old memory and checkpoint no longer apply.
+        await this.db
+          .prepare(
+            "UPDATE sessions SET nativeId = NULL, ownerWorkerId = NULL, checkpointId = NULL, nativeRevision = nativeRevision + 1 WHERE id = ?",
+          )
+          .run(candidate.sessionId);
       await this.db
         .prepare(
           "UPDATE turns SET status = 'running', workerId = ?, generation = generation + 1, leaseUntil = ?, error = NULL WHERE id = ?",

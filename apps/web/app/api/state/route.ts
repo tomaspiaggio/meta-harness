@@ -1,5 +1,44 @@
+import {
+  labelList,
+  type WorkerRecord,
+  workerLabels,
+} from "@harness/core/scheduling";
 import { failure, localRequest } from "../../../server/http";
 import { getStore } from "../../../server/store";
+
+/** Who a task, feedback or report turn came from, for the conversation view. */
+async function delegationTag(
+  store: Awaited<ReturnType<typeof getStore>>,
+  turnId: string,
+) {
+  const link = await store.delegationForTurn(turnId);
+  if (!link) return null;
+  const peerId = link.role === "report" ? link.toSessionId : link.fromSessionId;
+  const peer = await store.getSession(peerId).catch(() => null);
+  return {
+    role: link.role,
+    taskId: link.delegationId,
+    title: link.title,
+    round: link.round,
+    status: link.role === "report" ? link.reportStatus : null,
+    peer: peer
+      ? { id: peer.id, title: peer.title, workspaceId: peer.workspaceId }
+      : null,
+  };
+}
+/** Which machines can run a session, for its Advanced settings. */
+function placement(workers: WorkerRecord[], required: string[]) {
+  const live = workers.filter((worker) => !worker.draining && worker.report);
+  return {
+    labels: required,
+    available: [...new Set(live.flatMap(workerLabels))].sort(),
+    machines: live.map((worker) => ({
+      name: worker.name,
+      online: !!worker.seenAt && worker.seenAt > Date.now() - 30000,
+      labels: workerLabels(worker),
+    })),
+  };
+}
 export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
@@ -7,9 +46,33 @@ export async function GET(request: Request) {
     const store = await getStore();
     await store.recoverExpired(Date.now());
     const query = new URL(request.url).searchParams;
-    const workspaceId = query.get("workspace") ?? "business";
+    const workspaces = await store.listWorkspaces();
+    // Without an explicit workspace, use the first real one; the seeded
+    // "business" ID may have been deleted.
+    const workspaceId = query.get("workspace") ?? workspaces[0]?.id;
+    if (!workspaceId)
+      return Response.json(
+        {
+          workspaces,
+          sessions: [],
+          turns: [],
+          schedules: [],
+          inputRequests: [],
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     await store.getWorkspace(workspaceId);
     const sessionId = query.get("session");
+    const workers = await store.listWorkers();
+    const workerNames = new Map(
+      workers.map((worker) => [
+        worker.id,
+        {
+          name: worker.name,
+          hostname: worker.report?.hostname ?? null,
+        },
+      ]),
+    );
     if (
       sessionId &&
       (await store.getSession(sessionId)).workspaceId !== workspaceId
@@ -21,20 +84,33 @@ export async function GET(request: Request) {
     }
     return Response.json(
       {
-        workspaces: await store.listWorkspaces(),
+        workspaces,
         sessions: await store.listSessions(workspaceId),
         turns: sessionId
           ? await Promise.all(
               (await store.listTurns(sessionId)).map(async (turn) => ({
                 ...turn,
+                worker: turn.workerId
+                  ? (workerNames.get(turn.workerId) ?? null)
+                  : null,
                 waitingReason: await store.waitingReason(turn.id),
                 publications: await store.decisionsForTurn(turn.id),
                 attachments: await store.attachmentsForTurn(turn.id),
+                delegation: await delegationTag(store, turn.id),
               })),
             )
           : [],
         schedules: sessionId ? await store.listSchedules(sessionId) : [],
+        delegations: sessionId
+          ? await store.delegationsForSession(sessionId)
+          : [],
         inputRequests: sessionId ? await store.inputsForSession(sessionId) : [],
+        placement: placement(
+          workers,
+          sessionId
+            ? labelList((await store.getSession(sessionId)).requiredLabels)
+            : [],
+        ),
       },
       { headers: { "Cache-Control": "no-store" } },
     );

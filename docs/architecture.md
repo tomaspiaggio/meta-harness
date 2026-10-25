@@ -129,9 +129,16 @@ object lifecycle cleanup separately from durable attachment retention.
 ## Native runtimes and credentials
 
 The default adapters start CLI processes on demand and exit after a turn. Codex
-uses `exec`/`exec resume` with workspace-write policy and ignored user configuration.
-Claude uses print/resume, explicit MCP configuration, `dontAsk` and narrow file
-publication permissions. Unsupported permission prompts are denied; durable input
+uses `exec`/`exec resume` with ignored user configuration. Claude uses
+print/resume and explicit MCP configuration. Agents run with full permissions by
+default (the owner runs their own sessions that way); a sandboxed session (or a
+worker with `HARNESS_AGENT_PERMISSIONS=sandboxed`, or an isolated Linux worker)
+uses Codex workspace-write and Claude `dontAsk` with narrow file publication
+permissions. The native cwd stays the session's scratch directory, because Claude
+keys its memory by directory; a workspace folder (`workspaces.folder`, `~/`
+resolved per machine) is added with `--add-dir`/`additionalDirectories`, its
+CLAUDE.md is loaded, and the agent is told to work there or that the folder is
+missing on this machine. Unsupported permission prompts are denied; durable input
 questions use the harness MCP tool and finish the native process instead of
 keeping it alive indefinitely. CLI environment filtering omits control-plane,
 Telegram and cloud-administration secrets. Claude API-only bare mode is opt-in;
@@ -252,6 +259,62 @@ update-ID acknowledgement gap. Replies use the same persistent session input pat
 bridge creates/renames topics; ambiguous creation waits for inspection rather than
 creating another topic automatically. Notification delivery is a separate outbox
 with retries/receipts and authenticated UI links, and does not mark a session read.
+
+## Where a conversation runs
+
+Workers offer labels, like Kubernetes node labels: the agents they run
+(`codex`, `claude`), `browser` when they host one, `HARNESS_WORKER_LABELS`
+(default: CPU architecture), and labels the owner adds in Settings (stored on
+the worker row, for example `asap7` for a machine with chip tools). A session
+may require labels (Advanced in the chat; `sessions.requiredLabels`); only
+workers that have all of them claim its turns, and the waiting reason names
+the missing label. Schedules keep their own optional target worker.
+
+Without labels any machine can continue any conversation, so work does not
+depend on one machine staying on. Native Claude Code and Codex memory lives on
+the machine that ran the session (`ownerWorkerId`). That machine is preferred
+while it is online and free, and for two minutes while it is busy. Otherwise
+another eligible worker claims the turn; the claim clears the native ID and
+checkpoint, and the claim route prepends the conversation so far (earlier
+prompts and replies, newest kept within about 60k characters) to the prompt.
+That worker becomes the new home. Files, clones and uncommitted work stay on
+the old machine, and the agent is told so. A complete Claude SDK checkpoint
+still moves with its memory. Interrupted native turns are never retried.
+
+Agents can move themselves between steps. `machines_list` shows the machines,
+their labels and whether they are online. `continue_on(labels, message, reason)`
+queues the agent's next step in the same session with per-step labels
+(`turns.requiredLabels`, combined with the session's), for example to verify on
+the machine with the chip tools after coding elsewhere, and back to any machine
+afterwards. The reason is stored (`turns.placementReason`) and shown in the
+chat, which also marks a step that ran on a different machine than the one
+before. Agents are told to push before moving. At most five self-queued steps
+run in a row without an outside message. On a task from another session the
+report waits for the last step.
+
+## Sessions handing work to sessions
+
+A planning session can hand work to the owner's other sessions with
+`session_send` (any workspace, any agent: a Claude planner can drive Codex
+workers). The message becomes an ordinary queued turn in the worker session,
+linked to a `delegations` row; feedback and answers on the same task are more
+turns on that row (`delegation_turns`, one round each, at most six). When a
+linked worker turn ends, maintenance posts one report turn into the sender:
+the worker's `task_report` (done, question or blocked), its pending question to
+the owner, or its final message as a fallback. That turn wakes the sender's
+agent, which reviews it and replies on the task, closes it with `task_close`,
+or hands out more work. Progress reports are stored without waking anyone.
+
+The protocol text is added when a worker claims the turn, so stored messages
+stay what the sender wrote and workers need no update. Worker turns are told to
+keep moving, to ask the sender before the owner, and to ask the owner only for
+purchases, deletions and other sensitive or irreversible actions, or questions
+no agent can answer. A turn working on a task cannot hand work onward; agents
+use their own subagents for parallel work. The owner sees each task, its state
+and latest progress and report in the session, and can cancel it. This is the
+in-harness form of the inter-harness message model (request, report, question,
+answer, with who decided what), without the permission filtering that a
+different owner's harness would need.
 
 ## Browser identity and optional capacity
 

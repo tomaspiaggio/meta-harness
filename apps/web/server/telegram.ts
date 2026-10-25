@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { HarnessError } from "@harness/core";
 import type { ChannelBinding } from "@harness/storage/application";
 import { flushDispatch } from "./dispatcher";
+import { deliverPush } from "./push";
 import { getStore } from "./store";
 
 export function telegramConfiguration() {
@@ -227,11 +228,22 @@ export async function connectTelegram(
   return binding;
 }
 export async function deliverNotifications() {
-  if (!telegramConfiguration()) return;
   const store = await getStore();
-  const { adapter } = await telegram();
+  const configured = !!telegramConfiguration();
   for (const item of await store.claimNotifications()) {
+    // Push is best effort and sent on the first attempt only, so a Telegram
+    // retry cannot repeat it; the app shows every event either way.
+    const pushed =
+      item.attempts === 1 ? await deliverPush(store, item).catch(() => 0) : 0;
+    if (!configured) {
+      await store.finishNotification(
+        item.id,
+        pushed ? `push:${pushed}` : "in-app-only",
+      );
+      continue;
+    }
     try {
+      const { adapter } = await telegram();
       let binding = await store.channelBinding(item.sessionId);
       if (!binding && process.env.TELEGRAM_AUTO_TOPICS === "1")
         binding = await connectTelegram(item.sessionId);

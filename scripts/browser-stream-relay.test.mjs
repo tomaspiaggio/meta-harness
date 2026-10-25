@@ -149,15 +149,18 @@ test("live relay authenticates upgrades, preserves origin/host, isolates workers
       }),
     );
     assert.equal((await frame).frame.ciphertext, "opaque");
-    const rejectedRead = event(viewer, "error");
+    // The owner and the agent share the browser: an open view sends input
+    // without a takeover lease.
+    const shared = event(worker, "input");
     viewer.send(
       JSON.stringify({
         type: "input",
-        id: "no",
+        id: "shared",
         input: { ciphertext: "opaque" },
       }),
     );
-    assert.match((await rejectedRead).error, /control changed/i);
+    assert.equal((await shared).id, "shared");
+    viewer.close();
     await once(viewer, "close");
     mode = "human";
     const inputOpen = event(worker, "open");

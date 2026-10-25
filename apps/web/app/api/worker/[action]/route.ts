@@ -12,6 +12,7 @@ import type {
 import { parseWorkerReport } from "@harness/core/scheduling";
 import { after } from "next/server";
 import { BrowserBroker } from "../../../../server/browser";
+import { delegationInstructions } from "../../../../server/delegation";
 import { mintAttemptGrant } from "../../../../server/grants";
 import { hosted, publicOrigin } from "../../../../server/hosted-auth";
 import { failure, readJson } from "../../../../server/http";
@@ -72,6 +73,20 @@ export async function POST(
         requiredText(body.requestId, "Claim request ID", 100),
       );
       if (!assignment) return Response.json(null);
+      // A session that moved to a machine without its agent's memory gets the
+      // conversation so far, so any machine can continue it.
+      const { claim } = assignment;
+      if (claim.turn.id.startsWith("continue:"))
+        claim.turn.prompt = `[Meta Harness: you queued this step for yourself with continue_on${claim.turn.requiredLabels ? ` on a machine labelled ${claim.turn.requiredLabels}` : ""} (reason: ${claim.turn.placementReason ?? "not given"}). Continue the work from your note below.]\n\n${claim.turn.prompt}`;
+      if (claim.session.provider !== "demo" && !claim.session.nativeId) {
+        const earlier = await store.conversationSoFar(claim.turn.id);
+        if (earlier) claim.turn.prompt = `${earlier}\n\n${claim.turn.prompt}`;
+      }
+      // Task, feedback and report turns carry their protocol to the agent; the
+      // stored message stays what the sender wrote.
+      const framing = await delegationInstructions(store, assignment.claim);
+      if (framing)
+        assignment.claim.turn.prompt = `${assignment.claim.turn.prompt}\n\n${framing}`;
       return workerReply(
         workerId,
         assignment.claim.turn.id,

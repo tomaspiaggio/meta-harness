@@ -180,6 +180,17 @@
   ::selection {
     @apply bg-primary/20;
   }
+  /* Prompts, decisions and agent output carry long URLs and IDs; let them
+     wrap instead of widening cards past a phone screen. Code blocks and
+     tables keep their own horizontal scroll. Headings only break words
+     that cannot fit a line: "anywhere" would let a flex row squeeze a short
+     title into fragments. */
+  :is(p, li, dd, dt, blockquote, label, summary) {
+    overflow-wrap: anywhere;
+  }
+  :is(h1, h2, h3, h4) {
+    overflow-wrap: break-word;
+  }
 }
 
 /* Rendered agent output. Element styling stays here; it is not authored JSX. */
@@ -255,5 +266,15 @@
   }
   .markdown input[type="checkbox"] {
     @apply mr-2;
+  }
+}
+
+/* iOS Safari zooms into any focused field smaller than 16px. Unlayered, so it
+   wins over Tailwind utility layers without !important. */
+@media (max-width: 640px) and (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
   }
 }

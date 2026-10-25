@@ -125,11 +125,11 @@ host. On a Pi with supported system Chromium, use
 HARNESS_BROWSER_EXECUTABLE=/usr/bin/chromium instead. Validate that binary on the
 actual host; do not assume the architecture alone establishes compatibility.
 
-The conversation UI provides a live read-only view. Take control or Sign in allows
-normal click/type/paste; Esc releases control without submitting a new message.
-Continue task is the explicit action to resume an agent waiting for login. Reuse
-valid host-local sessions. Guide password/MFA entry through encrypted takeover,
-never chat. If this device cannot host a browser, leave it agent-only.
+The conversation UI shows the browser live and the owner can click, type and fill
+the fields a page asks for at any time; the owner and agent share it. An agent
+waiting for login finishes its turn, and the owner's next message resumes it.
+Reuse valid host-local sessions. Password/MFA entry happens in that encrypted
+view, never in chat. If this device cannot host a browser, leave it agent-only.
 
 ## 7. Start the real worker
 

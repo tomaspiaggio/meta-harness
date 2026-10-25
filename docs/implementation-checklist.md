@@ -752,9 +752,11 @@ Real user login was not signed out by these tests.
   storage schemas, Prisma relations and tool grants in the merged release.
 - [x] Admit only the explicit integration API routes through the gateway and bind
   Google resource consent to the verified Better Auth owner session.
-- [ ] Add decision-source conversation lookup: retain workspace/session/turn
+- [x] Add decision-source conversation lookup: retain workspace/session/turn
   provenance and expose a bounded, paginated tool keyed by decision ID. Agents
   should fetch relevant source turns on demand when reviewing the rationale.
+  (`decision_source`, `session_read`, `history_search`, `workspace_list`; the
+  owner chose that agents may read all of the owner's conversations.)
 - [ ] Enforce source-conversation visibility independently of shared decision
   visibility; return an explicit unavailable result for deleted or inaccessible
   sources. Exclude credential-entry frames/secrets and avoid full transcript

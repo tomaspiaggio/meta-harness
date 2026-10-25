@@ -96,11 +96,24 @@ export function decodeEvent(
   }
   return events;
 }
+/**
+ * Agents run with full permissions, like the owner's own `claude
+ * --dangerously-skip-permissions`. A worker can opt back into the sandbox, and
+ * isolated Linux workers always keep it.
+ */
+export function fullAccess(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (
+    env.HARNESS_AGENT_PERMISSIONS !== "sandboxed" &&
+    env.HARNESS_ISOLATE_AGENTS !== "1"
+  );
+}
 export function commandFor(
   provider: "codex" | "claude",
   nativeId: string | null,
   tools?: RuntimeInput["tools"],
   model?: string | null,
+  workingFolder?: string,
+  full = fullAccess(),
 ) {
   const selectedModel = parseModel(provider, model);
   if (provider === "codex") {
@@ -116,7 +129,13 @@ export function commandFor(
         "-c",
         'approval_policy="never"',
         "-c",
-        'sandbox_mode="workspace-write"',
+        full
+          ? 'sandbox_mode="danger-full-access"'
+          : 'sandbox_mode="workspace-write"',
+        // Agents clone repositories, call gh and install packages; Linux
+        // workspace-write otherwise has no network at all.
+        "-c",
+        "sandbox_workspace_write.network_access=true",
         ...(tools
           ? [
               "-c",
@@ -142,11 +161,16 @@ export function commandFor(
       "--verbose",
       "--output-format",
       "stream-json",
-      "--permission-mode",
-      "dontAsk",
-      "--allowedTools",
-      "Edit(./DECISION_UPDATES.json)",
-      ...(tools ? ["mcp__harness__*"] : []),
+      ...(full
+        ? ["--dangerously-skip-permissions"]
+        : [
+            "--permission-mode",
+            "dontAsk",
+            "--allowedTools",
+            "Edit(./DECISION_UPDATES.json)",
+            ...(tools ? ["mcp__harness__*"] : []),
+          ]),
+      ...(workingFolder ? ["--add-dir", workingFolder] : []),
       "--strict-mcp-config",
       "--mcp-config",
       JSON.stringify({
@@ -179,6 +203,8 @@ async function runCli(
       (provider === "claude"
         ? process.env.HARNESS_CLAUDE_MODEL
         : process.env.HARNESS_CODEX_MODEL),
+    input.workingFolder,
+    fullAccess() && !input.session.sandboxed,
   );
   if (provider === "claude" && process.env.HARNESS_CLAUDE_CHROME === "1")
     command.args.push("--chrome");
@@ -199,6 +225,10 @@ async function runCli(
       : {}),
     env: {
       ...runtimeEnvironment(provider, process.env, input.environment),
+      // Load the working folder's CLAUDE.md like a project's own.
+      ...(input.workingFolder
+        ? { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1" }
+        : {}),
       ...(input.identity
         ? {
             HOME: input.identity.home,

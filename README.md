@@ -53,15 +53,21 @@ Actual provider access depends on your CLI login
 and account entitlement.
 
 - Codex: `codex exec --json`, then `codex exec resume <native-id> --json`.
-  Workspace-write sandbox, approvals set to never; no bypass flag. User config
-  is disabled for this invocation so global MCP services do not start for every
-  harness turn. Auth still uses the CLI's existing credential store.
+  Approvals set to never. User config is disabled for this invocation so global
+  MCP services do not start for every harness turn. Auth still uses the CLI's
+  existing credential store.
 - Claude: `claude --print --output-format stream-json`, then `--resume <native-id>`.
-  Permission mode is `dontAsk`; operations that need a permission prompt may be
-  denied. The shared-decision publication file has a narrow Edit allow rule.
-  No permission bypass. Global MCP configurations are excluded.
+  Global MCP configurations are excluded.
+- Permissions: full access by default, like `claude
+  --dangerously-skip-permissions` (Codex `danger-full-access`). A session can be
+  sandboxed under Advanced in the chat (Claude `dontAsk` with a narrow Edit rule
+  for the decision file; Codex `workspace-write`). `HARNESS_AGENT_PERMISSIONS=sandboxed`
+  sandboxes every session on a worker; isolated Linux workers are always sandboxed.
 - Both start on demand and exit after each turn. Each session gets its own
-  working directory under `.data/worker-cache/<worker-id>/sessions/<session-id>`.
+  scratch directory under `.data/worker-cache/<worker-id>/sessions/<session-id>`.
+  A workspace can name a working folder (Advanced in the chat); on machines where
+  it exists, agents get access to it (Claude `--add-dir`, loading its CLAUDE.md)
+  and are told to work there.
 - Output appears as provider messages arrive; this is message streaming, not
   token-by-token rendering. Provider errors and partial output remain visible.
 
@@ -344,8 +350,13 @@ The Demo runtime checkpoints between three deterministic steps. Its files and
 output checkpoint together at the control plane. If a worker disappears, the
 30-second lease expires and another eligible worker restores that checkpoint.
 Demo is explicitly safe to replay. Native Claude/Codex turns remain interrupted
-after worker loss. Default CLI sessions stay pinned to the original worker;
-completed Claude SDK checkpoints have the separate compatibility gate below.
+after worker loss. A CLI conversation prefers the worker that ran it last, but
+any eligible worker continues it when that one is off, draining or busy for two
+minutes: the new agent starts fresh with the conversation so far (prompts and
+replies from the control plane) instead of its native memory. Completed Claude
+SDK checkpoints move with their memory under the separate gate below. Sessions
+can require worker labels (Advanced in the chat; labels per machine in
+Settings); see `docs/architecture.md`.
 They do not have the same recovery guarantees as Demo.
 
 ```sh

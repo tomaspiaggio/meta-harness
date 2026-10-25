@@ -40,6 +40,20 @@ export async function POST(request: Request) {
     return failure(error);
   }
 }
+/** Where the workspace's agents work, on machines that have the folder. */
+export async function PATCH(request: Request) {
+  try {
+    const body = await jsonBody(request);
+    return Response.json(
+      await (await getStore()).setWorkspaceFolder(
+        requiredText(body.id, "Workspace ID", 100),
+        body.folder,
+      ),
+    );
+  } catch (error) {
+    return failure(error);
+  }
+}
 
 export async function DELETE(request: Request) {
   try {
