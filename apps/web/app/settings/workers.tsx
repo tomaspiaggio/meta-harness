@@ -1,5 +1,5 @@
 import { type WorkerRecord, workerLabels } from "@harness/core/scheduling";
-import { Check, Copy, Download, Loader2 } from "lucide-react";
+import { Check, Copy, Download, Loader2, Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,6 +44,7 @@ export function WorkersCard({
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
   const [showSetup, setShowSetup] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
   useEffect(() => setControlUrl(window.location.origin), []);
   useEffect(() => {
     let cancelled = false;
@@ -148,7 +149,44 @@ export function WorkersCard({
                 />
                 <div className="min-w-0 flex-1">
                   <p className="font-medium">
-                    {worker.name}
+                    {renaming === worker.id ? (
+                      <Input
+                        aria-label={`New name for ${worker.name}`}
+                        defaultValue={worker.name}
+                        maxLength={100}
+                        autoFocus
+                        className="inline-flex h-7 w-48"
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") setRenaming(null);
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                        onBlur={(event) => {
+                          const value = event.currentTarget.value.trim();
+                          setRenaming(null);
+                          if (!value || value === worker.name) return;
+                          void api("workers", "PATCH", {
+                            id: worker.id,
+                            name: value,
+                          })
+                            .then(async () =>
+                              setWorkers(
+                                (await api("workers")) as WorkerRecord[],
+                              ),
+                            )
+                            .catch((error) => onError(error.message));
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        title="Rename"
+                        className="inline-flex items-center gap-1.5 hover:underline"
+                        onClick={() => setRenaming(worker.id)}
+                      >
+                        {worker.name}
+                        <Pencil className="size-3 text-muted-foreground" />
+                      </button>
+                    )}
                     <span className="ml-2 font-normal text-muted-foreground">
                       {worker.draining
                         ? "Revoked"

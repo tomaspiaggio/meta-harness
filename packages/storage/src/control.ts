@@ -250,6 +250,12 @@ export class ControlStore extends SqliteStore {
       labels: labelList(row.labels as string | null),
     }));
   }
+  async renameWorker(id: string, name: string): Promise<void> {
+    const result = await this.db
+      .prepare("UPDATE workers SET name = ? WHERE id = ?")
+      .run(name, id);
+    if (!result.changes) throw new HarnessError("Worker not found.", 404);
+  }
   async setWorkerLabels(id: string, labels: unknown): Promise<WorkerRecord> {
     const result = await this.db
       .prepare("UPDATE workers SET labels = ? WHERE id = ?")
