@@ -166,7 +166,7 @@ export function Shell({
   const refresh = useCallback(() => load.current(), []);
   return (
     <TreeContext.Provider value={{ tree, refresh }}>
-      <SidebarProvider className="h-svh">
+      <SidebarProvider className="fixed inset-0 min-h-0">
         <Suspense fallback={null}>
           <AppSidebar tree={tree} refresh={refresh} />
         </Suspense>
@@ -687,8 +687,8 @@ export function PageHeading({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="mb-6 flex items-end justify-between gap-4">
-      <div>
+    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
+      <div className="shrink-0">
         <div className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
           {eyebrow}
         </div>
