@@ -144,7 +144,9 @@ test("a worker's question to the owner reaches the planner, and the answer stays
     assert.equal(link?.role, "reply");
     await finish(store, `input:${input.id}`, "Paid and published.");
     assert.match(
-      String((await store.deliverDelegationReport(`input:${input.id}`))?.prompt),
+      String(
+        (await store.deliverDelegationReport(`input:${input.id}`))?.prompt,
+      ),
       /Paid and published/,
     );
 
