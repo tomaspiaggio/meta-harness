@@ -424,6 +424,7 @@ private Chromium cache, with no browser window taking focus.
 
 
 The header account menu shows the current Google owner profile and Sign out.
+A Google sign-in lasts 30 days on each device; Sign out revokes it immediately.
 Profile data comes from `/api/auth/profile` after owner authentication and is not
 cached. Sign-out revokes the application's session; it does not sign the user out
 of Google across other applications. Google cookie/profile/revocation behavior
