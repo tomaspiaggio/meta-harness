@@ -241,10 +241,19 @@ test("Google OAuth validates state and verified owner, survives restart, and rev
     const valid = await start(auth);
     const response = await callback(auth, valid);
     assert.equal(response.status, 302);
+    const month = 30 * 24 * 3600;
+    for (const cookie of response.headers
+      .getSetCookie()
+      .filter((value) => /session_(token|data)=/.test(value)))
+      assert.match(cookie, new RegExp(`Max-Age=${month}(;|$)`));
     const headers = new Headers({ cookie: cookieHeader(valid.jar) });
     const signed = await requireGoogleOwner(auth, config, ledger, headers);
     assert.equal(signed.user.email, owner);
     assert.ok(await store.ownerSession(signed.session.token));
+    assert.ok(
+      signed.session.expiresAt.getTime() > Date.now() + (month - 60) * 1000,
+      "a sign-in lasts 30 days",
+    );
     assert.equal(
       [...valid.jar.keys()].some((key) => key.includes("account_data")),
       false,

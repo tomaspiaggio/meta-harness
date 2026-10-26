@@ -8,6 +8,8 @@ type OwnerLedger = Pick<
   HarnessStore,
   "createOwnerSession" | "ownerSession" | "revokeOwnerSession"
 >;
+/** The owner stays signed in on each device for 30 days, until Sign out. */
+const SESSION_SECONDS = 30 * 24 * 3600;
 export const googleAuthEnabled = () => process.env.HARNESS_AUTH === "google";
 export interface GoogleOwnerConfig {
   origin: string;
@@ -116,11 +118,12 @@ export function createGoogleOwnerAuth(
     },
     // One owner needs no extra database/pool/service. The existing application
     // ledger adds immediate revocation to Better Auth's encrypted cookie session.
+    // Stateless refresh never extends a session, so its lifetime is the limit.
     session: {
-      expiresIn: 8 * 3600,
+      expiresIn: SESSION_SECONDS,
       cookieCache: {
         enabled: true,
-        maxAge: 8 * 3600,
+        maxAge: SESSION_SECONDS,
         strategy: "jwe",
         refreshCache: false,
       },
