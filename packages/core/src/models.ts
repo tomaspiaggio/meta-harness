@@ -17,6 +17,7 @@ export const modelSuggestions = {
   ],
   codex: [
     { id: "gpt-6.1-sol", label: "Sol · GPT-6.1" },
+    { id: "gpt-6.1-terra", label: "Terra · GPT-6.1" },
     { id: "gpt-6-astra", label: "Astra · GPT-6" },
     { id: "gpt-6-luna", label: "Luna · GPT-6" },
     { id: "gpt-6-sol", label: "Sol · GPT-6" },
