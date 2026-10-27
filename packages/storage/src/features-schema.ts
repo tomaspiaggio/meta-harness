@@ -56,6 +56,15 @@ CREATE TABLE IF NOT EXISTS session_notes (
  turnId TEXT PRIMARY KEY, fromSessionId TEXT NOT NULL, toSessionId TEXT NOT NULL, createdAt INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS session_notes_pair ON session_notes(fromSessionId, toSessionId, createdAt);
+CREATE TABLE IF NOT EXISTS briefs (
+ id TEXT PRIMARY KEY, day TEXT NOT NULL, workspaceId TEXT NOT NULL, title TEXT NOT NULL,
+ highlights TEXT NOT NULL, html TEXT NOT NULL, sources TEXT NOT NULL, turnId TEXT,
+ createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS briefs_day_workspace ON briefs(day, workspaceId);
+CREATE TABLE IF NOT EXISTS brief_runs (
+ day TEXT PRIMARY KEY, status TEXT NOT NULL, turnId TEXT, activity INTEGER NOT NULL, createdAt INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS browser_identities (
  id TEXT PRIMARY KEY, workspaceId TEXT NOT NULL REFERENCES workspaces(id), name TEXT NOT NULL,
  workerId TEXT, status TEXT NOT NULL DEFAULT 'idle', mode TEXT NOT NULL DEFAULT 'agent',

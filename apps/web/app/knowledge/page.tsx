@@ -125,9 +125,9 @@ function Knowledge() {
         </Badge>
       </PageHeading>
       <p className="-mt-3 mb-4 text-muted-foreground">
-        These records are supplied automatically to every workspace before each
-        turn. Edits create new revisions. Deleting withdraws a decision and
-        preserves its history.
+        Every turn gets an index of these records and reads the ones it needs.
+        Edits create new revisions. Deleting withdraws a decision and preserves
+        its history.
       </p>
       <label className="mb-5 flex items-center gap-2 text-sm">
         <input

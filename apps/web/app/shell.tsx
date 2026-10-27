@@ -74,6 +74,7 @@ const TreeContext = createContext<{
 /** Workspaces and sessions shared by the sidebar and the pages. */
 export const useTree = () => useContext(TreeContext);
 const sections = [
+  { href: "/home", label: "Home" },
   { href: "/", label: "Conversations" },
   { href: "/tasks", label: "Tasks" },
   { href: "/knowledge", label: "Decisions" },

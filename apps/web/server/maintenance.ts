@@ -1,4 +1,5 @@
 import { alertBackups } from "./backup";
+import { dispatchBriefs } from "./briefs";
 import { BrowserBroker } from "./browser";
 import { deliverDelegationReports } from "./delegation";
 import { cleanupDeleted } from "./deletion";
@@ -42,6 +43,7 @@ export function maintain(): Promise<void> {
       deliverTelegramInbox,
       deliverNotifications,
       alertBackups,
+      dispatchBriefs,
     ]) {
       try {
         await job();
