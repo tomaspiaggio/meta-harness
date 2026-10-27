@@ -176,7 +176,7 @@ test("a lost Demo attempt restores the checkpoint output and fences the old gene
       type: "text",
       text: "not-checkpointed",
     });
-    await store.recoverExpired(Date.now() + 60000);
+    await store.recoverExpired(Date.now() + 240000);
     assert.equal((await store.getTurn(id)).output, "durable");
     await assert.rejects(
       async () =>
@@ -223,7 +223,7 @@ test("native agent interruptions never replay, and continuation prefers its orig
       1,
       { type: "native-session", id: "claude-native" },
     );
-    await store.recoverExpired(Date.now() + 60000);
+    await store.recoverExpired(Date.now() + 240000);
     assert.equal(
       (await store.getTurn(attempt.claim.turn.id)).status,
       "interrupted",
@@ -552,8 +552,8 @@ test("concurrent lease reconcilers recover a Demo turn exactly once", async () =
     assert.ok(assignment);
     const turn = assignment.claim.turn;
     const recovered = await Promise.all([
-      first.recoverExpired(Date.now() + 60000),
-      second.recoverExpired(Date.now() + 60000),
+      first.recoverExpired(Date.now() + 240000),
+      second.recoverExpired(Date.now() + 240000),
     ]);
     assert.equal(recovered[0] + recovered[1], 1);
     assert.equal(

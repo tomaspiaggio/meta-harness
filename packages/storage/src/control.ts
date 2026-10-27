@@ -36,6 +36,8 @@ import { SqliteStore } from "./index";
 const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 const LEASE_MS = 30000;
+/** A running turn survives a control stall this long; workers retry within it. */
+const TURN_LEASE_MS = 180000;
 // A busy home machine keeps a conversation this long before another takes it.
 const AFFINITY_MS = 2 * 60000;
 const capacityReason = (reason: string) =>
@@ -674,7 +676,7 @@ export class ControlStore extends SqliteStore {
         .prepare(
           "UPDATE turns SET status = 'running', workerId = ?, generation = generation + 1, leaseUntil = ?, error = NULL WHERE id = ?",
         )
-        .run(id, now + LEASE_MS, candidate.id);
+        .run(id, now + TURN_LEASE_MS, candidate.id);
       const turn = await this.getTurn(candidate.id);
       await this.db
         .prepare("INSERT INTO worker_claims VALUES (?, ?, ?, ?, ?)")
@@ -717,7 +719,9 @@ export class ControlStore extends SqliteStore {
   }> {
     return await this.transaction(async () => {
       await this.requireWorkerOwnership(workerId, turnId, generation);
-      if (!(await this.heartbeat(turnId, generation, Date.now(), LEASE_MS)))
+      if (
+        !(await this.heartbeat(turnId, generation, Date.now(), TURN_LEASE_MS))
+      )
         throw new HarnessError("Turn ownership expired.", 409);
       return { stopRequested: !!(await this.getTurn(turnId)).stopRequestedAt };
     });

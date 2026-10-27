@@ -12,7 +12,11 @@ export interface WorkerIdentity {
   serverUrl: string;
 }
 export class WorkerClient {
-  constructor(private identity: WorkerIdentity) {
+  /** `retryMs` stays below the control's 3-minute turn lease. */
+  constructor(
+    private identity: WorkerIdentity,
+    private retryMs = 150000,
+  ) {
     const url = new URL(identity.serverUrl);
     if (
       url.username ||
@@ -78,7 +82,15 @@ export class WorkerClient {
       };
     }
     let lastError: unknown;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Claims are polled anyway; a running turn rides out a control stall
+    // (restart, overloaded host) within its 3-minute lease.
+    const started = Date.now();
+    const patience = action === "claim" ? 0 : this.retryMs;
+    for (
+      let attempt = 0;
+      attempt < 3 || Date.now() - started < patience;
+      attempt++
+    ) {
       try {
         const response = await fetch(
           `${this.identity.serverUrl.replace(/\/$/, "")}/api/worker?action=${encodeURIComponent(action)}`,
@@ -162,7 +174,7 @@ export class WorkerClient {
         if (error instanceof HarnessError && error.status < 500) throw error;
         lastError = error;
       }
-      await delay(250 * (attempt + 1));
+      await delay(Math.min(250 * (attempt + 1), 5000));
     }
     throw lastError;
   }

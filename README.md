@@ -214,7 +214,9 @@ copying `.data` alone is **not** a portable provider checkpoint.
   execute the same turn twice.
 - At most one active turn can mutate a session. Multiple workers sharing this
   local database claim turns atomically.
-- A worker renews a 30-second ownership lease. After expiry, the next claim scan
+- A worker renews a 3-minute ownership lease every 5 seconds and keeps retrying
+  its requests for up to 150 seconds, so a control restart or an overloaded
+  control host does not kill a running agent. After expiry, the next claim scan
   marks the turn interrupted and fences its writes. Interrupted agent turns are
   never retried automatically: inspect partial results and submit a new instruction.
 - A graceful shutdown terminates the current provider process and records an
@@ -350,7 +352,7 @@ These measurements remain estimates, not a guarantee of future allocation succes
 
 The Demo runtime checkpoints between three deterministic steps. Its files and
 output checkpoint together at the control plane. If a worker disappears, the
-30-second lease expires and another eligible worker restores that checkpoint.
+3-minute lease expires and another eligible worker restores that checkpoint.
 Demo is explicitly safe to replay. Native Claude/Codex turns remain interrupted
 after worker loss. A CLI conversation prefers the worker that ran it last, but
 any eligible worker continues it when that one is off, draining or busy for two
