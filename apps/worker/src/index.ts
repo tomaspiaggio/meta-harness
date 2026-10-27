@@ -159,7 +159,8 @@ function report(): WorkerReport {
     memoryBudgetMiB: setting("HARNESS_MEMORY_BUDGET_MIB", 2048, 1),
     cpuSlots: setting(
       "HARNESS_CPU_SLOTS",
-      Math.max(1, Math.min(2, availableParallelism() - 1)),
+      // One per agent the owner allows, leaving a core for the host.
+      Math.max(1, Math.min(concurrency, availableParallelism() - 1)),
       1,
     ),
     maxBuilds: setting("HARNESS_BUILD_SLOTS", 1),
