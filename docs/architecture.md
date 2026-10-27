@@ -179,12 +179,15 @@ need an isolation/security validation; this is not a multi-tenant security claim
 ## Memory, artifacts and fresh context
 
 Shared accepted decisions use revisioned history with withdrawals. Each turn
-proactively receives the current bounded snapshot in context and local decision
-files, including relevant cross-workspace findings; models need not discover a
-hidden DECISIONS.md in another session. They can call `memory_get` again during a
-turn. Publication uses expected revisions and transactional receipts so a stale
-update cannot silently replace a newer decision. Limits are currently 100 records
-and 32 KiB of injected context.
+receives an index of the current snapshot in context (key, revision and first
+line; this workspace first; about 8,000 characters) and the full snapshot as a
+local file, including cross-workspace findings; models need not discover a
+hidden DECISIONS.md in another session. They read full records from that file or
+with `memory_get` (keys or a query). A turn records only the snapshot revision it
+read; history is append-only, so that snapshot is rebuilt exactly for retries and
+for checking its updates' expected revisions. Publication uses expected revisions
+and transactional receipts so a stale update cannot silently replace a newer
+decision. The store holds up to 500 records of at most 4,000 characters each.
 
 This remains an application-canonical decision service, not the future git-backed
 knowledge repository. Selective audiences, git/skill ingestion, retrieval indexes,

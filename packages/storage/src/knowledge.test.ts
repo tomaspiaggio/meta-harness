@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { WorkerReport } from "@harness/core/scheduling";
+import { HarnessStore } from "./application";
 import { ControlStore } from "./control";
 
 const report: WorkerReport = {
@@ -246,6 +247,126 @@ test("withdrawals supersede old values and a conflicting batch rolls back every 
       "conflict",
     );
     assert.equal((await store.decisionsForTurn(reader.turn.id)).length, 0);
+  } finally {
+    await store.close();
+  }
+});
+test("turns read a revision of the store, which is no longer bounded by prompt size", async () => {
+  const store = new HarnessStore(":memory:");
+  try {
+    const worker = await store.createWorker("test");
+    await store.reportWorker(worker.id, report);
+    const writer = await claim(store, worker.id, "tech");
+    await store.readWorkerDecisions(
+      worker.id,
+      writer.turn.id,
+      writer.turn.generation,
+    );
+    const updates = Array.from({ length: 10 }, (_, index) => ({
+      key: `litho.block-${index}`,
+      content: `Block ${index} summary.\n${"x".repeat(3900)}`,
+      expectedRevision: 0,
+    }));
+    await store.completeWorkerTurn(
+      worker.id,
+      writer.turn.id,
+      writer.turn.generation,
+      "completed",
+      undefined,
+      updates,
+    );
+    const reader = await claim(store, worker.id, "business");
+    const read = await store.readWorkerDecisions(
+      worker.id,
+      reader.turn.id,
+      reader.turn.generation,
+    );
+    assert.equal(read.decisions.length, 10);
+    assert.ok(Buffer.byteLength(JSON.stringify(read)) > 32768);
+    const other = await claim(store, worker.id, "tech");
+    await store.readWorkerDecisions(
+      worker.id,
+      other.turn.id,
+      other.turn.generation,
+    );
+    await store.completeWorkerTurn(
+      worker.id,
+      other.turn.id,
+      other.turn.generation,
+      "completed",
+      undefined,
+      [
+        {
+          key: "litho.block-0",
+          content: "Block 0 changed.",
+          expectedRevision: 1,
+        },
+      ],
+    );
+    // A re-read returns the snapshot the turn first read, not the newer one.
+    const again = await store.readWorkerDecisions(
+      worker.id,
+      reader.turn.id,
+      reader.turn.generation,
+    );
+    assert.deepEqual(again, read);
+    const stored = await store
+      .databaseConnection()
+      .prepare("SELECT snapshot FROM turn_knowledge WHERE turnId = ?")
+      .get(reader.turn.id);
+    assert.deepEqual(JSON.parse(String(stored?.snapshot)), {
+      revision: read.revision,
+    });
+    // Its stale update is still rejected against what it read.
+    await assert.rejects(
+      store.completeWorkerTurn(
+        worker.id,
+        reader.turn.id,
+        reader.turn.generation,
+        "completed",
+        undefined,
+        [{ key: "litho.block-0", content: "Stale.", expectedRevision: 2 }],
+      ),
+      /consumed revision/,
+    );
+  } finally {
+    await store.close();
+  }
+});
+test("turns that stored a full snapshot before the change still publish", async () => {
+  const store = new HarnessStore(":memory:");
+  try {
+    const worker = await store.createWorker("test");
+    await store.reportWorker(worker.id, report);
+    const turn = await claim(store, worker.id, "tech");
+    await store
+      .databaseConnection()
+      .prepare("INSERT INTO turn_knowledge VALUES (?, ?, ?)")
+      .run(
+        turn.turn.id,
+        turn.turn.generation,
+        JSON.stringify({ revision: 0, decisions: [] }),
+      );
+    assert.deepEqual(
+      await store.readWorkerDecisions(
+        worker.id,
+        turn.turn.id,
+        turn.turn.generation,
+      ),
+      { revision: 0, decisions: [] },
+    );
+    await store.completeWorkerTurn(
+      worker.id,
+      turn.turn.id,
+      turn.turn.generation,
+      "completed",
+      undefined,
+      [{ key: "tech.legacy", content: "Published.", expectedRevision: 0 }],
+    );
+    assert.equal(
+      (await store.getSharedDecisions()).decisions[0].content,
+      "Published.",
+    );
   } finally {
     await store.close();
   }

@@ -9,6 +9,7 @@ export const maxDuration = 60;
 
 import { createHash } from "node:crypto";
 import { HarnessError, requiredText } from "@harness/core";
+import { filterDecisions } from "@harness/core/knowledge";
 import { REPORT_RULES } from "../../../server/delegation";
 import { flushDispatch } from "../../../server/dispatcher";
 import { verifyAttemptGrant } from "../../../server/grants";
@@ -42,8 +43,14 @@ const tools = [
   {
     name: "memory_get",
     description:
-      "Read current shared decisions before answering or acting; latest revisions supersede old conversation claims. Each decision names its source session/turn; use decision_source for the full conversation behind it.",
-    inputSchema: { ...object, properties: {} },
+      "Read the full text of shared decisions. The turn instructions list only an index; pass keys from it, or a query (all words must appear in the key or content), or neither for every record. Latest revisions supersede old conversation claims. Each decision names its source session/turn; use decision_source for the full conversation behind it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keys: { type: "array", items: text, maxItems: 50 },
+        query: text,
+      },
+    },
   },
   {
     name: "decision_source",
@@ -364,7 +371,7 @@ export async function POST(request: Request) {
       } else if (parameters?.name === "operation_list")
         result = await store.unfinishedOperations(session.id);
       else if (parameters?.name === "memory_get")
-        result = await store.getSharedDecisions();
+        result = filterDecisions(await store.getSharedDecisions(), args);
       else if (parameters?.name === "decision_source")
         result = await decisionSource(store, args);
       else if (parameters?.name === "session_read")
