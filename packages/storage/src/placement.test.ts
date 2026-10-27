@@ -297,3 +297,27 @@ test("a task's report waits for the agent's last continuation", async () => {
     await store.close();
   }
 });
+test("waiting reasons name each machine and skip revoked ones", async () => {
+  const { store, mac } = await setup();
+  try {
+    const old = await store.createWorker("old-pi");
+    await store.revokeWorker(old.id);
+    await store.reportWorker(mac.id, {
+      ...report,
+      providers: ["claude"],
+      maxAgents: 3,
+      cpuSlots: 1,
+    });
+    const busy = await store.createSession("tech", "Busy", "claude");
+    await queue(store, "busy", busy.id);
+    assert.ok(await store.claimForWorker(mac.id));
+    const planner = await store.createSession("tech", "Planner", "claude");
+    await queue(store, "waiting", planner.id);
+    assert.equal(
+      await store.waitingReason("waiting"),
+      "mac: All 1 CPU slots are in use; pi: claude is not available here",
+    );
+  } finally {
+    await store.close();
+  }
+});

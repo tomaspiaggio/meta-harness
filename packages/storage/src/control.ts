@@ -536,11 +536,23 @@ export class ControlStore extends SqliteStore {
     const workers = await this.listWorkers();
     if (!workers.length) return "No workers enrolled";
     const reasons = await Promise.all(
-      workers.map(async (worker) => await this.reason(turn, worker, now)),
+      workers.map(async (worker) => ({
+        worker,
+        reason: await this.reason(turn, worker, now),
+      })),
     );
-    return reasons.some((reason) => reason === null)
-      ? "Waiting for an eligible worker to claim"
-      : [...new Set(reasons)].join("; ");
+    if (reasons.some(({ reason }) => reason === null))
+      return "Waiting for an eligible worker to claim";
+    // Revoked machines (drained and offline) are not worth naming.
+    const relevant = reasons.filter(
+      ({ worker, reason }) =>
+        !(worker.draining && reason === "Worker is offline"),
+    );
+    if (!relevant.length) return "No machine is online";
+    const named = relevant.map(
+      ({ worker, reason }) => `${worker.name}: ${reason}`,
+    );
+    return [...new Set(named)].join("; ");
   }
   async listTasks(workspaceId?: string) {
     const tasks = (await this.db

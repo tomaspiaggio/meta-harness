@@ -125,7 +125,7 @@ export function admissionReason(
 ): string | null {
   if (report.draining) return "Worker is draining";
   if (!report.providers.includes(provider))
-    return `${provider} is unavailable on this worker`;
+    return `${provider} is not available here`;
   if (allocations.length >= report.maxAgents)
     return "All agent slots are occupied";
   if (provider !== "demo" && report.memoryPressure === "critical")
@@ -153,7 +153,7 @@ export function admissionReason(
   if (needs.memoryMiB > report.availableMemoryMiB - report.reserveMemoryMiB)
     return `Preserving host memory headroom: ${report.availableMemoryMiB} MiB available; ${needs.memoryMiB + report.reserveMemoryMiB} MiB needed (${needs.memoryMiB} MiB for this turn + ${report.reserveMemoryMiB} MiB reserve)`;
   if (used.cpuSlots + needs.cpuSlots > report.cpuSlots)
-    return "Harness CPU reservations are full";
+    return `All ${report.cpuSlots} CPU slots are in use`;
   if (
     profile === "build" &&
     allocations.filter((item) => item.profile === "build").length >=

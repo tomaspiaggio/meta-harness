@@ -93,7 +93,7 @@ test("draining and unsupported providers wait without consuming capacity", () =>
   );
   assert.match(
     admissionReason(report, [], "standard", "codex") ?? "",
-    /unavailable/,
+    /is not available here/,
   );
 });
 test("worker reports reject invalid measurements and unbounded concurrency", async () => {
