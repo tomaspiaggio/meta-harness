@@ -279,6 +279,29 @@ The bench verifies publication, cross-workspace proactive recall, updates in an
 existing conversation, and control/worker restart. It does not change your actual
 decision collection or existing sessions.
 
+## Daily briefs
+
+**Home** shows each workspace's latest daily brief: a headline and a few
+highlights, opening into a short visual page with diagrams. Earlier days stay
+available from the day strip, as a changelog.
+
+Each morning after 05:00 in the owner's time zone (`HARNESS_TIMEZONE`, else the
+control host's), control checks the previous day. A day with no completed turns
+is skipped without running an agent. Otherwise the **Daily briefs** session (in
+its own workspace, with the default agent) gets a digest of that day: each
+workspace's sessions, what was asked and the outcome, decisions published, and
+the previous brief. It publishes one brief per workspace with `brief_publish`
+and may read more with `session_read` or `decision_source`. **Write now** or
+**Rewrite** on Home runs it by hand for the day shown.
+
+Briefs are stored in the database (`briefs`, one per workspace and day) and
+outlive the session that wrote them; deleting a workspace deletes its briefs.
+Every session can read them with `brief_list` and `brief_get`, for example to
+draft an investor update. Agent-written HTML is sanitized (no scripts, forms or
+remote loads) and rendered in a shadow root with a small stylesheet built from
+the app's theme (`apps/web/lib/brief-kit.ts`), so briefs match the app in light
+and dark mode.
+
 ## Verify
 
 ```sh

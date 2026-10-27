@@ -392,6 +392,32 @@ model SessionNotes {
   @@map("session_notes")
 }
 
+model Briefs {
+  id          String  @id
+  day         String
+  workspaceId String
+  title       String
+  highlights  String
+  html        String
+  sources     String
+  turnId      String?
+  createdAt   BigInt
+  updatedAt   BigInt
+
+  @@unique([day, workspaceId], map: "briefs_day_workspace")
+  @@map("briefs")
+}
+
+model BriefRuns {
+  day       String  @id
+  status    String
+  turnId    String?
+  activity  Int
+  createdAt BigInt
+
+  @@map("brief_runs")
+}
+
 model BrowserIdentities {
   stateCipher                String?
   id                         String            @id

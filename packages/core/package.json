@@ -10,6 +10,7 @@
     "./checkpoint": "./src/checkpoint.ts",
     "./native-store": "./src/native-store.ts",
     "./knowledge": "./src/knowledge.ts",
+    "./briefs": "./src/briefs.ts",
     "./automations": "./src/automations.ts",
     "./attachments": "./src/attachments.ts",
     "./browser": "./src/browser.ts",

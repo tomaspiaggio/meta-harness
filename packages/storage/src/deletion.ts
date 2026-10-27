@@ -103,6 +103,11 @@ export async function deleteResource(
         await db
           .prepare("UPDATE decision_history SET turnId = NULL WHERE turnId = ?")
           .run(turnId);
+        // Briefs are history of every workspace; they outlive the turn that wrote them.
+        for (const table of ["briefs", "brief_runs"])
+          await db
+            .prepare(`UPDATE ${table} SET turnId = NULL WHERE turnId = ?`)
+            .run(turnId);
         await db
           .prepare(
             "UPDATE worker_claims SET turnId = NULL, generation = NULL WHERE turnId = ?",
@@ -186,6 +191,7 @@ export async function deleteResource(
       await db
         .prepare("DELETE FROM workspace_resources WHERE workspaceId = ?")
         .run(id);
+      await db.prepare("DELETE FROM briefs WHERE workspaceId = ?").run(id);
       await db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
       await tombstone("workspace", id);
     }

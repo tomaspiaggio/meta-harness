@@ -9,6 +9,7 @@ export const maxDuration = 60;
 
 import { createHash } from "node:crypto";
 import { HarnessError, requiredText } from "@harness/core";
+import { BRIEFS_WORKSPACE, parseBrief, parseDay } from "@harness/core/briefs";
 import { filterDecisions } from "@harness/core/knowledge";
 import { REPORT_RULES } from "../../../server/delegation";
 import { flushDispatch } from "../../../server/dispatcher";
@@ -173,6 +174,52 @@ const tools = [
     },
   },
   {
+    name: "brief_publish",
+    description:
+      "Publish (or replace) one workspace's daily brief: a headline, 3–5 highlights and the full HTML brief. Only the Daily briefs session can publish.",
+    inputSchema: {
+      ...object,
+      properties: {
+        day: { type: "string", description: "YYYY-MM-DD" },
+        workspace_id: text,
+        title: text,
+        highlights: { type: "array", items: text, minItems: 1, maxItems: 6 },
+        html: text,
+        sources: {
+          type: "array",
+          maxItems: 50,
+          items: {
+            type: "object",
+            properties: { session_id: text, decision_key: text },
+          },
+        },
+      },
+      required: ["day", "workspace_id", "title", "highlights", "html"],
+    },
+  },
+  {
+    name: "brief_list",
+    description:
+      "List the daily briefs written so far (newest first): day, workspace, headline and highlights. Filter by workspace_id or day; with neither, returns each workspace's latest. Useful for continuity and for summaries such as an investor update.",
+    inputSchema: {
+      ...object,
+      properties: {
+        workspace_id: text,
+        day: { type: "string", description: "YYYY-MM-DD" },
+        limit: { type: "integer", minimum: 1, maximum: 200 },
+      },
+    },
+  },
+  {
+    name: "brief_get",
+    description: "Read one daily brief in full, including its HTML.",
+    inputSchema: {
+      ...object,
+      properties: { id: text },
+      required: ["id"],
+    },
+  },
+  {
     name: "session_note",
     description:
       "Send a note to another of the owner's sessions to coordinate, for example to agree an interface, ask what it changed or tell it a branch is ready. It arrives there as a message and its agent may reply with session_note; the planning session is not woken. Use it instead of asking the planner to relay. Do not use it to hand out work (that is session_send, for planning sessions) or to acknowledge; write one self-contained note with what you need and by when. If you are waiting for the reply to continue a task, say so in task_report and end your turn: the reply arrives as a new message here.",
@@ -318,7 +365,8 @@ export async function POST(request: Request) {
       grant.turnId,
       grant.generation,
     );
-    const message = await readJson(request, 65536);
+    // Room for a daily brief's HTML (MAX_BRIEF_HTML) after JSON escaping.
+    const message = await readJson(request, 524288);
     const id = message.id;
     const reply = (result: unknown) =>
       Response.json(
@@ -342,7 +390,11 @@ export async function POST(request: Request) {
       const session = await store.getSession(turn.sessionId);
       return reply({
         tools: [
-          ...tools,
+          ...tools.filter(
+            (tool) =>
+              tool.name !== "brief_publish" ||
+              session.workspaceId === BRIEFS_WORKSPACE,
+          ),
           ...(await integrationToolDescriptors(store, session.workspaceId)),
         ],
       });
@@ -450,6 +502,24 @@ export async function POST(request: Request) {
           queued_turn: sent.id,
           note: "Queued. Its report will arrive in this session as a new message when that turn ends; finish your turn instead of waiting.",
         };
+      } else if (parameters?.name === "brief_publish") {
+        if (session.workspaceId !== BRIEFS_WORKSPACE)
+          throw new HarnessError(
+            "Only the Daily briefs session publishes briefs.",
+            403,
+          );
+        const brief = await store.publishBrief(parseBrief(args), turn.id);
+        result = { published: brief.id, day: brief.day, title: brief.title };
+      } else if (parameters?.name === "brief_list") {
+        result = await store.listBriefs({
+          ...(typeof args.workspace_id === "string"
+            ? { workspaceId: args.workspace_id }
+            : {}),
+          ...(args.day === undefined ? {} : { day: parseDay(args.day) }),
+          limit: typeof args.limit === "number" ? args.limit : 30,
+        });
+      } else if (parameters?.name === "brief_get") {
+        result = await store.getBrief(requiredText(args.id, "Brief ID", 100));
       } else if (parameters?.name === "session_note") {
         const sent = await store.sendNote({
           turnId: `note:${createHash("sha256")

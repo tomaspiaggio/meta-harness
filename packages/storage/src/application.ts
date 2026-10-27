@@ -19,6 +19,13 @@ import {
   type ScheduleOccurrence,
 } from "@harness/core/automations";
 import {
+  BRIEFS_WORKSPACE,
+  type Brief,
+  type BriefInput,
+  type BriefSummary,
+  dayBounds,
+} from "@harness/core/briefs";
+import {
   type BrowserCommand,
   browserCommandNotStarted,
 } from "@harness/core/browser";
@@ -1794,6 +1801,284 @@ ${blocks.reverse().join("\n\n---\n\n")}
    * example two workers agreeing an interface) without handing out work. It
    * arrives as a message in the other session and does not wake the planner.
    */
+  /** The owner's time zone, as used for schedules and daily briefs. */
+  ownerTimeZone(): string {
+    return (
+      process.env.HARNESS_TIMEZONE ??
+      Intl.DateTimeFormat().resolvedOptions().timeZone
+    );
+  }
+  /** Completed turns per workspace on a local day, briefs excluded. */
+  async briefActivity(
+    day: string,
+  ): Promise<{ workspaceId: string; name: string; turns: number }[]> {
+    const { start, end } = dayBounds(day, this.ownerTimeZone());
+    return (
+      await this.db
+        .prepare(
+          `SELECT workspaces.id AS "workspaceId", workspaces.name AS name, COUNT(*) AS turns
+          FROM turns JOIN sessions ON sessions.id = turns.sessionId
+          JOIN workspaces ON workspaces.id = sessions.workspaceId
+          WHERE turns.status = 'completed' AND turns.createdAt >= ? AND turns.createdAt < ?
+          AND workspaces.id != ? GROUP BY workspaces.id, workspaces.name ORDER BY workspaces.name`,
+        )
+        .all(start, end, BRIEFS_WORKSPACE)
+    ).map((row) => ({
+      workspaceId: String(row.workspaceId),
+      name: String(row.name),
+      turns: Number(row.turns),
+    }));
+  }
+  /** What happened on a day, per workspace, sized for one agent prompt. */
+  async briefDigest(day: string, maxChars = 90000): Promise<string> {
+    const { start, end } = dayBounds(day, this.ownerTimeZone());
+    const active = await this.briefActivity(day);
+    const budget = Math.max(
+      6000,
+      Math.floor(maxChars / Math.max(1, active.length)),
+    );
+    const clip = (text: string, max: number) => {
+      const line = text.replace(/\s+/g, " ").trim();
+      return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+    };
+    const tail = (text: string, max: number) => {
+      const line = text.replace(/\s+/g, " ").trim();
+      return line.length > max ? `…${line.slice(-(max - 1))}` : line;
+    };
+    const sections: string[] = [];
+    for (const workspace of active) {
+      const lines = [
+        `## Workspace "${workspace.name}" (workspace_id ${workspace.workspaceId}), ${workspace.turns} completed turns`,
+      ];
+      const previous = await this.db
+        .prepare(
+          "SELECT day, title, highlights FROM briefs WHERE workspaceId = ? AND day < ? ORDER BY day DESC LIMIT 1",
+        )
+        .get(workspace.workspaceId, day);
+      if (previous)
+        lines.push(
+          `Previous brief (${previous.day}): ${previous.title}. ${(JSON.parse(String(previous.highlights)) as string[]).join(" / ")}`,
+        );
+      const decisions = await this.db
+        .prepare(
+          "SELECT key, revision, content FROM decision_history WHERE workspaceId = ? AND updatedAt >= ? AND updatedAt < ? ORDER BY sequence",
+        )
+        .all(workspace.workspaceId, start, end);
+      if (decisions.length) {
+        lines.push("Decisions published that day:");
+        for (const decision of decisions)
+          lines.push(
+            `- ${decision.key} r${decision.revision}: ${decision.content === null ? "(withdrawn)" : clip(String(decision.content), 700)}`,
+          );
+      }
+      const turns = await this.db
+        .prepare(
+          `SELECT turns.prompt, turns.output, sessions.id AS "sessionId", sessions.title
+          FROM turns JOIN sessions ON sessions.id = turns.sessionId
+          WHERE sessions.workspaceId = ? AND turns.status = 'completed'
+          AND turns.createdAt >= ? AND turns.createdAt < ?
+          ORDER BY sessions.createdAt, turns.createdAt`,
+        )
+        .all(workspace.workspaceId, start, end);
+      let used = lines.join("\n").length;
+      let session = "";
+      let omitted = 0;
+      for (const turn of turns) {
+        const heading =
+          turn.sessionId === session
+            ? ""
+            : `\n### Session "${turn.title}" (session_id ${turn.sessionId})\n`;
+        const entry = `${heading}- Asked: ${clip(String(turn.prompt), 400)}\n  Outcome: ${tail(String(turn.output), 900)}`;
+        if (used + entry.length > budget) {
+          omitted++;
+          continue;
+        }
+        session = String(turn.sessionId);
+        lines.push(entry);
+        used += entry.length;
+      }
+      if (omitted)
+        lines.push(
+          `(${omitted} more turns not shown; read them with session_read.)`,
+        );
+      sections.push(lines.join("\n"));
+    }
+    return sections.join("\n\n");
+  }
+  /** The session that writes the briefs, in its own workspace. */
+  async briefSession(): Promise<Session> {
+    const saved = await this.db
+      .prepare("SELECT value FROM harness_settings WHERE key = 'brief-session'")
+      .get();
+    if (saved)
+      try {
+        return await this.getSession(String(saved.value));
+      } catch {
+        // Deleted by the owner; make a new one.
+      }
+    if (
+      !(await this.db
+        .prepare("SELECT 1 FROM workspaces WHERE id = ?")
+        .get(BRIEFS_WORKSPACE))
+    )
+      await this.db
+        .prepare(
+          "INSERT INTO workspaces(id, name, instructions) VALUES (?, ?, ?)",
+        )
+        .run(
+          BRIEFS_WORKSPACE,
+          "Daily briefs",
+          "This workspace writes the nightly brief of each workspace's work. Ask here to rewrite or extend a brief.",
+        );
+    const session = await this.createSession(BRIEFS_WORKSPACE, "Daily briefs");
+    await this.renameSession(session.id, "Daily briefs");
+    await this.db
+      .prepare(
+        "INSERT INTO harness_settings(key,value) VALUES ('brief-session',?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      )
+      .run(session.id);
+    return session;
+  }
+  /** Claims a day's run once; false when the day already has one. */
+  async claimBriefRun(day: string, activity: number): Promise<boolean> {
+    return (
+      Number(
+        (
+          await this.db
+            .prepare(
+              "INSERT INTO brief_runs(day, status, turnId, activity, createdAt) VALUES (?, 'claimed', NULL, ?, ?) ON CONFLICT(day) DO NOTHING",
+            )
+            .run(day, activity, Date.now())
+        ).changes,
+      ) === 1
+    );
+  }
+  async setBriefRun(
+    day: string,
+    status: string,
+    turnId: string | null,
+    activity: number,
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        "INSERT INTO brief_runs(day, status, turnId, activity, createdAt) VALUES (?, ?, ?, ?, ?) ON CONFLICT(day) DO UPDATE SET status = excluded.status, turnId = excluded.turnId, activity = excluded.activity",
+      )
+      .run(day, status, turnId, activity, Date.now());
+  }
+  async briefRun(day: string): Promise<{
+    day: string;
+    status: string;
+    turnId: string | null;
+    turnStatus: string | null;
+  } | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT brief_runs.day, brief_runs.status, brief_runs.turnId, turns.status AS "turnStatus"
+        FROM brief_runs LEFT JOIN turns ON turns.id = brief_runs.turnId WHERE brief_runs.day = ?`,
+      )
+      .get(day);
+    return row
+      ? {
+          day: String(row.day),
+          status: String(row.status),
+          turnId: row.turnId === null ? null : String(row.turnId),
+          turnStatus: row.turnStatus === null ? null : String(row.turnStatus),
+        }
+      : null;
+  }
+  async publishBrief(
+    input: BriefInput,
+    turnId: string | null,
+  ): Promise<BriefSummary> {
+    if (input.workspaceId === BRIEFS_WORKSPACE)
+      throw new HarnessError("Write briefs for the other workspaces.");
+    await this.getWorkspace(input.workspaceId);
+    const now = Date.now();
+    await this.db
+      .prepare(
+        `INSERT INTO briefs(id, day, workspaceId, title, highlights, html, sources, turnId, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(day, workspaceId) DO UPDATE SET
+        title = excluded.title, highlights = excluded.highlights, html = excluded.html,
+        sources = excluded.sources, turnId = excluded.turnId, updatedAt = excluded.updatedAt`,
+      )
+      .run(
+        crypto.randomUUID(),
+        input.day,
+        input.workspaceId,
+        input.title,
+        JSON.stringify(input.highlights),
+        input.html,
+        JSON.stringify(input.sources),
+        turnId,
+        now,
+        now,
+      );
+    const [brief] = await this.listBriefs({
+      day: input.day,
+      workspaceId: input.workspaceId,
+    });
+    return brief;
+  }
+  private briefRow(row: Record<string, unknown>): BriefSummary {
+    return {
+      id: String(row.id),
+      day: String(row.day),
+      workspaceId: String(row.workspaceId),
+      title: String(row.title),
+      highlights: JSON.parse(String(row.highlights)) as string[],
+      createdAt: Number(row.createdAt),
+      updatedAt: Number(row.updatedAt),
+    };
+  }
+  /** Summaries for a day, a workspace, or (neither) each workspace's latest. */
+  async listBriefs(
+    filter: { day?: string; workspaceId?: string; limit?: number } = {},
+  ): Promise<BriefSummary[]> {
+    const where: string[] = [];
+    const values: (string | number)[] = [];
+    if (filter.day) {
+      where.push("day = ?");
+      values.push(filter.day);
+    }
+    if (filter.workspaceId) {
+      where.push("workspaceId = ?");
+      values.push(filter.workspaceId);
+    }
+    if (!filter.day && !filter.workspaceId)
+      where.push(
+        "day = (SELECT MAX(latest.day) FROM briefs AS latest WHERE latest.workspaceId = briefs.workspaceId)",
+      );
+    values.push(Math.min(Math.max(filter.limit ?? 100, 1), 500));
+    return (
+      await this.db
+        .prepare(
+          `SELECT id, day, workspaceId, title, highlights, createdAt, updatedAt FROM briefs
+          WHERE ${where.join(" AND ")} ORDER BY day DESC, workspaceId LIMIT ?`,
+        )
+        .all(...values)
+    ).map((row) => this.briefRow(row));
+  }
+  async briefDays(limit = 90): Promise<{ day: string; count: number }[]> {
+    return (
+      await this.db
+        .prepare(
+          "SELECT day, COUNT(*) AS count FROM briefs GROUP BY day ORDER BY day DESC LIMIT ?",
+        )
+        .all(limit)
+    ).map((row) => ({ day: String(row.day), count: Number(row.count) }));
+  }
+  async getBrief(id: string): Promise<Brief> {
+    const row = await this.db
+      .prepare("SELECT * FROM briefs WHERE id = ?")
+      .get(id);
+    if (!row) throw new HarnessError("Brief not found.", 404);
+    return {
+      ...this.briefRow(row),
+      html: String(row.html),
+      sources: JSON.parse(String(row.sources)),
+      turnId: row.turnId === null ? null : String(row.turnId),
+    };
+  }
   async sendNote(input: {
     turnId: string;
     callerTurnId: string;
