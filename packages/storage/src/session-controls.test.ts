@@ -159,7 +159,7 @@ test("explicitly stopped Demo work is not recovered after its worker disappears"
     await store.enqueue("demo");
     await store.claimForWorker(id);
     await store.requestStop("demo");
-    await store.recoverExpired(Date.now() + 60000);
+    await store.recoverExpired(Date.now() + 240000);
     assert.equal((await store.getTurn("demo")).status, "interrupted");
     assert.equal(await store.claimForWorker(id), null);
   } finally {

@@ -303,8 +303,10 @@ async function runCli(
     child.stdout.setEncoding("utf8");
     for await (const chunk of child.stdout) {
       buffer += chunk;
-      if (buffer.length > 1024 * 1024)
-        throw new Error("Provider event exceeded 1 MiB.");
+      // Tool results (images, large files) arrive as one line; the decoder
+      // keeps only small fields, so this bounds memory, not event size.
+      if (buffer.length > 64 * 1024 * 1024)
+        throw new Error("Provider event exceeded 64 MiB.");
       let newline = buffer.indexOf("\n");
       while (newline !== -1) {
         await consume(buffer.slice(0, newline));

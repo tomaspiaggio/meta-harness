@@ -173,6 +173,26 @@ test("CLI adapter consumes JSONL and treats clean exit without completion as int
     rmSync(dir, { recursive: true, force: true });
   }
 });
+test("a tool result larger than 1 MiB on one line does not fail the turn", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "meta-runtime-"));
+  const bin = join(dir, "fake-codex");
+  const original = process.env.CODEX_BIN;
+  try {
+    process.env.CODEX_BIN = bin;
+    writeFileSync(
+      bin,
+      '#!/usr/bin/env node\nprocess.stdin.resume();\nprocess.stdin.on("end", () => {\nconsole.log(JSON.stringify({type:"item.completed",item:{type:"command_execution",aggregated_output:"x".repeat(5*1024*1024)}}));\nconsole.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"done"}}));\nconsole.log(JSON.stringify({type:"turn.completed"}));\n});\n',
+    );
+    chmodSync(bin, 0o700);
+    const events: RuntimeEvent[] = [];
+    await createRuntime("codex").run(input(dir, events));
+    assert.deepEqual(events, [{ type: "text", text: "done\n\n" }]);
+  } finally {
+    if (original === undefined) delete process.env.CODEX_BIN;
+    else process.env.CODEX_BIN = original;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 test("cancellation terminates a live CLI process", async () => {
   const dir = mkdtempSync(join(tmpdir(), "meta-abort-"));
   const bin = join(dir, "fake-codex");
