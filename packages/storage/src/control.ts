@@ -12,7 +12,7 @@ import {
   type Decision,
   type DecisionSnapshot,
   type DecisionUpdate,
-  MAX_DECISION_BYTES,
+  MAX_DECISIONS,
   parseDecisionUpdates,
 } from "@harness/core/knowledge";
 import type {
@@ -935,9 +935,9 @@ export class ControlStore extends SqliteStore {
             "Read shared decisions before publishing.",
             409,
           );
-        const consumed = JSON.parse(
+        const consumed = await this.consumedDecisions(
           String(snapshot.snapshot),
-        ) as DecisionSnapshot;
+        );
         for (const update of parseDecisionUpdates(decisionUpdates)) {
           if (
             (consumed.decisions.find((d) => d.key === update.key)?.revision ??
@@ -954,7 +954,7 @@ export class ControlStore extends SqliteStore {
             turnId,
           );
         }
-        await this.getSharedDecisions(); // Enforce the bounded context before committing.
+        await this.getSharedDecisions(); // Enforce the record limit before committing.
       }
       await this.db
         .prepare(
@@ -963,30 +963,36 @@ export class ControlStore extends SqliteStore {
         .run(status, error ?? null, turnId);
     });
   }
-  async getSharedDecisions(): Promise<DecisionSnapshot> {
+  /** Latest record per key, as of `atSequence` when given (history is append-only). */
+  async getSharedDecisions(atSequence?: number): Promise<DecisionSnapshot> {
+    const bound = atSequence === undefined ? "" : " WHERE sequence <= ?";
+    const parameters = atSequence === undefined ? [] : [atSequence];
     const decisions = (await this.db
       .prepare(`SELECT * FROM decision_history WHERE sequence IN
-      (SELECT MAX(sequence) FROM decision_history GROUP BY key) ORDER BY key`)
-      .all()) as unknown as Decision[];
+      (SELECT MAX(sequence) FROM decision_history${bound} GROUP BY key) ORDER BY key`)
+      .all(...parameters)) as unknown as Decision[];
     const revision = Number(
       (
         await this.db
           .prepare(
-            "SELECT COALESCE(MAX(sequence), 0) AS revision FROM decision_history",
+            `SELECT COALESCE(MAX(sequence), 0) AS revision FROM decision_history${bound}`,
           )
-          .get()
+          .get(...parameters)
       )?.revision,
     );
-    const snapshot = { revision, decisions };
-    if (
-      decisions.length > 100 ||
-      Buffer.byteLength(JSON.stringify(snapshot)) > MAX_DECISION_BYTES
-    )
+    if (decisions.length > MAX_DECISIONS)
       throw new HarnessError(
-        "Shared decisions exceed this prototype's 100-record/32 KiB context limit. Consolidate decisions before publishing more.",
+        `Shared decisions are limited to ${MAX_DECISIONS} records. Consolidate or withdraw decisions before publishing more.`,
         413,
       );
-    return snapshot;
+    return { revision, decisions };
+  }
+  /** Turns record the snapshot revision they read; older rows hold the full snapshot. */
+  private async consumedDecisions(stored: string): Promise<DecisionSnapshot> {
+    const row = JSON.parse(stored) as Partial<DecisionSnapshot>;
+    return row.decisions
+      ? (row as DecisionSnapshot)
+      : await this.getSharedDecisions(Number(row.revision));
   }
   async readWorkerDecisions(
     workerId: string,
@@ -1000,12 +1006,15 @@ export class ControlStore extends SqliteStore {
           "SELECT snapshot FROM turn_knowledge WHERE turnId = ? AND generation = ?",
         )
         .get(turnId, generation);
-      if (previous)
-        return JSON.parse(String(previous.snapshot)) as DecisionSnapshot;
+      if (previous) return this.consumedDecisions(String(previous.snapshot));
       const snapshot = await this.getSharedDecisions();
       await this.db
         .prepare("INSERT INTO turn_knowledge VALUES (?, ?, ?)")
-        .run(turnId, generation, JSON.stringify(snapshot));
+        .run(
+          turnId,
+          generation,
+          JSON.stringify({ revision: snapshot.revision }),
+        );
       return snapshot;
     });
   }

@@ -15,7 +15,10 @@ import {
   collectDecisionUpdates,
   prepareDecisionFiles,
 } from "../apps/worker/src/knowledge.ts";
-import { decisionInstructions } from "../packages/core/src/knowledge.ts";
+import {
+  decisionInstructions,
+  filterDecisions,
+} from "../packages/core/src/knowledge.ts";
 
 const snapshot = {
   revision: 2,
@@ -59,8 +62,11 @@ test("turn preparation proactively supplies the fresh decision and preserves unp
     );
     assert.deepEqual(await collectDecisionUpdates(directory), []);
     const instructions = decisionInstructions(snapshot);
-    assert.match(instructions, /219/);
-    assert.match(instructions, /proactively/);
+    assert.match(
+      instructions,
+      /business\.pilot-price \(r2\): Business pilot price is \$219\./,
+    );
+    assert.match(instructions, /SHARED_DECISIONS\.md/);
     assert.match(instructions, /supersede older versions/);
     await writeFile(
       join(directory, "DECISION_UPDATES.json"),
@@ -91,4 +97,50 @@ test("invalid or symlinked publication files cannot report successful publicatio
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+test("turns get an index of decisions, this workspace first, within a budget", () => {
+  const decision = (key, workspaceId, updatedAt, content) => ({
+    key,
+    content,
+    revision: 1,
+    sequence: updatedAt,
+    workspaceId,
+    sessionId: null,
+    turnId: null,
+    updatedAt,
+  });
+  const many = {
+    revision: 200,
+    decisions: [
+      decision("tech.own", "tech", 1, "Own decision.\nSECRET-DETAIL"),
+      decision("business.old", "business", 2, null),
+      ...Array.from({ length: 150 }, (_, index) =>
+        decision(`business.d${index}`, "business", 10 + index, "y".repeat(500)),
+      ),
+    ],
+  };
+  const instructions = decisionInstructions(many, "tech");
+  const index = instructions.slice(instructions.indexOf("- "));
+  assert.ok(index.startsWith("- tech.own (r1, this workspace): Own decision."));
+  assert.doesNotMatch(instructions, /SECRET-DETAIL/);
+  assert.match(instructions, /business\.d149 \(r1\): y+…/);
+  assert.match(instructions, /…and \d+ more not listed here/);
+  assert.ok(instructions.length < 12000);
+  assert.deepEqual(
+    filterDecisions(many, { query: "secret-detail OWN" }).decisions.map(
+      (item) => item.key,
+    ),
+    ["tech.own"],
+  );
+  assert.deepEqual(
+    filterDecisions(many, { keys: ["business.old", "nope"] }).decisions.map(
+      (item) => item.key,
+    ),
+    ["business.old"],
+  );
+  assert.equal(filterDecisions(many, {}).decisions.length, 152);
+  assert.match(
+    decisionInstructions({ revision: 0, decisions: [] }),
+    /no decisions yet/,
+  );
 });

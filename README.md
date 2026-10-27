@@ -246,8 +246,10 @@ Try: tell Tech **“Business pilot price is $173”**, then ask a new Business s
 **“what was the pilot price”**. Change it to $219 in Tech and ask that same Business
 session again. It should use the latest record and cite its key/revision.
 
-The worker materializes `SHARED_DECISIONS.md` and supplies the same snapshot in
-the prompt. Agents publish structured updates through `DECISION_UPDATES.json`;
+The worker materializes the full snapshot as `SHARED_DECISIONS.md` and puts an
+index in the prompt: each key, revision and first line, this workspace's records
+first, within about 8,000 characters. Agents read the full text of relevant
+records from that file or with `memory_get` (by keys or a search query). Agents publish structured updates through `DECISION_UPDATES.json`;
 they receive these instructions automatically. A private `DECISIONS.md` remains
 session-local. Updates commit atomically with successful turn completion, require
 the consumed expected revision and current ownership, and keep revision history
@@ -258,8 +260,8 @@ are preserved before the next turn resets the publication file.
 This first collection is explicitly shared across all workspaces belonging to
 this personal harness. Selective audiences, git-backed canonical sources, search,
 and invalidation during an already-running turn are not implemented. Freshness
-is enforced at turn start, not at every native tool call. The snapshot is bounded
-to 100 records / 32 KiB and publication fails rather than silently omitting records.
+is enforced at turn start, not at every native tool call. The store holds up to
+500 records; publication past that fails rather than silently dropping records.
 Keep secrets in provider/credential stores, outside shared decisions.
 
 ```sh
