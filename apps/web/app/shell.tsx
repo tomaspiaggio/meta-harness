@@ -97,7 +97,8 @@ export function conversationHref(
 function useLatestBuild() {
   useEffect(() => {
     const check = async () => {
-      if (document.hidden) return;
+      // Dev rebuilds can leave the browser bundle on an older commit id.
+      if (document.hidden || process.env.NODE_ENV === "development") return;
       const typing = document.activeElement?.matches("input, textarea");
       try {
         const response = await fetch("/api/version", { cache: "no-store" });
