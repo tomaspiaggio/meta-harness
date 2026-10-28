@@ -34,6 +34,14 @@ export async function PATCH(request: Request) {
           body.sandboxed,
         ),
       );
+    if (body.action === "provider")
+      return Response.json(
+        await (await getStore()).setSessionProvider(
+          requiredText(body.id, "Session ID", 100),
+          parseProvider(body.provider),
+          typeof body.model === "string" ? body.model : null,
+        ),
+      );
     if (body.action === "labels")
       return Response.json(
         await (await getStore()).setSessionLabels(

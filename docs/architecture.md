@@ -305,6 +305,16 @@ report reaches the planner. Planners give each new task a short title.
 
 ## Sessions handing work to sessions
 
+Every workspace has one **planner** (`sessions.role = 'planner'`, unique per
+workspace): its main conversation, listed first and opened when the workspace
+is. Control creates it on first load; an existing session titled "Planner" is
+adopted with its history, otherwise an empty one starts with the default agent,
+which can be changed until its first message. Owner turns in the planner carry
+planner instructions. `session_send` with `new_worker` creates a worker session
+in the planner's workspace (a retried call reuses it). The sidebar groups the
+sessions that took tasks as **Workers**, with how many are working, and the
+planner has a **Workers** view: each worker's state and the task board.
+
 A planning session can hand work to the owner's other sessions with
 `session_send` (any workspace, any agent: a Claude planner can drive Codex
 workers). The message becomes an ordinary queued turn in the worker session,

@@ -34,6 +34,8 @@ export interface Session {
   requiredLabels?: string | null;
   /** 1 keeps this session's agent in the restricted sandbox. */
   sandboxed?: number;
+  /** "planner": the workspace's main conversation, which hands out work. */
+  role?: string | null;
   createdAt: number;
 }
 export interface Turn {

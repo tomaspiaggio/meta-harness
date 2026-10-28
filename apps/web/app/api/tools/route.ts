@@ -154,11 +154,21 @@ const tools = [
   {
     name: "session_send",
     description:
-      "Hand work to another of the owner's sessions (find IDs with workspace_list), or answer, give feedback or the next step on a task you already gave (pass task_id). The message is queued in that session and its agent works on it like an owner message, with its own agent, model, files and tools. When its turn ends, its report arrives here as a new message and you continue: review it against what you asked, then send feedback, answer its question, give the next step, or close it with task_close. Write self-contained instructions: the other session has not seen this conversation. Returns immediately; do not wait for the result.",
+      "Hand work to another of the owner's sessions (find IDs with workspace_list, or create one with new_worker), or answer, give feedback or the next step on a task you already gave (pass task_id). The message is queued in that session and its agent works on it like an owner message, with its own agent, model, files and tools. When its turn ends, its report arrives here as a new message and you continue: review it against what you asked, then send feedback, answer its question, give the next step, or close it with task_close. Write self-contained instructions: the other session has not seen this conversation. Returns immediately; do not wait for the result.",
     inputSchema: {
       type: "object",
       properties: {
         session_id: { ...text, description: "Target session, for a new task" },
+        new_worker: {
+          type: "object",
+          description:
+            "Instead of session_id: create a worker session in this workspace for a new task",
+          properties: {
+            title: { ...text, description: "Short session name, 2-5 words" },
+            agent: { type: "string", enum: ["claude", "codex"] },
+          },
+          required: ["title"],
+        },
         title: {
           ...text,
           description:
@@ -491,18 +501,44 @@ export async function POST(request: Request) {
           requiredText(args.question, "Question", 4000),
         );
       } else if (parameters?.name === "session_send") {
+        const taskTurnId = `task:${createHash("sha256")
+          .update(`${grant.turnId}:${String(id)}`)
+          .digest("hex")
+          .slice(0, 32)}`;
+        let toSessionId =
+          typeof args.session_id === "string" ? args.session_id : "";
+        const worker = args.new_worker as
+          | { title?: unknown; agent?: unknown }
+          | undefined;
+        if (worker && !args.task_id) {
+          // A retried call reuses the session its first attempt created.
+          const sent = await store.getTurn(taskTurnId).catch(() => null);
+          toSessionId =
+            sent?.sessionId ??
+            (
+              await store.createSession(
+                session.workspaceId,
+                requiredText(worker.title, "Worker title", 60),
+                worker.agent === "claude" || worker.agent === "codex"
+                  ? worker.agent
+                  : undefined,
+              )
+            ).id;
+          if (!sent)
+            await store.renameSession(
+              toSessionId,
+              requiredText(worker.title, "Worker title", 60),
+            );
+        }
         const { delegation, turn: sent } = await store.sendDelegation({
-          turnId: `task:${createHash("sha256")
-            .update(`${grant.turnId}:${String(id)}`)
-            .digest("hex")
-            .slice(0, 32)}`,
+          turnId: taskTurnId,
           callerTurnId: turn.id,
           message: requiredText(args.message, "Message", 20000),
           ...(typeof args.title === "string" ? { title: args.title } : {}),
           ...(typeof args.task_id === "string" && args.task_id
             ? { delegationId: args.task_id }
             : {
-                toSessionId: requiredText(args.session_id, "Session ID", 100),
+                toSessionId: requiredText(toSessionId, "Session ID", 100),
               }),
         });
         await flushDispatch();

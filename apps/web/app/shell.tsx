@@ -3,6 +3,7 @@ import type { Session, Workspace } from "@harness/core";
 import type { AgentDefaults } from "@harness/core/models";
 import {
   ChevronRight,
+  Compass,
   Folder,
   FolderOpen,
   MessageSquare,
@@ -14,6 +15,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   createContext,
+  Fragment,
   Suspense,
   useCallback,
   useContext,
@@ -58,11 +60,13 @@ import { AccountMenu } from "./account-menu";
 import { DeleteDialog, type DeleteTarget } from "./delete-dialog";
 import { refreshPush } from "./push-client";
 
+/** A session in the tree: whether it took tasks, and whether work is in flight. */
+export type TreeSession = Session & { worker?: boolean; busy?: boolean };
 type Tree = {
   defaults?: AgentDefaults;
   loaded?: boolean;
   workspaces: Workspace[];
-  sessions: Session[];
+  sessions: TreeSession[];
 };
 const TreeContext = createContext<{
   tree: Tree;
@@ -365,6 +369,27 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
                 0,
               );
               const open = expanded[workspace.id] ?? current;
+              // The planner first, then the workers it launched, then the rest.
+              const planner = sessions.find(
+                (session) => session.role === "planner",
+              );
+              const workers = sessions.filter(
+                (session) => session.worker && session !== planner,
+              );
+              const others = sessions.filter(
+                (session) => !session.worker && session !== planner,
+              );
+              const working = workers.filter((session) => session.busy).length;
+              const ordered = [
+                ...(planner ? [{ session: planner, heading: "" }] : []),
+                ...workers.map((session, index) => ({
+                  session,
+                  heading: index
+                    ? ""
+                    : `Workers${working ? ` · ${working} working` : ""}`,
+                })),
+                ...others.map((session) => ({ session, heading: "" })),
+              ];
               return (
                 <Collapsible
                   key={workspace.id}
@@ -386,7 +411,7 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
                       className="pr-28"
                     >
                       <Link
-                        href={conversationHref(workspace.id)}
+                        href={conversationHref(workspace.id, planner?.id)}
                         onClick={(event) => {
                           // On a phone the drawer closes after navigating, so
                           // a workspace tap only opens its sessions; "New
@@ -437,169 +462,201 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
                     </CollapsibleTrigger>
                     <CollapsibleContent>
                       <SidebarMenuSub className="mr-0 pr-0">
-                        <SidebarMenuSubItem>
-                          <SidebarMenuSubButton
-                            asChild
-                            isActive={current && !sessionId}
-                            className="text-sidebar-foreground/60"
-                          >
-                            <Link href={conversationHref(workspace.id)}>
-                              <Plus />
-                              <span>New session</span>
-                            </Link>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                        {sessions.map((session) => (
-                          <SidebarMenuSubItem
-                            key={session.id}
-                            className="group/session relative"
-                          >
-                            <SidebarMenuSubButton
-                              asChild
-                              isActive={session.id === sessionId}
-                              className="h-auto py-1.5 pr-16"
-                            >
-                              <Link
-                                href={conversationHref(
-                                  workspace.id,
-                                  session.id,
-                                )}
-                                title={session.title}
+                        {ordered.map(({ session, heading }) => (
+                          <Fragment key={session.id}>
+                            {heading && (
+                              <SidebarMenuSubItem className="px-2 pt-3 pb-1 font-mono text-[10.5px] uppercase tracking-wider text-sidebar-foreground/50">
+                                {heading}
+                              </SidebarMenuSubItem>
+                            )}
+                            <SidebarMenuSubItem className="group/session relative">
+                              <SidebarMenuSubButton
+                                asChild
+                                isActive={session.id === sessionId}
+                                className="h-auto py-1.5 pr-16"
                               >
-                                <MessageSquare className="self-start mt-0.5" />
-                                <span className="flex min-w-0 flex-col">
-                                  <span className="truncate">
-                                    {session.title}
+                                <Link
+                                  href={conversationHref(
+                                    workspace.id,
+                                    session.id,
+                                  )}
+                                  title={session.title}
+                                >
+                                  {session.role === "planner" ? (
+                                    <Compass className="self-start mt-0.5 text-sidebar-primary" />
+                                  ) : (
+                                    <MessageSquare className="self-start mt-0.5" />
+                                  )}
+                                  <span className="flex min-w-0 flex-col">
+                                    <span className="truncate">
+                                      {session.title}
+                                    </span>
+                                    <span className="font-mono text-[10.5px] text-sidebar-foreground/50">
+                                      {session.role === "planner"
+                                        ? "planner · "
+                                        : ""}
+                                      {session.provider} ·{" "}
+                                      {timeAgo(
+                                        session.lastActivityAt ??
+                                          session.createdAt,
+                                      )}
+                                      {session.busy && session.worker && (
+                                        <span className="ml-2 text-sidebar-primary">
+                                          working
+                                        </span>
+                                      )}
+                                      {!!session.unreadCount && (
+                                        <span className="ml-2 text-primary">
+                                          {session.unreadCount} unread
+                                        </span>
+                                      )}
+                                      {!!session.needsInputCount && (
+                                        <span className="ml-2 text-warning">
+                                          Needs input
+                                        </span>
+                                      )}
+                                    </span>
                                   </span>
-                                  <span className="font-mono text-[10.5px] text-sidebar-foreground/50">
-                                    {session.provider} ·{" "}
-                                    {timeAgo(
-                                      session.lastActivityAt ??
-                                        session.createdAt,
-                                    )}
-                                    {!!session.unreadCount && (
-                                      <span className="ml-2 text-primary">
-                                        {session.unreadCount} unread
-                                      </span>
-                                    )}
-                                    {!!session.needsInputCount && (
-                                      <span className="ml-2 text-warning">
-                                        Needs input
-                                      </span>
-                                    )}
-                                  </span>
-                                </span>
-                              </Link>
-                            </SidebarMenuSubButton>
-                            <button
-                              type="button"
-                              aria-label={`Rename ${session.title}`}
-                              title="Rename session"
-                              className="absolute top-2 right-7 rounded p-1 text-sidebar-foreground/60 opacity-100 hover:bg-sidebar-accent focus-visible:opacity-100 sm:opacity-0 sm:group-hover/session:opacity-100"
-                              onClick={() => {
-                                setRenaming(session.id);
-                                setTitle(session.title);
-                                setError("");
-                              }}
-                            >
-                              <Pencil className="size-3" />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`Delete session ${session.title}`}
-                              title="Delete session"
-                              className="absolute top-2 right-1 rounded p-1 text-sidebar-foreground/60 opacity-100 hover:bg-sidebar-accent focus-visible:opacity-100 sm:opacity-0 sm:group-hover/session:opacity-100"
-                              onClick={() =>
-                                setDeleting({
-                                  kind: "session",
-                                  id: session.id,
-                                  name: session.title,
-                                })
-                              }
-                            >
-                              <Trash2 className="size-3" />
-                            </button>
-                            {renaming === session.id && (
-                              <form
-                                className="mt-1 mb-2 grid gap-2 px-1"
-                                onSubmit={async (event) => {
-                                  event.preventDefault();
-                                  if (savingTitle) return;
-                                  setSavingTitle(true);
+                                </Link>
+                              </SidebarMenuSubButton>
+                              <button
+                                type="button"
+                                aria-label={`Rename ${session.title}`}
+                                title="Rename session"
+                                className="absolute top-2 right-7 rounded p-1 text-sidebar-foreground/60 opacity-100 hover:bg-sidebar-accent focus-visible:opacity-100 sm:opacity-0 sm:group-hover/session:opacity-100"
+                                onClick={() => {
+                                  setRenaming(session.id);
+                                  setTitle(session.title);
                                   setError("");
-                                  try {
-                                    const response = await fetch(
-                                      "/api/sessions",
-                                      {
-                                        method: "PATCH",
-                                        headers: {
-                                          "Content-Type": "application/json",
-                                        },
-                                        body: JSON.stringify({
-                                          id: session.id,
-                                          title,
-                                        }),
-                                      },
-                                    );
-                                    const result = await response.json();
-                                    if (!response.ok)
-                                      throw new Error(
-                                        result.error ??
-                                          "Could not rename session.",
-                                      );
-                                    setRenaming(null);
-                                    refresh();
-                                  } catch (error) {
-                                    setError(
-                                      error instanceof Error
-                                        ? error.message
-                                        : "Could not rename session.",
-                                    );
-                                  } finally {
-                                    setSavingTitle(false);
-                                  }
                                 }}
                               >
-                                {error && (
-                                  <p
-                                    role="alert"
-                                    className="text-xs text-destructive"
-                                  >
-                                    {error}
-                                  </p>
-                                )}
-                                <Input
-                                  aria-label="Session name"
-                                  value={title}
-                                  maxLength={100}
-                                  onChange={(event) =>
-                                    setTitle(event.target.value)
-                                  }
-                                  onKeyDown={(event) => {
-                                    if (event.key === "Escape")
+                                <Pencil className="size-3" />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Delete session ${session.title}`}
+                                title="Delete session"
+                                className="absolute top-2 right-1 rounded p-1 text-sidebar-foreground/60 opacity-100 hover:bg-sidebar-accent focus-visible:opacity-100 sm:opacity-0 sm:group-hover/session:opacity-100"
+                                onClick={() =>
+                                  setDeleting({
+                                    kind: "session",
+                                    id: session.id,
+                                    name: session.title,
+                                  })
+                                }
+                              >
+                                <Trash2 className="size-3" />
+                              </button>
+                              {renaming === session.id && (
+                                <form
+                                  className="mt-1 mb-2 grid gap-2 px-1"
+                                  onSubmit={async (event) => {
+                                    event.preventDefault();
+                                    if (savingTitle) return;
+                                    setSavingTitle(true);
+                                    setError("");
+                                    try {
+                                      const response = await fetch(
+                                        "/api/sessions",
+                                        {
+                                          method: "PATCH",
+                                          headers: {
+                                            "Content-Type": "application/json",
+                                          },
+                                          body: JSON.stringify({
+                                            id: session.id,
+                                            title,
+                                          }),
+                                        },
+                                      );
+                                      const result = await response.json();
+                                      if (!response.ok)
+                                        throw new Error(
+                                          result.error ??
+                                            "Could not rename session.",
+                                        );
                                       setRenaming(null);
+                                      refresh();
+                                    } catch (error) {
+                                      setError(
+                                        error instanceof Error
+                                          ? error.message
+                                          : "Could not rename session.",
+                                      );
+                                    } finally {
+                                      setSavingTitle(false);
+                                    }
                                   }}
-                                />
-                                <div className="flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    disabled={savingTitle || !title.trim()}
-                                  >
-                                    Save
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => setRenaming(null)}
-                                  >
-                                    Cancel
-                                  </Button>
-                                </div>
-                              </form>
+                                >
+                                  {error && (
+                                    <p
+                                      role="alert"
+                                      className="text-xs text-destructive"
+                                    >
+                                      {error}
+                                    </p>
+                                  )}
+                                  <Input
+                                    aria-label="Session name"
+                                    value={title}
+                                    maxLength={100}
+                                    onChange={(event) =>
+                                      setTitle(event.target.value)
+                                    }
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Escape")
+                                        setRenaming(null);
+                                    }}
+                                  />
+                                  <div className="flex gap-2">
+                                    <Button
+                                      size="sm"
+                                      disabled={savingTitle || !title.trim()}
+                                    >
+                                      Save
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => setRenaming(null)}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </form>
+                              )}
+                            </SidebarMenuSubItem>
+                            {session === planner && (
+                              <SidebarMenuSubItem>
+                                <SidebarMenuSubButton
+                                  asChild
+                                  isActive={current && !sessionId}
+                                  className="text-sidebar-foreground/60"
+                                >
+                                  <Link href={conversationHref(workspace.id)}>
+                                    <Plus />
+                                    <span>New session</span>
+                                  </Link>
+                                </SidebarMenuSubButton>
+                              </SidebarMenuSubItem>
                             )}
-                          </SidebarMenuSubItem>
+                          </Fragment>
                         ))}
+                        {!planner && (
+                          <SidebarMenuSubItem>
+                            <SidebarMenuSubButton
+                              asChild
+                              isActive={current && !sessionId}
+                              className="text-sidebar-foreground/60"
+                            >
+                              <Link href={conversationHref(workspace.id)}>
+                                <Plus />
+                                <span>New session</span>
+                              </Link>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        )}
                       </SidebarMenuSub>
                     </CollapsibleContent>
                   </SidebarMenuItem>

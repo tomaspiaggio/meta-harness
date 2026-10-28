@@ -27,7 +27,10 @@ export async function delegationInstructions(
     return `[Meta Harness: this is a note from session "${sender.title}" (${sender.id}), another of the owner's sessions, to coordinate; it is not a new task from the owner. Act on it as far as it concerns your work. Reply with session_note to ${sender.id} only if it asks something or needs your answer; do not reply just to acknowledge. If it unblocks a task you are working on, continue that task and report with task_report as usual.]`;
   }
   const link = await store.delegationForTurn(claim.turn.id);
-  if (!link) return null;
+  if (!link)
+    return claim.session.role === "planner"
+      ? `[Meta Harness: you are the planner of workspace "${claim.workspace.name}", the owner's main conversation here. Answer directly what you can. For work that is long, parallel, or needs another agent or machine, split it into tasks for worker sessions with session_send: reuse a worker that fits (task_list, workspace_list) or create one with new_worker (a short title and, if it matters, the agent). Workers report back here; review their results, keep the plan moving and close tasks. Only you notify the owner, so their turns stay quiet: call notify_owner when the owner should know something now, and request_input for a decision only they can make. ${OWNER_ONLY}]`
+      : null;
   if (link.role === "report") {
     const worker = await store.getSession(link.toSessionId);
     return `[Meta Harness: this message is the automatic report from session "${worker.title}" (${worker.id}) on task ${link.delegationId}, which you gave it (round ${link.round}). Review it against what you asked and the plan. Then either send feedback, an answer or the next step with session_send and task_id ${link.delegationId}; close it with task_close when the result is acceptable; or hand out new work. Keep work moving without the owner. ${OWNER_ONLY} Reports and the turns that handle them do not notify the owner: if a worker asked something, answer it yourself when you can. Call notify_owner (one line) only when the owner should know now: the overall goal is done, something blocks the plan, or you made an important decision for them; use request_input for a question only they can answer. End your reply with a short summary for the owner of where the overall plan stands.]`;
