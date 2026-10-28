@@ -392,6 +392,15 @@ model SessionNotes {
   @@map("session_notes")
 }
 
+model OwnerAlerts {
+  turnId    String @id
+  sessionId String
+  message   String
+  createdAt BigInt
+
+  @@map("owner_alerts")
+}
+
 model Briefs {
   id          String  @id
   day         String

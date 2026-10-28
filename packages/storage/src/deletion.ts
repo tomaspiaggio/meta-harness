@@ -130,6 +130,7 @@ export async function deleteResource(
           "checkpoints",
           "delegation_turns",
           "session_notes",
+          "owner_alerts",
         ])
           await db.prepare(`DELETE FROM ${table} WHERE turnId = ?`).run(turnId);
       }

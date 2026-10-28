@@ -88,9 +88,10 @@ export async function deliverPush(
   );
   if (!devices.length) return 0;
   const session = await store.getSession(item.sessionId);
+  const alert = await store.ownerAlert(String(item.referenceId));
   const payload = {
-    title,
-    body: session.title,
+    title: alert ? `${session.title}` : title,
+    body: alert ?? session.title,
     url: `/?workspace=${encodeURIComponent(session.workspaceId)}&session=${encodeURIComponent(session.id)}`,
     // One notification per session: a newer event replaces the older one.
     tag: `session:${session.id}`,

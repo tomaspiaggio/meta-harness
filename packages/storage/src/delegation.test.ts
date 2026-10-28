@@ -242,3 +242,52 @@ test("workers coordinate with notes; a note that unblocks a task reports to the 
     await store.close();
   }
 });
+test("only the planner notifies the owner: workers, notes and report handling stay quiet", async () => {
+  const store = new HarnessStore(":memory:");
+  await store.ready;
+  try {
+    const planner = await store.createSession("tech", "Planner", "claude");
+    const worker = await store.createSession("tech", "Worker", "codex");
+    const quiet = (kind: string, referenceId: string) =>
+      store.notificationIsQuiet({ kind, referenceId });
+    const plan = await store.submitMessage("plan", planner.id, "Plan");
+    await finish(store, plan.id);
+    assert.equal(await quiet("completed", plan.id), false, "owner's own turn");
+
+    const { turn: task } = await store.sendDelegation({
+      turnId: "task:q",
+      callerTurnId: plan.id,
+      toSessionId: worker.id,
+      message: "Do it",
+    });
+    await store.requestInput("ask", worker.id, task.id, "question", "Pay?");
+    await finish(store, task.id);
+    assert.equal(await quiet("completed", task.id), true, "worker task turn");
+    assert.equal(await quiet("needs-input", "ask"), true, "worker question");
+
+    const report = await store.deliverDelegationReport(task.id);
+    assert.ok(report);
+    await finish(store, report.id);
+    assert.equal(await quiet("completed", report.id), true, "routine report");
+    await store.addOwnerAlert(report.id, "All three tasks are done.");
+    assert.equal(await quiet("completed", report.id), false, "notify_owner");
+    assert.equal(
+      await store.ownerAlert(report.id),
+      "All three tasks are done.",
+    );
+
+    const note = await store.sendNote({
+      turnId: "note:1",
+      callerTurnId: plan.id,
+      toSessionId: worker.id,
+      message: "FYI",
+    });
+    assert.equal(await quiet("completed", note.id), true, "note");
+    // The owner writing to a worker directly still hears back.
+    const direct = await store.submitMessage("direct", worker.id, "Status?");
+    assert.equal(await quiet("completed", direct.id), false, "owner to worker");
+    assert.equal(await quiet("title", worker.id), false);
+  } finally {
+    await store.close();
+  }
+});

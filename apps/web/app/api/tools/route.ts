@@ -174,6 +174,16 @@ const tools = [
     },
   },
   {
+    name: "notify_owner",
+    description:
+      "Notify the owner on their phone when this turn ends, with a one-line message. Reports from workers and the turns that handle them do not notify the owner on their own; use this when the owner should know now: the overall goal is done, something failed that blocks the plan, or you made an important decision on their behalf. For a question only the owner can answer, use request_input instead. Do not use it for routine progress.",
+    inputSchema: {
+      ...object,
+      properties: { message: text },
+      required: ["message"],
+    },
+  },
+  {
     name: "brief_publish",
     description:
       "Publish (or replace) one workspace's daily brief: a headline, 3–5 highlights and the full HTML brief. Only the Daily briefs session can publish.",
@@ -502,6 +512,12 @@ export async function POST(request: Request) {
           queued_turn: sent.id,
           note: "Queued. Its report will arrive in this session as a new message when that turn ends; finish your turn instead of waiting.",
         };
+      } else if (parameters?.name === "notify_owner") {
+        await store.addOwnerAlert(
+          turn.id,
+          requiredText(args.message, "Message", 300),
+        );
+        result = { notifies: "when this turn ends" };
       } else if (parameters?.name === "brief_publish") {
         if (session.workspaceId !== BRIEFS_WORKSPACE)
           throw new HarnessError(
