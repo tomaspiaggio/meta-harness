@@ -7,7 +7,11 @@ export async function GET(request: Request) {
   try {
     await localRequest(request);
     const store = await getStore();
+    await store.ensurePlanners();
     const workspaces = await store.listWorkspaces();
+    const activity = await store.sessionActivity();
+    const workers = new Set(activity.workers);
+    const busy = new Set(activity.busy);
     return Response.json(
       {
         workspaces,
@@ -18,7 +22,13 @@ export async function GET(request: Request) {
               async (workspace) => await store.listSessions(workspace.id),
             ),
           )
-        ).flat(),
+        )
+          .flat()
+          .map((session) => ({
+            ...session,
+            worker: workers.has(session.id),
+            busy: busy.has(session.id),
+          })),
       },
       { headers: { "Cache-Control": "no-store" } },
     );

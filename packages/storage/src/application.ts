@@ -1853,6 +1853,74 @@ ${blocks.reverse().join("\n\n---\n\n")}
    * example two workers agreeing an interface) without handing out work. It
    * arrives as a message in the other session and does not wake the planner.
    */
+  /**
+   * Every workspace has one planner: its main conversation, which hands work
+   * to workers. An existing session titled "Planner" is adopted; otherwise an
+   * empty one is created with the default agent, which the owner can change
+   * before the first message.
+   */
+  async ensurePlanners(): Promise<void> {
+    const missing = await this.db
+      .prepare(
+        "SELECT id FROM workspaces WHERE id != ? AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.workspaceId = workspaces.id AND sessions.role = 'planner')",
+      )
+      .all(BRIEFS_WORKSPACE);
+    for (const workspace of missing)
+      try {
+        await this.transaction(async () => {
+          const existing = await this.db
+            .prepare(
+              "SELECT id FROM sessions WHERE workspaceId = ? AND lower(title) = 'planner' ORDER BY createdAt LIMIT 1",
+            )
+            .get(workspace.id);
+          const id = existing
+            ? String(existing.id)
+            : (await this.createSession(String(workspace.id), "Planner")).id;
+          await this.db
+            .prepare(
+              "UPDATE sessions SET role = 'planner', titleSource = 'manual' WHERE id = ?",
+            )
+            .run(id);
+        });
+      } catch {
+        // Another request gave this workspace its planner first.
+      }
+  }
+  /** The agent of a conversation can change until its first message. */
+  async setSessionProvider(
+    id: string,
+    provider: Provider,
+    model: string | null,
+  ): Promise<Session> {
+    return await this.transaction(async () => {
+      await this.getSession(id);
+      if (
+        await this.db
+          .prepare("SELECT 1 AS started FROM turns WHERE sessionId = ? LIMIT 1")
+          .get(id)
+      )
+        throw new HarnessError(
+          "The agent is fixed after the first message. Start a new session to use another one.",
+        );
+      await this.db
+        .prepare("UPDATE sessions SET provider = ?, model = ? WHERE id = ?")
+        .run(provider, parseModel(provider, model), id);
+      return await this.getSession(id);
+    });
+  }
+  /** Sessions that took tasks from another session, and sessions with work in flight. */
+  async sessionActivity(): Promise<{ workers: string[]; busy: string[] }> {
+    const ids = async (sql: string) =>
+      (await this.db.prepare(sql).all()).map((row) => String(row.id));
+    return {
+      workers: await ids(
+        "SELECT DISTINCT toSessionId AS id FROM delegations WHERE toSessionId != fromSessionId",
+      ),
+      busy: await ids(
+        "SELECT DISTINCT sessionId AS id FROM turns WHERE status IN ('pending', 'queued', 'running')",
+      ),
+    };
+  }
   /** The owner's time zone, as used for schedules and daily briefs. */
   ownerTimeZone(): string {
     return (

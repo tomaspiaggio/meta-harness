@@ -149,6 +149,11 @@ export class ControlStore extends SqliteStore {
         );
       if (!columns.includes("requiredLabels"))
         raw.exec("ALTER TABLE sessions ADD COLUMN requiredLabels TEXT");
+      if (!columns.includes("role"))
+        raw.exec("ALTER TABLE sessions ADD COLUMN role TEXT");
+      raw.exec(
+        "CREATE UNIQUE INDEX IF NOT EXISTS one_planner_per_workspace ON sessions(workspaceId) WHERE role = 'planner'",
+      );
       if (
         !raw
           .prepare("PRAGMA table_info(workers)")

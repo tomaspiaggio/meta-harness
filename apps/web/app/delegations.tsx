@@ -260,3 +260,89 @@ export function DelegationsCard({
     </section>
   );
 }
+export function phaseLabel(phase: Phase) {
+  return phases[phase].label;
+}
+/**
+ * A planner's workers: each session it handed work to, whether it is working
+ * now, and every task on the board below.
+ */
+export function WorkersBoard({
+  sessionId,
+  delegations,
+  sessions,
+  onChange,
+}: {
+  sessionId: string;
+  delegations: DelegationView[];
+  sessions: { id: string; busy?: boolean }[];
+  onChange: () => void;
+}) {
+  const workers = new Map<
+    string,
+    { session: SessionRef; active: number; updatedAt: number }
+  >();
+  for (const item of delegations) {
+    const entry = workers.get(item.to.id) ?? {
+      session: item.to,
+      active: 0,
+      updatedAt: 0,
+    };
+    if (taskPhase(item.state) !== "closed") entry.active++;
+    entry.updatedAt = Math.max(entry.updatedAt, item.updatedAt);
+    workers.set(item.to.id, entry);
+  }
+  const busy = new Set(
+    sessions.filter((session) => session.busy).map((session) => session.id),
+  );
+  const list = [...workers.values()].sort(
+    (a, b) =>
+      Number(busy.has(b.session.id)) - Number(busy.has(a.session.id)) ||
+      b.active - a.active ||
+      b.updatedAt - a.updatedAt,
+  );
+  return (
+    <div>
+      <h2 className="mb-3 font-serif text-3xl tracking-tight">Workers</h2>
+      {list.length ? (
+        <ul className="mb-2 grid gap-2 sm:grid-cols-2">
+          {list.map(({ session, active, updatedAt }) => (
+            <li
+              key={session.id}
+              className="flex items-center gap-3 rounded-lg border bg-card px-3.5 py-2.5 text-sm"
+            >
+              <span
+                aria-hidden
+                className={cn(
+                  "size-2 shrink-0 rounded-full",
+                  busy.has(session.id)
+                    ? "animate-pulse bg-live"
+                    : "bg-muted-foreground/30",
+                )}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">
+                  <SessionLink session={session} />
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {busy.has(session.id) ? "working now" : "idle"}
+                  {active ? ` · ${active} open` : ""} · {timeAgo(updatedAt)}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No workers yet. Ask the planner for work and it launches workers as
+          needed.
+        </p>
+      )}
+      <DelegationsCard
+        sessionId={sessionId}
+        delegations={delegations}
+        onChange={onChange}
+      />
+    </div>
+  );
+}

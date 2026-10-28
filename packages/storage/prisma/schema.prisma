@@ -36,6 +36,7 @@ model Sessions {
   sandboxed                     Int                  @default(0)
   checkpointId                  String?
   nativeRevision                Int                  @default(0)
+  role                          String?
   related_workspaceId           Workspaces           @relation("sessions_workspaceId", fields: [workspaceId], references: [id], onDelete: Restrict)
   turns_sessionId               Turns[]              @relation("turns_sessionId")
   session_attention_sessionId   SessionAttention[]   @relation("session_attention_sessionId")
