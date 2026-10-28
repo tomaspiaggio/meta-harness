@@ -231,6 +231,10 @@ export async function deliverNotifications() {
   const store = await getStore();
   const configured = !!telegramConfiguration();
   for (const item of await store.claimNotifications()) {
+    if (await store.notificationIsQuiet(item)) {
+      await store.finishNotification(item.id, "quiet:via-planner");
+      continue;
+    }
     // Push is best effort and sent on the first attempt only, so a Telegram
     // retry cannot repeat it; the app shows every event either way.
     const pushed =

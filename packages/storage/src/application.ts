@@ -870,6 +870,58 @@ ${blocks.reverse().join("\n\n---\n\n")}
       )
       .run(id, sessionId, kind, referenceId, now, now);
   }
+  /** A planner asks to tell the owner something when its current turn ends. */
+  async addOwnerAlert(turnId: string, message: string): Promise<void> {
+    const turn = await this.getTurn(turnId);
+    await this.db
+      .prepare(
+        "INSERT INTO owner_alerts(turnId, sessionId, message, createdAt) VALUES (?, ?, ?, ?) ON CONFLICT(turnId) DO UPDATE SET message = excluded.message",
+      )
+      .run(turnId, turn.sessionId, message, Date.now());
+  }
+  async ownerAlert(turnId: string): Promise<string | null> {
+    const row = await this.db
+      .prepare("SELECT message FROM owner_alerts WHERE turnId = ?")
+      .get(turnId);
+    return row ? String(row.message) : null;
+  }
+  /**
+   * Work between sessions reaches the owner through the planner: a worker's
+   * task turns and notes never notify, and a planner's turn that only handles
+   * a report notifies when it asks the owner something or calls notify_owner.
+   */
+  async notificationIsQuiet(item: {
+    kind: string;
+    referenceId: string;
+  }): Promise<boolean> {
+    let turnId = item.referenceId;
+    if (item.kind === "needs-input") {
+      const request = await this.db
+        .prepare("SELECT turnId FROM input_requests WHERE id = ?")
+        .get(item.referenceId);
+      if (!request?.turnId) return false;
+      turnId = String(request.turnId);
+    } else if (!["completed", "failed", "interrupted"].includes(item.kind))
+      return false;
+    if (
+      await this.db
+        .prepare("SELECT 1 AS quiet FROM session_notes WHERE turnId = ?")
+        .get(turnId)
+    )
+      return true;
+    const link = await this.db
+      .prepare("SELECT role FROM delegation_turns WHERE turnId = ?")
+      .get(turnId);
+    if (!link) return false;
+    if (link.role !== "report") return true;
+    if (item.kind === "needs-input" || (await this.ownerAlert(turnId)))
+      return false;
+    return !(await this.db
+      .prepare(
+        "SELECT 1 AS asked FROM input_requests WHERE turnId = ? AND status = 'pending'",
+      )
+      .get(turnId));
+  }
   async notificationHistory(
     sessionId: string,
   ): Promise<Record<string, unknown>[]> {

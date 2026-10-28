@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS session_notes (
  turnId TEXT PRIMARY KEY, fromSessionId TEXT NOT NULL, toSessionId TEXT NOT NULL, createdAt INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS session_notes_pair ON session_notes(fromSessionId, toSessionId, createdAt);
+CREATE TABLE IF NOT EXISTS owner_alerts (
+ turnId TEXT PRIMARY KEY, sessionId TEXT NOT NULL, message TEXT NOT NULL, createdAt INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS briefs (
  id TEXT PRIMARY KEY, day TEXT NOT NULL, workspaceId TEXT NOT NULL, title TEXT NOT NULL,
  highlights TEXT NOT NULL, html TEXT NOT NULL, sources TEXT NOT NULL, turnId TEXT,

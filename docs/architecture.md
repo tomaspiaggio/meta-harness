@@ -318,9 +318,15 @@ or hands out more work. Progress reports are stored without waking anyone.
 
 The protocol text is added when a worker claims the turn, so stored messages
 stay what the sender wrote and workers need no update. Worker turns are told to
-keep moving, to ask the sender before the owner, and to ask the owner only for
-purchases, deletions and other sensitive or irreversible actions, or questions
-no agent can answer. A turn working on a task cannot hand work onward; agents
+keep moving and to put any question, including one only the owner can answer
+(purchases, deletions and other sensitive or irreversible actions), in a
+`task_report` question; the planner answers it or asks the owner.
+
+Only the planner notifies the owner. A worker's task, feedback and continuation
+turns, notes, and a worker's questions are delivered in the app only. A
+planner's turn that handles a report notifies when it asks the owner something
+(`request_input`) or calls `notify_owner` with a one-line message, which becomes
+the push text. Turns the owner starts, in any session, notify as before. A turn working on a task cannot hand work onward; agents
 use their own subagents for parallel work. The owner sees each task, its state
 and latest progress and report in the session, and can cancel it. This is the
 in-harness form of the inter-harness message model (request, report, question,
