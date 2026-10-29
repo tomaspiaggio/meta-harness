@@ -285,8 +285,10 @@ the old machine, and the agent is told so. A complete Claude SDK checkpoint
 still moves with its memory. Interrupted native turns are never retried.
 
 Agents can move themselves between steps. `machines_list` shows the machines,
-their host names, labels, whether they are online, and whether they are paused
-(draining for an update; still listed so agents don't take them for gone). `continue_on(labels, message, reason)`
+their host names, labels, whether they are online, whether they are paused
+(draining for an update; still listed so agents don't take them for gone), the
+commit each runs and any update in progress; `machine_update` starts one (see
+Updating workers). `continue_on(labels, message, reason)`
 queues the agent's next step in the same session with per-step labels
 (`turns.requiredLabels`, combined with the session's), for example to verify on
 the machine with the chip tools after coding elsewhere, and back to any machine
@@ -303,6 +305,29 @@ note, and does not wake the planning session, which sees recent notes in
 `task_list`. Two sessions exchange at most 20 notes an hour. A note that
 unblocks the recipient's open task links to it when the agent reports, so the
 report reaches the planner. Planners give each new task a short title.
+
+### Updating workers
+
+Workers report the commit they run (`report.build`). An update control asks for
+is stored per machine (`workers.updateState`: target, status, who asked) and
+rides on the reply to the worker's next report. The worker pauses claiming
+(`report.draining`) and reports its phase: `preparing` (fetch, check the commit
+is on `origin/main`, `pnpm install` into `releases/<commit>`), `waiting` (until
+no turn or browser runs), `restarting`. Control marks the update done when the
+worker reports the target build, and failed when the worker reports an error.
+The update never interrupts a turn, and a worker never runs claude or codex
+processes outside the turn that started them: agent subprocesses belong to the
+turn, so nothing survives a worker restart half-owned.
+
+`scripts/worker-launcher.mjs` is the only part outside a release. It runs the
+current release and records a switch as pending; the new worker confirms it
+after its first report reaches control, which also installs that release's
+launcher for the next start. An exit with an error twice, or no confirmation in
+five minutes, switches back to the previous release.
+
+Control refuses an update while another machine is updating, or when no other
+online, unpaused machine has Claude or Codex. That keeps at least one machine
+available to run agents, including the agent deploying the change.
 
 ## Sessions handing work to sessions
 

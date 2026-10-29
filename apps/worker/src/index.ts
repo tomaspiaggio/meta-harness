@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   accessSync,
   constants,
@@ -28,9 +29,21 @@ import {
   decisionInstructions,
 } from "@harness/core/knowledge";
 import type { NativeSessionStore } from "@harness/core/native-store";
-import { parseWorkerReport, type WorkerReport } from "@harness/core/scheduling";
+import {
+  COMMIT,
+  parseWorkerReport,
+  sameCommit,
+  type WorkerReport,
+} from "@harness/core/scheduling";
 import { createRuntime, fullAccess } from "@harness/runtimes";
 import type { WorkerAssignment } from "@harness/storage/control";
+import {
+  confirmRelease,
+  prepareRelease,
+  RESTART,
+  readState,
+  switchRelease,
+} from "../../../scripts/worker-launcher.mjs";
 import { materializeAttachments } from "./attachments";
 import { browserWorker, createBrowserHost } from "./browser";
 import { WorkerClient } from "./client";
@@ -115,6 +128,40 @@ for (const provider of providers)
     throw new Error(
       `Configured runtime ${provider} is not installed on this worker.`,
     );
+/** The commit this worker runs, so control can tell which release it has. */
+const build = (() => {
+  try {
+    const value = execFileSync("git", ["rev-parse", "--short=7", "HEAD"], {
+      encoding: "utf8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return COMMIT.test(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+})();
+// Set by scripts/worker-launcher.mjs, which lets this worker update itself.
+const releaseRoot = process.env.HARNESS_RELEASE_ROOT;
+const releaseName = process.env.HARNESS_RELEASE;
+let updating: WorkerReport["update"];
+let restarting = false;
+let running = 0;
+// A release the launcher just rolled back is reported as a failed update.
+if (releaseRoot)
+  try {
+    const failure = readState(releaseRoot).lastFailure;
+    if (failure && failure.at > Date.now() - 60 * 60 * 1000)
+      updating = {
+        target: failure.target,
+        phase: "failed",
+        message: `Rolled back to ${releaseName}: ${failure.reason}.`,
+      };
+  } catch {
+    // A missing or unreadable state file only means nothing to report.
+  }
+/** Claiming stops while an update waits for running work to finish. */
+const paused = () => !!updating && updating.phase !== "failed";
 const maxLoad = Number(process.env.HARNESS_MAX_LOAD_PER_CPU ?? 1.5);
 if (!Number.isFinite(maxLoad) || maxLoad < 0)
   throw new Error("Invalid HARNESS_MAX_LOAD_PER_CPU.");
@@ -180,12 +227,87 @@ function report(): WorkerReport {
     reserveMemoryMiB: setting("HARNESS_MEMORY_RESERVE_MIB", 1024),
     loadPerCpu: loadavg()[0] / availableParallelism(),
     maxLoadPerCpu: maxLoad,
-    draining: shutdown.signal.aborted,
+    draining: shutdown.signal.aborted || paused(),
+    ...(build ? { build } : {}),
+    ...(releaseRoot ? { updatable: true } : {}),
+    ...(updating ? { update: updating } : {}),
   };
+}
+let confirmed = false;
+async function sendReport() {
+  const reply = await client.post<{ update?: { target: string } | null }>(
+    "report",
+    { report: report() },
+  );
+  // Reaching control is what makes a new release stay.
+  if (!confirmed && releaseRoot && releaseName) {
+    confirmed = true;
+    try {
+      if (confirmRelease(releaseRoot, releaseName))
+        console.log(`Release ${releaseName} confirmed.`);
+    } catch (error) {
+      console.error("Could not confirm the release:", error);
+    }
+  }
+  handleUpdate(reply?.update?.target ?? null);
+}
+function handleUpdate(target: string | null) {
+  if (restarting) return;
+  if (!target) {
+    if (updating && updating.phase !== "failed")
+      console.log(`Update to ${updating.target} cancelled; taking work again.`);
+    updating = undefined;
+    return;
+  }
+  if (updating && sameCommit(updating.target, target)) return;
+  updating = { target, phase: "preparing" };
+  void performUpdate(target);
+}
+/**
+ * Prepares the release while running turns finish, then restarts into it. No
+ * turn is interrupted: the switch waits until this worker is idle.
+ */
+async function performUpdate(target: string) {
+  const current = () =>
+    !shutdown.signal.aborted &&
+    !!updating &&
+    sameCommit(updating.target, target) &&
+    updating.phase !== "failed";
+  try {
+    if (!releaseRoot)
+      throw new Error(
+        "This worker wasn't started by the release launcher, so it can't update itself.",
+      );
+    console.log(`Updating to ${target}: preparing; no new work meanwhile.`);
+    const name = await prepareRelease(releaseRoot, target);
+    if (!current()) return;
+    updating = { target, phase: "waiting" };
+    while (running > 0 || (browserHost?.active().length ?? 0) > 0) {
+      await delay(2000);
+      if (!current()) return;
+    }
+    restarting = true;
+    updating = { target, phase: "restarting" };
+    switchRelease(releaseRoot, name);
+    await sendReport().catch(() => {});
+    console.log(`Restarting into ${name}.`);
+    process.exitCode = RESTART;
+    shutdown.abort(new Error("Restarting for an update."));
+  } catch (error) {
+    if (!current() && !restarting) return;
+    restarting = false;
+    const message = (
+      error instanceof Error ? error.message : String(error)
+    ).slice(0, 1000);
+    updating = { target, phase: "failed", message };
+    console.error(`Update to ${target} failed: ${message}`);
+    void sendReport().catch(() => {});
+  }
 }
 const activeSessions = new Set<string>();
 async function run(assignment: WorkerAssignment): Promise<void> {
   const { claim, checkpoint } = assignment;
+  running++;
   activeSessions.add(claim.session.id);
   const { id: turnId, generation } = claim.turn;
   const controller = new AbortController();
@@ -406,6 +528,7 @@ async function run(assignment: WorkerAssignment): Promise<void> {
       })
       .catch(() => {});
   } finally {
+    running--;
     activeSessions.delete(claim.session.id);
     clearInterval(heartbeat);
     clearTimeout(timeout);
@@ -448,6 +571,12 @@ function cleanupLocal() {
 async function lane() {
   let idleDelay = pollMs;
   while (!shutdown.signal.aborted) {
+    if (paused()) {
+      await delay(idlePollMs, undefined, { signal: shutdown.signal }).catch(
+        () => {},
+      );
+      continue;
+    }
     try {
       await cleanupLocal();
       const assignment = await client.post<WorkerAssignment | null>("claim", {
@@ -477,17 +606,15 @@ async function lane() {
   }
 }
 console.log(
-  `Worker ${identity.id}; control ${identity.serverUrl}; ${concurrency} slot(s); idle agents: 0`,
+  `Worker ${identity.id}; control ${identity.serverUrl}; ${concurrency} slot(s); build ${build ?? "unknown"}${releaseName ? ` (release ${releaseName})` : ""}; idle agents: 0`,
 );
-const initialReport = report();
-parseWorkerReport(initialReport);
-await client.post("report", { report: initialReport }).catch(() => {});
+parseWorkerReport(report());
+await sendReport().catch(() => {});
 let reporting = false;
 const reportingTimer = setInterval(() => {
   if (reporting) return;
   reporting = true;
-  void client
-    .post("report", { report: report() })
+  void sendReport()
     .catch(() => {})
     .finally(() => {
       reporting = false;
@@ -506,3 +633,5 @@ try {
 } finally {
   clearInterval(reportingTimer);
 }
+// Open browser streams must not keep an updating worker alive.
+if (process.exitCode === RESTART) process.exit(RESTART);

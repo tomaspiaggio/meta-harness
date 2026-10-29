@@ -1,4 +1,9 @@
-import { type WorkerRecord, workerLabels } from "@harness/core/scheduling";
+import {
+  sameCommit,
+  updateActive,
+  type WorkerRecord,
+  workerLabels,
+} from "@harness/core/scheduling";
 import { Check, Copy, Download, Loader2, Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -16,6 +21,14 @@ const ago = (value: number | null) => {
   if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
   if (seconds < 86400) return `${Math.round(seconds / 3600)} h ago`;
   return `${Math.round(seconds / 86400)} d ago`;
+};
+
+const controlBuild = process.env.HARNESS_BUILD;
+const phases: Record<string, string> = {
+  requested: "asked; waiting for it to check in",
+  preparing: "installing the new release; it takes no new work meanwhile",
+  waiting: "waiting for its running work to finish",
+  restarting: "restarting into the new release",
 };
 
 type Pending = {
@@ -202,8 +215,43 @@ export function WorkersCard({
                         .filter((item) => item !== "demo")
                         .join(", ") || "none"}{" "}
                       · browser: {worker.report.browserHost ? "yes" : "no"}
+                      {worker.report.build && ` · build ${worker.report.build}`}
                     </p>
                   )}
+                  {updateActive(worker.update) && worker.update && (
+                    <p className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                      <Loader2 className="size-3 animate-spin" />
+                      Updating to {worker.update.target}:{" "}
+                      {phases[worker.update.status]}
+                      {worker.update.status !== "restarting" && (
+                        <button
+                          type="button"
+                          className="underline"
+                          onClick={() =>
+                            void api("workers", "PATCH", {
+                              id: worker.id,
+                              update: null,
+                            })
+                              .then(async () =>
+                                setWorkers(
+                                  (await api("workers")) as WorkerRecord[],
+                                ),
+                              )
+                              .catch((error) => onError(error.message))
+                          }
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </p>
+                  )}
+                  {worker.update?.status === "failed" &&
+                    !sameCommit(worker.report?.build, worker.update.target) && (
+                      <p className="mt-1 text-xs text-danger">
+                        Update to {worker.update.target} failed:{" "}
+                        {worker.update.message}
+                      </p>
+                    )}
                   {!worker.draining && (
                     <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
                       {workerLabels({ ...worker, labels: [] }).map((label) => (
@@ -242,6 +290,34 @@ export function WorkersCard({
                     </div>
                   )}
                 </div>
+                {up &&
+                  worker.report?.updatable &&
+                  controlBuild &&
+                  !sameCommit(worker.report.build, controlBuild) &&
+                  !updateActive(worker.update) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      title="Finishes its running work first, then restarts on the server's version; goes back by itself if that fails"
+                      onClick={() => {
+                        setBusy(true);
+                        void api("workers", "PATCH", {
+                          id: worker.id,
+                          update: controlBuild,
+                        })
+                          .then(async () =>
+                            setWorkers(
+                              (await api("workers")) as WorkerRecord[],
+                            ),
+                          )
+                          .catch((error) => onError(error.message))
+                          .finally(() => setBusy(false));
+                      }}
+                    >
+                      Update to {controlBuild}
+                    </Button>
+                  )}
                 <Button
                   size="sm"
                   variant="outline"

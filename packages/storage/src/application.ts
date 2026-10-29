@@ -1614,7 +1614,7 @@ ${blocks.reverse().join("\n\n---\n\n")}
     id: string,
     report: WorkerReport,
     now = Date.now(),
-  ): Promise<void> {
+  ): Promise<string | null> {
     const grant = await this.db
       .prepare("SELECT * FROM worker_grants WHERE workerId = ?")
       .get(id);
@@ -1637,7 +1637,7 @@ ${blocks.reverse().join("\n\n---\n\n")}
         labels: ["sandbox"],
       };
     }
-    await super.reportWorker(id, report, now);
+    return await super.reportWorker(id, report, now);
   }
   override async authenticateWorker(id: string, token: string): Promise<void> {
     await super.authenticateWorker(id, token);

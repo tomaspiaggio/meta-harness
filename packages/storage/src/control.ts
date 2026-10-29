@@ -22,13 +22,17 @@ import type {
 import {
   type Allocation,
   admissionReason,
+  COMMIT,
   labelList,
   missingLabels,
   parseLabels,
   type ResourceProfile,
+  sameCommit,
   type Task,
+  updateActive,
   type WorkerRecord,
   type WorkerReport,
+  type WorkerUpdate,
 } from "@harness/core/scheduling";
 import { connectPostgres, LocalDatabase, type SqlDatabase } from "./database";
 import { SqliteStore } from "./index";
@@ -161,6 +165,13 @@ export class ControlStore extends SqliteStore {
           .some((column) => column.name === "labels")
       )
         raw.exec("ALTER TABLE workers ADD COLUMN labels TEXT");
+      if (
+        !raw
+          .prepare("PRAGMA table_info(workers)")
+          .all()
+          .some((column) => column.name === "updateState")
+      )
+        raw.exec("ALTER TABLE workers ADD COLUMN updateState TEXT");
       if (!columns.includes("nativeRevision"))
         raw.exec(
           "ALTER TABLE sessions ADD COLUMN nativeRevision INTEGER NOT NULL DEFAULT 0",
@@ -241,20 +252,132 @@ export class ControlStore extends SqliteStore {
       .prepare("UPDATE workers SET tokenHash = '', draining = 1 WHERE id = ?")
       .run(id);
   }
+  /**
+   * Stores a worker's report and moves its update along. Returns the commit
+   * the worker should update to, or null when there is nothing to do.
+   */
   async reportWorker(
     id: string,
     report: WorkerReport,
     now = Date.now(),
-  ): Promise<void> {
+  ): Promise<string | null> {
+    return await this.transaction(async () => {
+      await this.db
+        .prepare("UPDATE workers SET report = ?, seenAt = ? WHERE id = ?")
+        .run(JSON.stringify(report), now, id);
+      const update = await this.workerUpdate(id);
+      if (!update || !updateActive(update)) return null;
+      let next: WorkerUpdate = update;
+      if (sameCommit(report.build, update.target))
+        next = { ...update, status: "done", finishedAt: now };
+      else if (sameCommit(report.update?.target, update.target)) {
+        const phase = report.update?.phase ?? update.status;
+        next =
+          phase === "failed"
+            ? {
+                ...update,
+                status: "failed",
+                message: report.update?.message ?? "The update failed.",
+                finishedAt: now,
+              }
+            : { ...update, status: phase };
+      }
+      if (next !== update) await this.setWorkerUpdate(id, next);
+      return updateActive(next) ? next.target : null;
+    });
+  }
+  private async workerUpdate(id: string): Promise<WorkerUpdate | null> {
+    const row = await this.db
+      .prepare("SELECT updateState FROM workers WHERE id = ?")
+      .get(id);
+    return row?.updateState
+      ? (JSON.parse(String(row.updateState)) as WorkerUpdate)
+      : null;
+  }
+  private async setWorkerUpdate(id: string, update: WorkerUpdate) {
     await this.db
-      .prepare("UPDATE workers SET report = ?, seenAt = ? WHERE id = ?")
-      .run(JSON.stringify(report), now, id);
+      .prepare("UPDATE workers SET updateState = ? WHERE id = ?")
+      .run(JSON.stringify(update), id);
+  }
+  /**
+   * Asks one machine to update itself to a commit on main. Refused while
+   * another machine is updating, or when no other online machine could run
+   * agents meanwhile: the harness must never update itself into having none.
+   */
+  async requestWorkerUpdate(
+    id: string,
+    target: unknown,
+    requestedBy: string,
+    now = Date.now(),
+  ): Promise<WorkerUpdate> {
+    const commit = typeof target === "string" ? target.trim() : "";
+    if (!COMMIT.test(commit))
+      throw new HarnessError("Give a commit: 7 to 40 lowercase hex digits.");
+    return await this.transaction(async () => {
+      const workers = await this.listWorkers();
+      const worker = workers.find((item) => item.id === id);
+      if (!worker) throw new HarnessError("Machine not found.", 404);
+      const live = (item: WorkerRecord) =>
+        !item.draining &&
+        !!item.report &&
+        !item.report.draining &&
+        !!item.seenAt &&
+        item.seenAt > now - 30000;
+      if (!live(worker))
+        throw new HarnessError(`${worker.name} is not online.`, 409);
+      if (!worker.report?.updatable)
+        throw new HarnessError(
+          `${worker.name} can't update itself: it wasn't installed with the release launcher (scripts/worker-launcher.mjs).`,
+          409,
+        );
+      if (sameCommit(worker.report.build, commit))
+        throw new HarnessError(`${worker.name} already runs ${commit}.`, 409);
+      const busy = workers.find((item) => updateActive(item.update));
+      if (busy)
+        throw new HarnessError(
+          `${busy.name} is already updating to ${busy.update?.target}. Update one machine at a time.`,
+          409,
+        );
+      const others = workers.filter(
+        (item) =>
+          item.id !== id &&
+          live(item) &&
+          item.report?.providers.some((provider) => provider !== "demo"),
+      );
+      if (!others.length)
+        throw new HarnessError(
+          `Updating ${worker.name} would leave no online machine to run agents. Bring another machine online first.`,
+          409,
+        );
+      const update: WorkerUpdate = {
+        target: commit,
+        status: "requested",
+        requestedAt: now,
+        requestedBy: requestedBy.slice(0, 200),
+        ...(worker.report.build ? { from: worker.report.build } : {}),
+      };
+      await this.setWorkerUpdate(id, update);
+      return update;
+    });
+  }
+  /** Stops an update that hasn't restarted the worker yet. */
+  async cancelWorkerUpdate(id: string, now = Date.now()): Promise<void> {
+    const update = await this.workerUpdate(id);
+    if (!updateActive(update))
+      throw new HarnessError("No update is in progress.", 409);
+    if (update?.status === "restarting")
+      throw new HarnessError("It is already restarting; wait a moment.", 409);
+    await this.setWorkerUpdate(id, {
+      ...(update as WorkerUpdate),
+      status: "cancelled",
+      finishedAt: now,
+    });
   }
   async listWorkers(): Promise<WorkerRecord[]> {
     return (
       await this.db
         .prepare(
-          "SELECT id, name, report, seenAt, draining, labels FROM workers ORDER BY name",
+          "SELECT id, name, report, seenAt, draining, labels, updateState FROM workers ORDER BY name",
         )
         .all()
     ).map((row) => ({
@@ -266,6 +389,9 @@ export class ControlStore extends SqliteStore {
       seenAt: row.seenAt === null ? null : Number(row.seenAt),
       draining: Number(row.draining),
       labels: labelList(row.labels as string | null),
+      update: row.updateState
+        ? (JSON.parse(String(row.updateState)) as WorkerUpdate)
+        : null,
     }));
   }
   /** Where agents of this workspace work, on machines that have the folder. */
