@@ -870,6 +870,23 @@ ${blocks.reverse().join("\n\n---\n\n")}
       )
       .run(id, sessionId, kind, referenceId, now, now);
   }
+  /** A worker's task, feedback and continuation turns, and notes between sessions. */
+  protected override async backgroundTurns(
+    ids: string[],
+  ): Promise<Set<string>> {
+    if (!ids.length) return new Set();
+    const marks = ids.map(() => "?").join(",");
+    return new Set(
+      (
+        await this.db
+          .prepare(
+            `SELECT turnId FROM delegation_turns WHERE role != 'report' AND turnId IN (${marks})
+            UNION SELECT turnId FROM session_notes WHERE turnId IN (${marks})`,
+          )
+          .all(...ids, ...ids)
+      ).map((row) => String(row.turnId)),
+    );
+  }
   /** A planner asks to tell the owner something when its current turn ends. */
   async addOwnerAlert(turnId: string, message: string): Promise<void> {
     const turn = await this.getTurn(turnId);

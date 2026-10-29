@@ -5,7 +5,13 @@ import {
   mkdirSync,
   statSync,
 } from "node:fs";
-import { availableParallelism, homedir, hostname, loadavg } from "node:os";
+import {
+  availableParallelism,
+  homedir,
+  hostname,
+  loadavg,
+  totalmem,
+} from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { browserStreamWorker } from "@harness/browser/live";
@@ -156,7 +162,12 @@ function report(): WorkerReport {
         : ["demo"],
     labels: (process.env.HARNESS_WORKER_LABELS ?? process.arch).split(","),
     maxAgents: concurrency,
-    memoryBudgetMiB: setting("HARNESS_MEMORY_BUDGET_MIB", 2048, 1),
+    // Half the machine's memory by default; free memory is checked separately.
+    memoryBudgetMiB: setting(
+      "HARNESS_MEMORY_BUDGET_MIB",
+      Math.max(2048, Math.floor(totalmem() / 2 ** 21)),
+      1,
+    ),
     cpuSlots: setting(
       "HARNESS_CPU_SLOTS",
       // One per agent the owner allows, leaving a core for the host.

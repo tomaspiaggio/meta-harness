@@ -305,8 +305,7 @@ test("waiting reasons name each machine and skip revoked ones", async () => {
     await store.reportWorker(mac.id, {
       ...report,
       providers: ["claude"],
-      maxAgents: 3,
-      cpuSlots: 1,
+      maxAgents: 1,
     });
     const busy = await store.createSession("tech", "Busy", "claude");
     await queue(store, "busy", busy.id);
@@ -315,8 +314,60 @@ test("waiting reasons name each machine and skip revoked ones", async () => {
     await queue(store, "waiting", planner.id);
     assert.equal(
       await store.waitingReason("waiting"),
-      "mac: All 1 CPU slots are in use; pi: claude is not available here",
+      "mac: All agent slots are occupied; pi: claude is not available here",
     );
+  } finally {
+    await store.close();
+  }
+});
+
+test("the owner's messages go first and always keep a slot; agents reserve no CPU", async () => {
+  const store = new HarnessStore(":memory:");
+  await store.ready;
+  try {
+    const mac = await store.createWorker("mac");
+    await store.reportWorker(mac.id, {
+      ...report,
+      providers: ["codex"],
+      maxAgents: 3,
+      cpuSlots: 1,
+    });
+    const planner = await store.createSession("tech", "Planner", "codex");
+    const plan = await store.submitMessage("plan", planner.id, "Plan");
+    await store
+      .databaseConnection()
+      .prepare("UPDATE turns SET status = 'completed' WHERE id = ?")
+      .run(plan.id);
+    // Three tasks to three workers, queued before the owner writes.
+    const tasks = [];
+    for (const name of ["a", "b", "c"]) {
+      const worker = await store.createSession("tech", name, "codex");
+      const { turn } = await store.sendDelegation({
+        turnId: `task:${name}`,
+        callerTurnId: plan.id,
+        toSessionId: worker.id,
+        message: `Task ${name}`,
+      });
+      tasks.push(turn.id);
+      await store.enqueue(turn.id);
+    }
+    const chat = await store.createSession("tech", "Question", "codex");
+    await queue(store, "question", chat.id);
+    // Owner's message first, though it was queued last; CPU slots don't limit agents.
+    assert.equal(
+      (await store.claimForWorker(mac.id))?.claim.turn.id,
+      "question",
+    );
+    assert.ok(await store.claimForWorker(mac.id));
+    // Background work stops one short of the limit.
+    assert.equal(await store.claimForWorker(mac.id), null);
+    assert.match(
+      String(await store.waitingReason(tasks[2])),
+      /one is kept for your messages/,
+    );
+    const late = await store.createSession("tech", "Another", "codex");
+    await queue(store, "late", late.id);
+    assert.equal((await store.claimForWorker(mac.id))?.claim.turn.id, "late");
   } finally {
     await store.close();
   }

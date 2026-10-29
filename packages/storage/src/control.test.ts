@@ -478,7 +478,7 @@ test("chat sessions expose the same admission reason as tasks", async () => {
     assert.equal(await store.claimForWorker(worker.id), null);
     assert.match(
       (await store.waitingReason(turnId)) ?? "",
-      /126 MiB.*1536 MiB/,
+      /126 MiB.*1408 MiB/,
     );
     await store.reportWorker(worker.id, report);
     assert.match((await store.waitingReason(turnId)) ?? "", /eligible worker/);
