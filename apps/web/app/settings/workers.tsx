@@ -136,6 +136,7 @@ export function WorkersCard({
         </p>
       </CardHeader>
       <CardContent className="grid gap-5">
+        <ServerRow api={api} onError={onError} />
         <ul className="grid gap-2" aria-label="Connected machines">
           {!active.length && (
             <li className="text-sm text-muted-foreground">
@@ -521,6 +522,106 @@ function Step({
         <p className="font-medium">{title}</p>
         {children}
       </div>
+    </div>
+  );
+}
+
+type ServerUpdate = {
+  target: string;
+  status: string;
+  message?: string;
+  updatedAt?: number;
+};
+const serverPhases: Record<string, string> = {
+  requested: "starting",
+  preparing: "fetching the commit",
+  waiting: "waiting for this host's running work",
+  building: "building (about 5 minutes)",
+  switching: "switching",
+  restarting: "restarting the server",
+};
+/**
+ * The server updates itself to a commit on main, outside its own process, and
+ * goes back to the previous release by itself if the new one doesn't start.
+ */
+function ServerRow({
+  api,
+  onError,
+}: {
+  api: (path: string, method?: string, body?: unknown) => Promise<unknown>;
+  onError: (message: string) => void;
+}) {
+  const [update, setUpdate] = useState<ServerUpdate | null>(null);
+  const [commit, setCommit] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      void api("version?update=1")
+        .then((value) => {
+          if (!cancelled)
+            setUpdate((value as { update: ServerUpdate | null }).update);
+        })
+        .catch(() => {});
+    load();
+    const timer = setInterval(load, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [api]);
+  const active = !!update && !!serverPhases[update.status];
+  return (
+    <div className="grid gap-2 rounded-lg border p-3 text-sm">
+      <p>
+        <span className="font-medium">Server</span>
+        <span className="ml-2 text-muted-foreground">
+          build {controlBuild ?? "unknown"}
+        </span>
+      </p>
+      {update && (
+        <p
+          className={cn(
+            "flex items-center gap-2 text-xs",
+            ["failed", "rolled-back"].includes(update.status)
+              ? "text-danger"
+              : "text-muted-foreground",
+          )}
+        >
+          {active && <Loader2 className="size-3 animate-spin" />}
+          {active
+            ? `Updating to ${update.target}: ${serverPhases[update.status]}`
+            : `Last update to ${update.target}: ${update.status}${update.message ? ` · ${update.message}` : ""}`}
+        </p>
+      )}
+      {!active && (
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setBusy(true);
+            void api("version", "POST", { commit: commit.trim() })
+              .then((value) => {
+                setUpdate(value as ServerUpdate);
+                setCommit("");
+              })
+              .catch((error) => onError(error.message))
+              .finally(() => setBusy(false));
+          }}
+        >
+          <Input
+            aria-label="Commit to update the server to"
+            placeholder="Commit on main, e.g. 9f16d02"
+            value={commit}
+            maxLength={40}
+            className="h-8 font-mono text-xs"
+            onChange={(event) => setCommit(event.target.value)}
+          />
+          <Button size="sm" variant="outline" disabled={busy || !commit.trim()}>
+            Update server
+          </Button>
+        </form>
+      )}
     </div>
   );
 }
