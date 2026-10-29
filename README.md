@@ -496,6 +496,22 @@ could run agents meanwhile, so an update never leaves you without one. Set
 `HARNESS_DATA_DIR`, `HARNESS_WORKER_DATA_DIR` and `HARNESS_WORKER_TOKEN_FILE`
 explicitly: releases change folders, the worker's identity and cache must not.
 
+### The server updates itself
+
+On a systemd host whose user units run the server from a release worktree
+(`releases/<commit>`), Settings → Machines → **Update server** (or an agent's
+`control_update`) updates the server to a commit on `origin/main`. Control starts
+`scripts/update-control.mjs` in a transient `systemd-run --user` unit, so the
+restart doesn't stop it. It pauses the control host's worker while another
+machine can run agents, waits for that worker's turns, builds the release at low
+priority, backs up the database with `VACUUM INTO`, points the units in
+`HARNESS_UPDATE_UNITS` (default `meta-harness-control.service,meta-harness-backup.service`)
+at the new release and restarts the server. If `/api/version` doesn't report the
+new commit within three minutes, it restores the unit files and restarts the old
+release. Progress is in `<HARNESS_DATA_DIR>/control-update.json` and at
+`GET /api/version?update=1`. Running turns on other machines survive the short
+restart; update workers afterwards, one at a time.
+
 ## Experimental native Claude continuity
 
 Set `HARNESS_CLAUDE_RUNTIME=sdk` on participating workers to use the pinned Claude

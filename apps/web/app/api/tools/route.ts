@@ -11,6 +11,10 @@ import { createHash } from "node:crypto";
 import { HarnessError, requiredText } from "@harness/core";
 import { BRIEFS_WORKSPACE, parseBrief, parseDay } from "@harness/core/briefs";
 import { filterDecisions } from "@harness/core/knowledge";
+import {
+  controlUpdateStatus,
+  startControlUpdate,
+} from "../../../server/control-update";
 import { REPORT_RULES } from "../../../server/delegation";
 import { flushDispatch } from "../../../server/dispatcher";
 import { verifyAttemptGrant } from "../../../server/grants";
@@ -282,6 +286,21 @@ const tools = [
         cancel: { type: "boolean" },
       },
       required: ["machine"],
+    },
+  },
+  {
+    name: "control_update",
+    description:
+      "Update the control server itself to a commit on main. It runs outside the server: fetches and checks the commit, pauses the control host's worker while another machine can run agents and waits for its turns, builds the release at low priority, backs up the database, restarts the server and checks it comes back on the new commit; if it doesn't within 3 minutes it restores the previous release by itself. Takes about 5-10 minutes; running turns elsewhere survive the short restart. Call with status: true to read progress (also in machines_list as control).",
+    inputSchema: {
+      ...object,
+      properties: {
+        commit: {
+          type: "string",
+          description: "Commit on main, 7 to 40 hex digits",
+        },
+        status: { type: "boolean" },
+      },
     },
   },
   {
@@ -621,6 +640,20 @@ export async function POST(request: Request) {
           labels: next.requiredLabels?.split(",") ?? [],
           note: "Queued after this turn. End your turn now; the next step continues from your note.",
         };
+      } else if (parameters?.name === "control_update") {
+        result =
+          args.status === true
+            ? {
+                build: process.env.HARNESS_BUILD,
+                update: controlUpdateStatus(),
+              }
+            : {
+                update: startControlUpdate(
+                  args.commit,
+                  `agent: ${session.title} (${session.id})`,
+                ),
+                note: "Started. Check control_update with status: true every few minutes; the server restarts near the end.",
+              };
       } else if (parameters?.name === "machine_update") {
         const wanted = requiredText(args.machine, "Machine", 100);
         const worker = (await store.listWorkers()).find(
@@ -657,7 +690,10 @@ export async function POST(request: Request) {
         );
         const workers = await store.listWorkers();
         result = {
-          control_build: process.env.HARNESS_BUILD ?? null,
+          control: {
+            build: process.env.HARNESS_BUILD ?? null,
+            update: controlUpdateStatus(),
+          },
           machines: workers
             .filter((worker) => worker.report)
             .map((worker) => ({
