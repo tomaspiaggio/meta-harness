@@ -270,7 +270,7 @@ const tools = [
   {
     name: "machines_list",
     description:
-      "The owner's machines with their labels (agents, browser, tools such as asap7) and whether each is online, plus the labels this session and this step require. Use it to decide where work can run and to explain waits.",
+      "The owner's machines with their host names, labels (agents, browser, tools such as asap7), whether each is online and whether it is paused, plus the labels this session and this step require. A paused machine is being updated and takes new work again shortly; it is not offline. Use it to decide where work can run and to explain waits.",
     inputSchema: { ...object, properties: {} },
   },
   {
@@ -611,11 +611,13 @@ export async function POST(request: Request) {
         const workers = await store.listWorkers();
         result = {
           machines: workers
-            .filter((worker) => !worker.draining && worker.report)
+            .filter((worker) => worker.report)
             .map((worker) => ({
               name: worker.name,
+              host: worker.report?.hostname,
               labels: workerLabels(worker),
               online: !!worker.seenAt && worker.seenAt > Date.now() - 30000,
+              paused: !!worker.draining,
             })),
           session_labels: labelList(session.requiredLabels),
           step_labels: labelList(turn.requiredLabels),
