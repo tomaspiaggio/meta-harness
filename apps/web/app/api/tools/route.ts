@@ -268,6 +268,23 @@ const tools = [
     },
   },
   {
+    name: "machine_update",
+    description:
+      "Update one of the owner's machines to a commit on main (default: the commit control runs). The machine stops taking new work, prepares the release while its running turns finish (including yours if you run there), restarts into it, and goes back to its previous release by itself if the new one fails to start or reach control within 5 minutes. Only one machine updates at a time, and control refuses when no other machine could run agents meanwhile. Follow progress with machines_list; cancel: true stops an update that hasn't restarted yet. If you are on that machine, end your turn after calling this and continue_on another machine to check the result.",
+    inputSchema: {
+      ...object,
+      properties: {
+        machine: { type: "string", description: "Machine name or ID" },
+        commit: {
+          type: "string",
+          description: "Commit on main, 7 to 40 hex digits; default control's",
+        },
+        cancel: { type: "boolean" },
+      },
+      required: ["machine"],
+    },
+  },
+  {
     name: "machines_list",
     description:
       "The owner's machines with their host names, labels (agents, browser, tools such as asap7), whether each is online and whether it is paused, plus the labels this session and this step require. A paused machine is being updated and takes new work again shortly; it is not offline. Use it to decide where work can run and to explain waits.",
@@ -604,12 +621,43 @@ export async function POST(request: Request) {
           labels: next.requiredLabels?.split(",") ?? [],
           note: "Queued after this turn. End your turn now; the next step continues from your note.",
         };
+      } else if (parameters?.name === "machine_update") {
+        const wanted = requiredText(args.machine, "Machine", 100);
+        const worker = (await store.listWorkers()).find(
+          (item) =>
+            !item.draining &&
+            (item.id === wanted ||
+              item.name.toLowerCase() === wanted.toLowerCase() ||
+              item.report?.hostname.toLowerCase() === wanted.toLowerCase()),
+        );
+        if (!worker) throw new HarnessError(`No machine named ${wanted}.`, 404);
+        if (args.cancel === true) {
+          await store.cancelWorkerUpdate(worker.id);
+          result = { machine: worker.name, cancelled: true };
+        } else {
+          const commit = args.commit ?? process.env.HARNESS_BUILD;
+          const update = await store.requestWorkerUpdate(
+            worker.id,
+            commit,
+            `agent: ${session.title} (${session.id})`,
+          );
+          result = {
+            machine: worker.name,
+            update,
+            on_this_machine: worker.id === grant.workerId,
+            note:
+              worker.id === grant.workerId
+                ? "This is the machine you run on: it waits for your turn to end. End your turn now and continue_on another machine to check machines_list."
+                : "Check machines_list for progress: preparing, waiting, restarting, then done or failed.",
+          };
+        }
       } else if (parameters?.name === "machines_list") {
         const { workerLabels, labelList } = await import(
           "@harness/core/scheduling"
         );
         const workers = await store.listWorkers();
         result = {
+          control_build: process.env.HARNESS_BUILD ?? null,
           machines: workers
             .filter((worker) => worker.report)
             .map((worker) => ({
@@ -617,7 +665,10 @@ export async function POST(request: Request) {
               host: worker.report?.hostname,
               labels: workerLabels(worker),
               online: !!worker.seenAt && worker.seenAt > Date.now() - 30000,
-              paused: !!worker.draining,
+              paused: !!worker.draining || !!worker.report?.draining,
+              build: worker.report?.build ?? null,
+              can_update: !!worker.report?.updatable,
+              ...(worker.update ? { update: worker.update } : {}),
             })),
           session_labels: labelList(session.requiredLabels),
           step_labels: labelList(turn.requiredLabels),

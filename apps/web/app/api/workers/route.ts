@@ -71,6 +71,12 @@ export async function PATCH(request: Request) {
     const body = await jsonBody(request);
     const store = await getStore();
     const id = requiredText(body.id, "Worker ID", 100);
+    // The machine updates itself to a commit on main; null cancels.
+    if (body.update !== undefined) {
+      if (body.update === null) await store.cancelWorkerUpdate(id);
+      else await store.requestWorkerUpdate(id, body.update, "owner");
+      return Response.json({ ok: true });
+    }
     if (body.name !== undefined) {
       await store.renameWorker(
         id,

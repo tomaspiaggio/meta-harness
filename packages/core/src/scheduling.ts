@@ -42,7 +42,33 @@ export interface WorkerReport {
   loadPerCpu: number;
   maxLoadPerCpu: number;
   draining: boolean;
+  /** Short commit of the code this worker runs, when it can tell. */
+  build?: string;
+  /** Installed with the release launcher, so it can update itself. */
+  updatable?: boolean;
+  /** Progress of an update control asked for, or why it failed. */
+  update?: { target: string; phase: UpdatePhase; message?: string };
 }
+export type UpdatePhase = "preparing" | "waiting" | "restarting" | "failed";
+/** An update control asked a worker for, kept on the worker's row. */
+export interface WorkerUpdate {
+  target: string;
+  status: "requested" | UpdatePhase | "done" | "cancelled";
+  requestedAt: number;
+  requestedBy: string;
+  from?: string;
+  message?: string;
+  finishedAt?: number;
+}
+export const updateActive = (update?: WorkerUpdate | null) =>
+  !!update &&
+  ["requested", "preparing", "waiting", "restarting"].includes(update.status);
+/** Two commit prefixes name the same commit (at least 7 hex digits each). */
+export function sameCommit(a?: string, b?: string): boolean {
+  if (!a || !b || a.length < 7 || b.length < 7) return false;
+  return a.startsWith(b) || b.startsWith(a);
+}
+export const COMMIT = /^[0-9a-f]{7,40}$/;
 export interface WorkerRecord {
   id: string;
   name: string;
@@ -51,6 +77,7 @@ export interface WorkerRecord {
   draining: number;
   /** Labels the owner gave this machine, such as "asap7" or "mac". */
   labels?: string[];
+  update?: WorkerUpdate | null;
 }
 const LABEL = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 /** Owner labels: lowercase words, digits, dots, dashes and underscores. */
@@ -288,5 +315,31 @@ export function parseWorkerReport(value: unknown): WorkerReport {
     loadPerCpu: row.loadPerCpu as number,
     maxLoadPerCpu: row.maxLoadPerCpu as number,
     draining: row.draining,
+    ...(typeof row.build === "string" && COMMIT.test(row.build)
+      ? { build: row.build }
+      : {}),
+    ...(row.updatable === true ? { updatable: true } : {}),
+    ...(parseUpdate(row.update) ?? {}),
+  };
+}
+function parseUpdate(value: unknown): Pick<WorkerReport, "update"> | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  if (
+    typeof row.target !== "string" ||
+    !COMMIT.test(row.target) ||
+    !["preparing", "waiting", "restarting", "failed"].includes(
+      row.phase as string,
+    )
+  )
+    return null;
+  return {
+    update: {
+      target: row.target,
+      phase: row.phase as UpdatePhase,
+      ...(typeof row.message === "string"
+        ? { message: row.message.slice(0, 1000) }
+        : {}),
+    },
   };
 }

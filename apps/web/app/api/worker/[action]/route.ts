@@ -63,8 +63,12 @@ export async function POST(
       return Response.json({ ok: true });
     }
     if (action === "report") {
-      await store.reportWorker(workerId, parseWorkerReport(body.report));
-      return Response.json({ ok: true });
+      const target = await store.reportWorker(
+        workerId,
+        parseWorkerReport(body.report),
+      );
+      // An update the owner or an agent asked for rides on the report reply.
+      return Response.json({ ok: true, update: target ? { target } : null });
     }
     if (action === "claim") {
       const assignment = await store.claimForWorker(
