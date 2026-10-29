@@ -285,7 +285,8 @@ the old machine, and the agent is told so. A complete Claude SDK checkpoint
 still moves with its memory. Interrupted native turns are never retried.
 
 Agents can move themselves between steps. `machines_list` shows the machines,
-their labels and whether they are online. `continue_on(labels, message, reason)`
+their host names, labels, whether they are online, and whether they are paused
+(draining for an update; still listed so agents don't take them for gone). `continue_on(labels, message, reason)`
 queues the agent's next step in the same session with per-step labels
 (`turns.requiredLabels`, combined with the session's), for example to verify on
 the machine with the chip tools after coding elsewhere, and back to any machine
