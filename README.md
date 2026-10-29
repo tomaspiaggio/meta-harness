@@ -472,6 +472,30 @@ environment variables, but same-user filesystem access is not an isolation
 boundary. Keep enrollment files outside execution directories, and isolate
 provider processes before exposing untrusted workloads.
 
+### Workers that update themselves
+
+A worker started by `scripts/worker-launcher.mjs` can update itself when you
+press **Update** in Settings → Machines, or when an agent calls `machine_update`.
+Install it once into a release root outside your checkout:
+
+```sh
+node scripts/worker-launcher.mjs install <root> <commit-on-main>
+# Then have systemd or launchd run, with the worker's usual environment:
+node <root>/launcher.mjs
+```
+
+The root holds a bare clone, one folder per release and `state.json`. On an
+update the worker stops taking new work, installs the release (only commits on
+`origin/main`) while its running turns finish, and restarts into it with exit
+code 75. Configure the service to restart the launcher whenever it exits
+(`Restart=on-failure` and launchd `KeepAlive` both do). If the new release exits
+with an error twice, or doesn't reach control within five minutes, the launcher
+goes back to the previous release by itself and the update shows as failed.
+Control updates one machine at a time and refuses when no other online machine
+could run agents meanwhile, so an update never leaves you without one. Set
+`HARNESS_DATA_DIR`, `HARNESS_WORKER_DATA_DIR` and `HARNESS_WORKER_TOKEN_FILE`
+explicitly: releases change folders, the worker's identity and cache must not.
+
 ## Experimental native Claude continuity
 
 Set `HARNESS_CLAUDE_RUNTIME=sdk` on participating workers to use the pinned Claude
