@@ -527,7 +527,12 @@ export class ControlStore extends SqliteStore {
       await this.allocations(worker.id),
       task?.profile ?? "standard",
       session.provider,
+      (await this.backgroundTurns([turn.id])).has(turn.id),
     );
+  }
+  /** Turns that are work between sessions (tasks, notes), not the owner's. */
+  protected async backgroundTurns(_ids: string[]): Promise<Set<string>> {
+    return new Set();
   }
   async waitingReason(
     turnId: string,
@@ -662,6 +667,13 @@ export class ControlStore extends SqliteStore {
           AND (prior.status = 'running' OR (prior.status IN ('pending', 'queued') AND prior.rowid < turns.rowid))
         ) ORDER BY COALESCE(tasks.priority, 0) DESC, turns.createdAt, turns.rowid LIMIT 100`)
         .all()) as unknown as Turn[];
+      // The owner's messages and planners go before work between sessions.
+      const background = await this.backgroundTurns(
+        candidates.map((turn) => turn.id),
+      );
+      candidates.sort(
+        (a, b) => Number(background.has(a.id)) - Number(background.has(b.id)),
+      );
       let candidate: Turn | undefined;
       for (const turn of candidates) {
         if (!(await this.reason(turn, worker, now))) {

@@ -1,6 +1,8 @@
 import { HarnessError, type Provider } from "./index";
+// A conversation agent waits on its model: about 100-350 MB and near-idle CPU
+// (measured on the owner's Mac). Only builds and browsers reserve CPU.
 export const profiles = {
-  standard: { memoryMiB: 512, cpuSlots: 1 },
+  standard: { memoryMiB: 384, cpuSlots: 0 },
   build: { memoryMiB: 2048, cpuSlots: 2 },
   browser: { memoryMiB: 1024, cpuSlots: 1 },
 } as const;
@@ -122,12 +124,21 @@ export function admissionReason(
   allocations: Allocation[],
   profile: ResourceProfile,
   provider: Provider,
+  /** Work between sessions; the owner's messages and planners are not. */
+  background = false,
 ): string | null {
   if (report.draining) return "Worker is draining";
   if (!report.providers.includes(provider))
     return `${provider} is not available here`;
   if (allocations.length >= report.maxAgents)
     return "All agent slots are occupied";
+  // The last slot is kept so the owner's messages never wait behind workers.
+  if (
+    background &&
+    report.maxAgents > 1 &&
+    allocations.length >= report.maxAgents - 1
+  )
+    return "All background slots are occupied (one is kept for your messages)";
   if (provider !== "demo" && report.memoryPressure === "critical")
     return "Host memory pressure is critical; waiting for it to ease";
   // Agent turns mostly wait on a remote model; only builds add real CPU work.

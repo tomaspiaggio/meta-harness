@@ -93,6 +93,14 @@ This does not limit any other tools running on your machine. Increase it freely:
 HARNESS_CONCURRENCY=3 pnpm dev
 ```
 
+A conversation agent mostly waits on its model (about 100–350 MB, near-idle
+CPU), so it reserves 384 MiB and no CPU slot; only builds and browsers reserve
+CPU. A machine takes another agent while its harness memory budget
+(`HARNESS_MEMORY_BUDGET_MIB`, default half its RAM) and free memory allow, up to
+`HARNESS_CONCURRENCY`. The owner's messages and planners are claimed before work
+between sessions (tasks, notes), and background work never takes a machine's
+last slot, so a question never waits behind workers.
+
 Copy `.env.example` to `.env` for persistent overrides. `HARNESS_TURN_TIMEOUT_MS`
 defaults to 30 minutes per turn; `HARNESS_POLL_MS` defaults to 1000. No global
 Node heap limit, system resource limit, or machine-wide process setting is changed.
