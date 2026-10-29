@@ -11,6 +11,10 @@ import type {
 } from "@harness/core/native-store";
 import { parseWorkerReport } from "@harness/core/scheduling";
 import { after } from "next/server";
+import {
+  agentInstructions,
+  parseHostFacts,
+} from "../../../../server/agent-instructions";
 import { BrowserBroker } from "../../../../server/browser";
 import { delegationInstructions } from "../../../../server/delegation";
 import { mintAttemptGrant } from "../../../../server/grants";
@@ -195,7 +199,28 @@ export async function POST(
       const session = await store.getSession(
         (await store.getTurn(turnId)).sessionId,
       );
+      const policy = await store.resourcePolicy(session.workspaceId);
+      const unfinishedOperations = await store.unfinishedOperations(session.id);
+      const host = parseHostFacts(body.host);
       return Response.json({
+        ...(host
+          ? {
+              instructions: agentInstructions({
+                host,
+                session,
+                workspace: await store.getWorkspace(session.workspaceId),
+                knowledge: await store.readWorkerDecisions(
+                  workerId,
+                  turnId,
+                  generation,
+                ),
+                unfinishedOperations,
+                timezone: String(
+                  (policy as { timezone?: unknown }).timezone ?? "UTC",
+                ),
+              }),
+            }
+          : {}),
         tools: {
           url: new URL(
             "/api/tools",
@@ -203,8 +228,8 @@ export async function POST(
           ).toString(),
           token: mintAttemptGrant(workerId, turnId, generation),
         },
-        policy: await store.resourcePolicy(session.workspaceId),
-        unfinishedOperations: await store.unfinishedOperations(session.id),
+        policy,
+        unfinishedOperations,
         environment: await grantedEnvironment(
           store,
           workerId,

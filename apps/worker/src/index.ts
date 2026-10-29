@@ -165,10 +165,6 @@ const paused = () => !!updating && updating.phase !== "failed";
 const maxLoad = Number(process.env.HARNESS_MAX_LOAD_PER_CPU ?? 1.5);
 if (!Number.isFinite(maxLoad) || maxLoad < 0)
   throw new Error("Invalid HARNESS_MAX_LOAD_PER_CPU.");
-/**
- * Where the agent is running, so the owner can refer to "the harness", a
- * worker or a workspace without explaining the setup each time.
- */
 /** The workspace folder on this machine, if it exists here. */
 function workingFolder(claim: ClaimedTurn): string | undefined {
   const folder = claim.workspace.folder?.replace(/^~(?=\/)/, homedir());
@@ -177,20 +173,6 @@ function workingFolder(claim: ClaimedTurn): string | undefined {
   } catch {
     return undefined;
   }
-}
-function folderContext(claim: ClaimedTurn, folder: string | undefined) {
-  const full = fullAccess() && !claim.session.sandboxed;
-  const access = full
-    ? " You run with full permissions on this machine, like the owner's own sessions: never delete data, spend money, use credentials or message people outside without asking the owner (request_input) first."
-    : " This session is sandboxed: you can only write in the current directory.";
-  if (folder)
-    return `${access} Work in the workspace folder ${folder}: run commands from there (cd into it) and follow its CLAUDE.md or AGENTS.md house rules. The current directory is only a private scratch folder for harness files such as DECISION_UPDATES.json.`;
-  if (claim.workspace.folder)
-    return `${access} The workspace folder ${claim.workspace.folder} does not exist on this machine (${hostname()}). For work that only needs the code, clone the repositories you need from their remotes into the current directory and push your branch when done. For work that needs that folder's local tools or data, use machines_list and continue_on to move to a machine that has them. Never create the folder itself here.`;
-  return access;
-}
-function harnessContext(claim: ClaimedTurn, folder?: string) {
-  return `You are running inside Meta Harness, the owner's self-hosted, distributed agent harness (the owner may call it "the harness" or "meta harness"). A control server at ${identity.serverUrl} keeps workspaces, sessions (conversations), shared decisions, schedules and the owner's web UI, which they also use as a phone app. It dispatches each turn to one of the owner's worker machines (for example a Mac or a Raspberry Pi), each running Claude Code or Codex. This turn runs as ${claim.session.provider} on worker host ${hostname()}, in workspace ${JSON.stringify(claim.workspace.name)}, session ${JSON.stringify(claim.session.title)}. Turns of one conversation can run on different hosts: files, CLI logins, installed tools and browser sign-ins belong to the host they were made on. Each host's browser is shared live with the owner in the UI.${folderContext(claim, folder)}`;
 }
 function report(): WorkerReport {
   return {
@@ -420,12 +402,24 @@ async function run(assignment: WorkerAssignment): Promise<void> {
       generation,
       attachmentReferences,
     );
+    const folder = workingFolder(claim);
+    // Control writes the agent's instructions from what only this host knows.
     const context = await client.post<{
+      instructions?: string;
       tools: { url: string; token: string };
       policy: Record<string, unknown>;
       unfinishedOperations: unknown[];
       environment: Record<string, string>;
-    }>("context", { turnId, generation });
+    }>("context", {
+      turnId,
+      generation,
+      host: {
+        hostname: hostname(),
+        controlUrl: identity.serverUrl,
+        folder: folder ?? null,
+        fullAccess: fullAccess(),
+      },
+    });
     redactor = new SecretRedactor([
       ...Object.values(context.environment ?? {}),
       context.tools.token,
@@ -437,7 +431,6 @@ async function run(assignment: WorkerAssignment): Promise<void> {
       ...context.tools,
       url: new URL("/api/tools", identity.serverUrl).toString(),
     };
-    const folder = workingFolder(claim);
     const processIdentity =
       claim.session.provider === "demo"
         ? undefined
@@ -497,7 +490,10 @@ async function run(assignment: WorkerAssignment): Promise<void> {
         ...claim,
         workspace: {
           ...claim.workspace,
-          instructions: `${harnessContext(claim, folder)}\n${claim.workspace.instructions}\n${decisionInstructions(knowledge, claim.workspace.id)}\nCurrent time: ${new Date().toISOString()}. Unfinished operations from this session: ${JSON.stringify(context.unfinishedOperations ?? [])}. Reconcile these against current external state before repeating any mutation; never change an operation ID just to bypass an unknown outcome. Browser connection failures confirmed as not_started are reconciled as failed, not unknown, and may be explicitly retried with the same operation_id once Chrome is connected; they do not require the owner to clear platform state. The owner’s scheduling timezone is ${String(context.policy.timezone ?? "UTC")}. Interpret natural-language dates in that timezone and include it in schedule proposals. Harness MCP tools are available for current shared decisions, schedule proposals, user questions, authorized browser work, and reading the owner's past conversations in any workspace (decision_source for the conversation behind a decision, session_read, history_search, workspace_list). When a decision or reference lacks context, read its source instead of asking the owner to paste it. The current conversation title is ${JSON.stringify(claim.session.title)} (source: ${claim.session.titleSource ?? "prompt"}). When it merely repeats the opening request, call session_title once near the start with a clear 2–5 word title of at most 45 characters describing the goal. Preserve manual titles. This uses the current turn, not another model request. For any requested schedule, call schedule_propose with the exact future prompt; it creates an inactive review card, not an active schedule. Use schedule_list to inspect existing schedules. A question requiring a person should use request_input, then finish the turn instead of keeping a process waiting. For spreadsheet CRM work, opening Google Sheets is not enough: use browser_action sheet_read to inspect bounded cell rows for the correct gid; use read accessibility and screenshots for other app details. Verify actual content before claiming success. Browser login happens in the UI's shared browser; never ask for credentials in chat. Use the browser host selected by the harness; it need not be the Mac. If that host is signed out, navigate to the page you actually need (its sign-in redirect is where the owner resumes), fill in what you already know such as the account email, and call browser_action needs_login, then finish the turn; the owner signs in (password, MFA) in the shared browser and replies with a new message when done. Reuse valid host-local logins. If no browser host is available, report the resource error rather than asking for passwords in chat. Do not ask the owner to enable remote debugging or approve repeated Chrome connections. A different host may require a new manual login; never assume it has another machine’s accounts. Existing Chrome credentials stay in Chrome; do not read or copy credential files.`,
+          // An older control sends no instructions: keep the essentials.
+          instructions:
+            context.instructions ??
+            `${claim.workspace.instructions}\n${decisionInstructions(knowledge, claim.workspace.id)}`,
         },
       },
       createRuntime(claim.session.provider),
