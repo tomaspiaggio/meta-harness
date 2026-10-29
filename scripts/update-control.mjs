@@ -89,8 +89,10 @@ async function main() {
     state = JSON.parse(readFileSync(statusFile, "utf8"));
   } catch {}
   const status = (phase, extra = {}) => {
+    // Each phase replaces the previous phase's message.
+    const { message: _previous, ...kept } = state;
     state = {
-      ...state,
+      ...kept,
       target,
       from: basename(current),
       status: phase,
