@@ -136,6 +136,7 @@ import { BrowserDownloads } from "./downloads";
 import { ExtensionRelay, extensionPairing } from "./extension-relay";
 import { disablePasskeys, type NativeNotice, tameNativeUi } from "./native";
 import { readGoogleSheet } from "./sheets";
+import { guardWebSockets } from "./websocket-guard";
 
 export class BrowserActionNotStarted extends Error {}
 
@@ -371,18 +372,9 @@ export class BrowserHost {
         await route.abort("blockedbyclient");
       }
     });
-    await target.routeWebSocket("**/*", async (route) => {
-      try {
-        await validateBrowserUrl(
-          route.url().replace(/^ws/, "http"),
-          this.options.allowTestLoopback,
-          "resource",
-        );
-        route.connectToServer();
-      } catch {
-        route.close();
-      }
-    });
+    // Not routeWebSocket: it swaps in a stand-in socket class that breaks
+    // Discord. The guard keeps native sockets and refuses private ones.
+    if (!this.options.allowTestLoopback) await guardWebSockets(target);
   }
   private async get(assignment: BrowserAssignment): Promise<Context> {
     const pending = this.creating.get(assignment.identity.id);
