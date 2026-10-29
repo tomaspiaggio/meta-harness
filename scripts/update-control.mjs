@@ -223,7 +223,9 @@ async function main() {
           : ["nice", "-n", "15"];
       for (const step of [
         ["pnpm", "install", "--frozen-lockfile"],
-        ["pnpm", "build"],
+        // Turborepo shares its cache across worktrees: a release whose web
+        // inputs didn't change would reuse the previous build, commit included.
+        ["pnpm", "build", "--force"],
       ])
         try {
           await run(low[0], [...low.slice(1), ...step], {

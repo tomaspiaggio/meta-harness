@@ -329,6 +329,20 @@ Control refuses an update while another machine is updating, or when no other
 online, unpaused machine has Claude or Codex. That keeps at least one machine
 available to run agents, including the agent deploying the change.
 
+### Updating the server
+
+The server can't restart itself from inside its own process, so control starts
+`scripts/update-control.mjs` from its current release in a transient systemd
+user unit and only records the request. The script checks the commit is on
+`origin/main`, builds a sibling release, backs up the database, rewrites the user
+units from the current release path to the new one, restarts the server and
+waits for `/api/version` to report the new commit. Otherwise it restores the
+saved unit files and restarts the previous release. One update runs at a time
+(`control-update.lock`); its progress is `control-update.json` in the data
+directory. A build on the control host only starts once that host's worker is
+paused and idle, and only when another machine can run agents meanwhile. With
+no other machine it builds beside the worker at low priority.
+
 ## Sessions handing work to sessions
 
 Every workspace has one **planner** (`sessions.role = 'planner'`, unique per
