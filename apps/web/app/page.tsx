@@ -19,6 +19,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import {
@@ -53,6 +54,8 @@ import {
 
 type State = {
   loadedSessionId?: string;
+  /** Turns before the earliest one loaded remain on the server. */
+  older?: boolean;
   workspaces: Workspace[];
   sessions: Session[];
   schedules?: Schedule[];
@@ -76,6 +79,28 @@ type State = {
   })[];
 };
 const initial: State = { workspaces: [], sessions: [], turns: [] };
+/** Sessions recently viewed, shown at once on return while they refresh. */
+const viewed = new Map<string, State>();
+/**
+ * A refresh returns only the latest turns. Keep the earlier ones already
+ * shown, unless the refresh no longer overlaps them (too much happened since).
+ */
+function mergeTurns(previous: State, next: State): State {
+  const ids = new Set(next.turns.map((turn) => turn.id));
+  const first = next.turns[0];
+  if (
+    !first ||
+    previous.loadedSessionId !== next.loadedSessionId ||
+    (next.older && !previous.turns.some((turn) => ids.has(turn.id)))
+  )
+    return next;
+  const earlier = previous.turns.filter(
+    (turn) => !ids.has(turn.id) && turn.createdAt <= first.createdAt,
+  );
+  return earlier.length
+    ? { ...next, turns: [...earlier, ...next.turns], older: previous.older }
+    : next;
+}
 const providers: {
   id: Provider;
   label: string;
@@ -187,8 +212,10 @@ function Conversation() {
     return counts;
   }, {});
   const activeTasks = given.length - (phaseCounts.closed ?? 0);
+  // A session opened for the first time shows placeholders until it loads.
+  const loading = !!sessionId && state.loadedSessionId !== sessionId;
   // The agent can change until the first message, as for a new session.
-  const choosingAgent = !sessionId || (!!selected && !turns.length);
+  const choosingAgent = !sessionId || (!!selected && !loading && !turns.length);
   const active = turns.some((turn) => !isTerminal(turn.status));
   const activeTurn =
     turns.find((turn) => turn.status === "running") ??
@@ -258,6 +285,7 @@ function Conversation() {
       return;
     }
     const controller = new AbortController();
+    const key = `${workspaceId}:${sessionId ?? ""}`;
     let timer: ReturnType<typeof setTimeout>;
     let loading = false;
     const load = async () => {
@@ -285,7 +313,16 @@ function Conversation() {
         if (!response.ok)
           throw new Error(next.error ?? "Cannot load workspace.");
         if (controller.signal.aborted) return;
-        setState({ ...next, loadedSessionId: sessionId ?? undefined });
+        setState((previous) => {
+          const merged = mergeTurns(previous, {
+            ...next,
+            loadedSessionId: sessionId ?? undefined,
+          });
+          viewed.delete(key);
+          viewed.set(key, merged);
+          if (viewed.size > 10) viewed.delete(viewed.keys().next().value ?? "");
+          return merged;
+        });
         setError("");
         if (next.turns.some((turn) => !isTerminal(turn.status)))
           nextDelay = 1000;
@@ -300,6 +337,8 @@ function Conversation() {
     refresh.current = load;
     pinned.current = true;
     setAtBottom(true);
+    const cached = viewed.get(key);
+    if (cached) setState(cached);
     void load();
     document.addEventListener("visibilitychange", load);
     return () => {
@@ -318,6 +357,66 @@ function Conversation() {
     const element = scroller.current;
     if (element && pinned.current) element.scrollTop = element.scrollHeight;
   }, [turns.length, outputLength, latest?.status]);
+  // Earlier turns load as the reader nears the top, keeping their place.
+  const [olderLoading, setOlderLoading] = useState(false);
+  // Height before content was added above; the view shifts by the difference.
+  const anchor = useRef<number | null>(null);
+  // A failed page is not retried automatically; scrolling up retries it.
+  const olderFailed = useRef("");
+  const loadOlder = useCallback(
+    async (automatic = false) => {
+      const first = turns[0];
+      const element = scroller.current;
+      if (olderLoading || !state.older || !first || !element || !sessionId)
+        return;
+      if (automatic && olderFailed.current === first.id) return;
+      anchor.current = element.scrollHeight;
+      setOlderLoading(true);
+      try {
+        const query = new URLSearchParams({
+          workspace: workspaceId,
+          session: sessionId,
+          before: first.id,
+        });
+        const response = await fetch(`/api/state?${query}`);
+        const page: Pick<State, "turns" | "older"> & { error?: string } =
+          await response.json();
+        if (!response.ok) throw new Error(page.error ?? "Cannot load turns.");
+        setState((previous) => {
+          if (previous.loadedSessionId !== sessionId) return previous;
+          const ids = new Set(previous.turns.map((turn) => turn.id));
+          return {
+            ...previous,
+            turns: [
+              ...page.turns.filter((turn) => !ids.has(turn.id)),
+              ...previous.turns,
+            ],
+            older: page.older,
+          };
+        });
+      } catch (error) {
+        olderFailed.current = first.id;
+        setError(error instanceof Error ? error.message : "Connection lost.");
+      } finally {
+        setOlderLoading(false);
+      }
+    },
+    [turns, olderLoading, state.older, sessionId, workspaceId],
+  );
+  // Turns that do not fill the screen leave nothing to scroll; load more now.
+  useEffect(() => {
+    const element = scroller.current;
+    if (element && element.scrollHeight - element.clientHeight < 600)
+      void loadOlder(true);
+  }, [loadOlder]);
+  // Placeholders and earlier turns appear above; keep what the reader sees still.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when either changes the height above
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!element || anchor.current === null) return;
+    element.scrollTop += element.scrollHeight - anchor.current;
+    anchor.current = olderLoading ? element.scrollHeight : null;
+  }, [turns[0]?.id, olderLoading]);
   // Grow the composer with its content, up to its max height.
   // biome-ignore lint/correctness/useExhaustiveDependencies: measure on every edit
   useLayoutEffect(() => {
@@ -527,13 +626,15 @@ function Conversation() {
 
       <div
         ref={scroller}
-        className="min-h-0 flex-1 overflow-y-auto"
+        // The browser's own scroll anchoring would shift a second time.
+        className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
         onScroll={(event) => {
           const element = event.currentTarget;
           pinned.current =
             element.scrollHeight - element.scrollTop - element.clientHeight <
             80;
           setAtBottom(pinned.current);
+          if (element.scrollTop < 600) void loadOlder();
         }}
       >
         <div className="mx-auto max-w-3xl px-6 py-8">
@@ -584,7 +685,8 @@ function Conversation() {
                 </p>
               </div>
             )}
-            {sessionId && selected && !turns.length && (
+            {loading && <TurnPlaceholders count={3} />}
+            {sessionId && selected && !loading && !turns.length && (
               <div className="pt-[12vh]">
                 <h1 className="font-serif text-5xl font-normal tracking-tight">
                   Ready when <em className="text-primary">you are</em>.
@@ -594,6 +696,7 @@ function Conversation() {
                 </p>
               </div>
             )}
+            {olderLoading && <TurnPlaceholders count={2} />}
             {turns.map((turn, index) => (
               <article
                 key={turn.id}
@@ -1191,6 +1294,21 @@ function Role({
       )}
     >
       {children}
+    </div>
+  );
+}
+/** Grey blocks where turns will appear, so a switch never shows an empty page. */
+function TurnPlaceholders({ count }: { count: number }) {
+  return (
+    <div aria-hidden className="space-y-7 pb-7">
+      {Array.from({ length: count }, (_, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: identical placeholders
+        <div key={index} className="space-y-3">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+          <Skeleton className="h-4 w-2/3" />
+        </div>
+      ))}
     </div>
   );
 }

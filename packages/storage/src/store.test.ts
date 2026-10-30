@@ -181,3 +181,31 @@ test("output persistence has a fixed bound", async () => {
     await store.close();
   }
 });
+test("turn pages walk back from the latest turns without gaps", async () => {
+  const { store, session } = await setup();
+  try {
+    // Same timestamps fall back to insertion order.
+    for (let index = 0; index < 7; index++)
+      await store.createTurn(`t${index}`, session.id, `message ${index}`);
+    const latest = await store.turnPage(session.id, 3);
+    assert.deepEqual(
+      latest.turns.map((turn) => turn.id),
+      ["t4", "t5", "t6"],
+    );
+    assert.equal(latest.older, true);
+    const middle = await store.turnPage(session.id, 3, "t4");
+    assert.deepEqual(
+      middle.turns.map((turn) => turn.id),
+      ["t1", "t2", "t3"],
+    );
+    assert.equal(middle.older, true);
+    const first = await store.turnPage(session.id, 3, "t1");
+    assert.deepEqual(
+      first.turns.map((turn) => turn.id),
+      ["t0"],
+    );
+    assert.equal(first.older, false);
+  } finally {
+    await store.close();
+  }
+});
