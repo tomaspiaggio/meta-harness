@@ -37,6 +37,8 @@ export interface WorkerReport {
   maxBuilds: number;
   maxBrowsers: number;
   availableMemoryMiB: number;
+  /** The machine's physical memory; agents use it to size heavy jobs. */
+  totalMemoryMiB?: number;
   memoryPressure?: "normal" | "warning" | "critical";
   reserveMemoryMiB: number;
   loadPerCpu: number;
@@ -313,6 +315,9 @@ export function parseWorkerReport(value: unknown): WorkerReport {
     maxBuilds: count("maxBuilds", 0, 100),
     maxBrowsers: count("maxBrowsers", 0, 100),
     availableMemoryMiB: count("availableMemoryMiB"),
+    ...(row.totalMemoryMiB === undefined
+      ? {}
+      : { totalMemoryMiB: count("totalMemoryMiB") }),
     ...(row.memoryPressure === undefined
       ? {}
       : {
