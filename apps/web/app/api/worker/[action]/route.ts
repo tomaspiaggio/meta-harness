@@ -13,6 +13,7 @@ import { parseWorkerReport } from "@harness/core/scheduling";
 import { after } from "next/server";
 import {
   agentInstructions,
+  machineSizes,
   parseHostFacts,
 } from "../../../../server/agent-instructions";
 import { BrowserBroker } from "../../../../server/browser";
@@ -222,6 +223,7 @@ export async function POST(
                 timezone: String(
                   (policy as { timezone?: unknown }).timezone ?? "UTC",
                 ),
+                machines: machineSizes(workerId, await store.listWorkers()),
               }),
             }
           : {}),

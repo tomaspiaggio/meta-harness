@@ -218,6 +218,7 @@ function report(): WorkerReport {
     maxBuilds: setting("HARNESS_BUILD_SLOTS", 1),
     maxBrowsers: setting("HARNESS_BROWSER_SLOTS", 1),
     ...hostMemory(),
+    totalMemoryMiB: Math.floor(totalmem() / 2 ** 20),
     reserveMemoryMiB: setting("HARNESS_MEMORY_RESERVE_MIB", 1024),
     loadPerCpu: loadavg()[0] / availableParallelism(),
     maxLoadPerCpu: maxLoad,
