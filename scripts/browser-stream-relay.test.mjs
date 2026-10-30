@@ -214,3 +214,32 @@ test("live relay authenticates upgrades, preserves origin/host, isolates workers
     ]);
   }
 });
+
+test("a client that resets while its upgrade is being authorized doesn't crash the gateway", {
+  timeout: 15000,
+}, async () => {
+  const upstream = createServer((_request, response) => {
+    setTimeout(() => {
+      response.writeHead(401);
+      response.end('{"error":"Unauthorized"}');
+    }, 500);
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const gateway = createGateway(upstream.address().port);
+  await new Promise((resolve) => gateway.listen(0, "127.0.0.1", resolve));
+  const port = gateway.address().port;
+  const { connect } = await import("node:net");
+  const client = connect(port, "127.0.0.1");
+  await once(client, "connect");
+  client.write(
+    "GET /api/browser-stream HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  client.resetAndDestroy();
+  // Authorization answers after the reset; the gateway must still serve.
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  const response = await fetch(`http://127.0.0.1:${port}/nope`);
+  assert.equal(response.status, 404);
+  gateway.close();
+  upstream.close();
+});
