@@ -81,6 +81,9 @@ export function browserStreamRelay(server, privatePort, otherUpgrade) {
     return auth;
   }
   server.on("upgrade", async (request, socket, head) => {
+    // Node attaches no error listener to an upgrade socket. A client that
+    // resets while authorization is pending would crash the whole server.
+    socket.on("error", () => socket.destroy());
     if (
       new URL(request.url ?? "/", "http://gateway").pathname !==
       "/api/browser-stream"
