@@ -484,10 +484,12 @@ node scripts/worker-launcher.mjs install <root> <commit-on-main>
 node <root>/launcher.mjs
 ```
 
-The root holds a bare clone, one folder per release and `state.json`. On an
-update the worker stops taking new work, installs the release (only commits on
-`origin/main`) while its running turns finish, and restarts into it with exit
-code 75. Configure the service to restart the launcher whenever it exits
+The root holds a bare clone, one folder per release and `state.json`. An update
+is queued: the worker installs the release (only commits on `origin/main`) and
+keeps taking work, then restarts into it with exit code 75 the first moment it
+has no running turns, pending claims or open browsers. If it isn't idle within
+`HARNESS_UPDATE_DRAIN_AFTER_MS` (two hours), it stops taking new work so its
+running turns can finish. Configure the service to restart the launcher whenever it exits
 (`Restart=on-failure` and launchd `KeepAlive` both do). If the new release exits
 with an error twice, or doesn't reach control within five minutes, the launcher
 goes back to the previous release by itself and the update shows as failed.
@@ -506,14 +508,15 @@ On a systemd host whose user units run the server from a release worktree
 (`releases/<commit>`), Settings → Machines → **Update server** (or an agent's
 `control_update`) updates the server to a commit on `origin/main`. Control starts
 `scripts/update-control.mjs` in a transient `systemd-run --user` unit, so the
-restart doesn't stop it. It pauses the control host's worker while another
-machine can run agents, waits for that worker's turns, builds the release at low
+restart doesn't stop it. The control host's worker keeps working; the update
+waits only while that worker reports critical memory pressure (a build beside a
+large compile once stalled the server), then builds the release at low
 priority, backs up the database with `VACUUM INTO`, points the units in
 `HARNESS_UPDATE_UNITS` (default `meta-harness-control.service,meta-harness-backup.service`)
 at the new release and restarts the server. If `/api/version` doesn't report the
 new commit within three minutes, it restores the unit files and restarts the old
 release. Progress is in `<HARNESS_DATA_DIR>/control-update.json` and at
-`GET /api/version?update=1`. Running turns on other machines survive the short
+`GET /api/version?update=1`. Running turns, on this host too, survive the short
 restart; update workers afterwards, one at a time.
 
 ## Experimental native Claude continuity
