@@ -13,6 +13,7 @@ model Workspaces {
   name                            String
   instructions                    String
   folder                          String?
+  sortOrder                       Int?
   sessions_workspaceId            Sessions[]          @relation("sessions_workspaceId")
   tasks_workspaceId               Tasks[]             @relation("tasks_workspaceId")
   browser_identities_workspaceId  BrowserIdentities[] @relation("browser_identities_workspaceId")

@@ -567,3 +567,33 @@ test("concurrent lease reconcilers recover a Demo turn exactly once", async () =
     rmSync(directory, { recursive: true, force: true });
   }
 });
+test("the owner renames workspaces and sets their order", async () => {
+  const store = new ControlStore(":memory:");
+  await store.ready;
+  try {
+    const names = async () =>
+      (await store.listWorkspaces()).map((workspace) => workspace.name);
+    const seeded = await names();
+    // Unordered workspaces sort by name.
+    assert.deepEqual(seeded, [...seeded].sort());
+    const [first, second, third] = await store.listWorkspaces();
+    assert.ok(first && second && third);
+    await store.orderWorkspaces([third.id, first.id]);
+    const ordered = await names();
+    assert.deepEqual(ordered.slice(0, 2), [third.name, first.name]);
+    assert.ok(ordered.indexOf(second.name) > 1, "unordered ones follow");
+    // The sidebar saves the whole order; a new workspace then goes last.
+    await store.orderWorkspaces(
+      (await store.listWorkspaces()).map((workspace) => workspace.id),
+    );
+    const added = await store.createWorkspace("Aardvark", "Sorts last.");
+    assert.equal((await names()).at(-1), added.name);
+    assert.equal(
+      (await store.renameWorkspace(first.id, "Renamed")).name,
+      "Renamed",
+    );
+    assert.equal((await names())[1], "Renamed");
+  } finally {
+    await store.close();
+  }
+});

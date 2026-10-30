@@ -16,6 +16,8 @@ export interface Workspace {
   instructions: string;
   /** Folder agents work in, on machines that have it, e.g. ~/Projects/litho. */
   folder?: string | null;
+  /** Place in the owner's sidebar order; unset ones follow by name. */
+  sortOrder?: number | null;
 }
 export interface Session {
   model?: string | null;

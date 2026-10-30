@@ -147,6 +147,13 @@ export class ControlStore extends SqliteStore {
           .some((column) => column.name === "folder")
       )
         raw.exec("ALTER TABLE workspaces ADD COLUMN folder TEXT");
+      if (
+        !raw
+          .prepare("PRAGMA table_info(workspaces)")
+          .all()
+          .some((column) => column.name === "sortOrder")
+      )
+        raw.exec("ALTER TABLE workspaces ADD COLUMN sortOrder INTEGER");
       if (!columns.includes("sandboxed"))
         raw.exec(
           "ALTER TABLE sessions ADD COLUMN sandboxed INTEGER NOT NULL DEFAULT 0",
@@ -413,6 +420,23 @@ export class ControlStore extends SqliteStore {
       .prepare("UPDATE workspaces SET folder = ? WHERE id = ?")
       .run(value.replace(/\/+$/, "") || null, id);
     return await this.getWorkspace(id);
+  }
+  async renameWorkspace(id: string, name: string) {
+    await this.getWorkspace(id);
+    await this.db
+      .prepare("UPDATE workspaces SET name = ? WHERE id = ?")
+      .run(name, id);
+    return await this.getWorkspace(id);
+  }
+  /** Saves the owner's order; workspaces left out keep theirs. */
+  async orderWorkspaces(ids: string[]) {
+    await this.transaction(async () => {
+      for (const [index, id] of ids.entries())
+        await this.db
+          .prepare("UPDATE workspaces SET sortOrder = ? WHERE id = ?")
+          .run(index, id);
+    });
+    return await this.listWorkspaces();
   }
   async setSessionSandboxed(id: string, sandboxed: unknown): Promise<Session> {
     if (typeof sandboxed !== "boolean")

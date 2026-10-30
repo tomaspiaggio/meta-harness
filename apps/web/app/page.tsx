@@ -197,7 +197,10 @@ function Conversation() {
   const input = useRef<HTMLTextAreaElement>(null);
   // Filter by ID so a previous location's data never flashes in the new one.
   const turns = state.turns.filter((t) => t.sessionId === sessionId);
-  const workspace = state.workspaces.find((w) => w.id === workspaceId);
+  // The sidebar's copy updates as soon as a workspace is renamed.
+  const workspace =
+    tree.workspaces.find((w) => w.id === workspaceId) ??
+    state.workspaces.find((w) => w.id === workspaceId);
   const selected = state.sessions.find((s) => s.id === sessionId);
   const sessionLabels = sessionId
     ? (selected?.requiredLabels ?? "").split(",").filter(Boolean)

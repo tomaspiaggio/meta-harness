@@ -2,10 +2,13 @@
 import type { Session, Workspace } from "@harness/core";
 import type { AgentDefaults } from "@harness/core/models";
 import {
+  ArrowDown,
+  ArrowUp,
   ChevronRight,
   Compass,
   Folder,
   FolderOpen,
+  GripVertical,
   MessageSquare,
   Pencil,
   Plus,
@@ -231,6 +234,7 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
   const [title, setTitle] = useState("");
   const [savingTitle, setSavingTitle] = useState(false);
   const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
+  const [arranging, setArranging] = useState(false);
   const { isMobile, setOpenMobile } = useSidebar();
   const location = `${pathname}?${params}`;
   // biome-ignore lint/correctness/useExhaustiveDependencies: close the phone drawer after each navigation
@@ -290,6 +294,15 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
           <SidebarGroupLabel className="font-mono uppercase tracking-wider">
             Workspaces
           </SidebarGroupLabel>
+          <SidebarGroupAction
+            className="right-9"
+            title={arranging ? "Done" : "Rename and reorder workspaces"}
+            aria-pressed={arranging}
+            onClick={() => setArranging(!arranging)}
+          >
+            <Pencil />
+            <span className="sr-only">Rename and reorder workspaces</span>
+          </SidebarGroupAction>
           <SidebarGroupAction
             title="New workspace"
             onClick={() => setCreating(!creating)}
@@ -355,7 +368,14 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
               </div>
             </form>
           )}
-          <SidebarMenu>
+          {arranging && (
+            <WorkspaceArranger
+              workspaces={tree.workspaces}
+              refresh={refresh}
+              done={() => setArranging(false)}
+            />
+          )}
+          <SidebarMenu className={cn(arranging && "hidden")}>
             {tree.workspaces.map((workspace) => {
               const current = workspace.id === workspaceId;
               const sessions = tree.sessions.filter(
@@ -668,6 +688,139 @@ function AppSidebar({ tree, refresh }: { tree: Tree; refresh: () => void }) {
       </SidebarContent>
       <SidebarRail />
     </Sidebar>
+  );
+}
+/**
+ * Renames and reorders workspaces: drag a row, or use its arrows on a phone.
+ * Each change saves at once.
+ */
+function WorkspaceArranger({
+  workspaces,
+  refresh,
+  done,
+}: {
+  workspaces: Workspace[];
+  refresh: () => void;
+  done: () => void;
+}) {
+  const [order, setOrder] = useState(() => workspaces.map(({ id }) => id));
+  const [names, setNames] = useState<Record<string, string>>(() =>
+    Object.fromEntries(workspaces.map(({ id, name }) => [id, name])),
+  );
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const byId = new Map(
+    workspaces.map((workspace) => [workspace.id, workspace]),
+  );
+  // Workspaces created elsewhere while arranging go last.
+  const ids = [
+    ...order.filter((id) => byId.has(id)),
+    ...workspaces.map(({ id }) => id).filter((id) => !order.includes(id)),
+  ];
+  const save = async (body: unknown) => {
+    setError("");
+    const response = await fetch("/api/workspaces", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok)
+      setError(
+        ((await response.json().catch(() => ({}))) as { error?: string })
+          .error ?? "Could not save.",
+      );
+    refresh();
+  };
+  const move = (id: string, to: number) => {
+    const next = ids.filter((other) => other !== id);
+    next.splice(Math.max(0, Math.min(to, next.length)), 0, id);
+    setOrder(next);
+    return next;
+  };
+  const rename = (id: string) => {
+    const name = names[id]?.trim();
+    const workspace = byId.get(id);
+    if (!workspace || !name || name === workspace.name) return;
+    void save({ id, name });
+  };
+  return (
+    <div className="mb-2 grid gap-1">
+      {ids.map((id, index) => (
+        // biome-ignore lint/a11y/noStaticElementInteractions: dragging is a pointer shortcut; the arrow buttons reorder from the keyboard
+        <div
+          key={id}
+          draggable
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = "move";
+            setDragging(id);
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            if (dragging && dragging !== id) move(dragging, index);
+          }}
+          onDragEnd={() => {
+            setDragging(null);
+            void save({ order: ids });
+          }}
+          className={cn(
+            "flex items-center gap-1 rounded-md px-1",
+            dragging === id && "opacity-50",
+          )}
+        >
+          <GripVertical className="size-4 shrink-0 cursor-grab text-sidebar-foreground/40" />
+          <Input
+            aria-label={`Name of ${byId.get(id)?.name}`}
+            value={names[id] ?? ""}
+            maxLength={100}
+            onChange={(event) =>
+              setNames((state) => ({ ...state, [id]: event.target.value }))
+            }
+            onBlur={() => rename(id)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+              if (event.key === "Escape") {
+                setNames((state) => ({
+                  ...state,
+                  [id]: byId.get(id)?.name ?? "",
+                }));
+                done();
+              }
+            }}
+            className="h-8 min-w-0 border-sidebar-border bg-sidebar text-sm"
+          />
+          <button
+            type="button"
+            aria-label={`Move ${byId.get(id)?.name} up`}
+            title="Move up"
+            disabled={index === 0}
+            onClick={() => void save({ order: move(id, index - 1) })}
+            className="rounded p-1 text-sidebar-foreground/60 hover:bg-sidebar-accent disabled:opacity-30"
+          >
+            <ArrowUp className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            aria-label={`Move ${byId.get(id)?.name} down`}
+            title="Move down"
+            disabled={index === ids.length - 1}
+            onClick={() => void save({ order: move(id, index + 1) })}
+            className="rounded p-1 text-sidebar-foreground/60 hover:bg-sidebar-accent disabled:opacity-30"
+          >
+            <ArrowDown className="size-3.5" />
+          </button>
+        </div>
+      ))}
+      {error && (
+        <p role="alert" className="px-1 text-xs text-destructive">
+          {error}
+        </p>
+      )}
+      <div className="flex justify-end px-1">
+        <Button size="sm" onClick={done}>
+          Done
+        </Button>
+      </div>
+    </div>
   );
 }
 const tones: Record<string, string> = {
