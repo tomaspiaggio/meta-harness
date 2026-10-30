@@ -9,6 +9,10 @@ User=meta-harness
 WorkingDirectory=/opt/meta-harness/apps/worker
 EnvironmentFile=/etc/meta-harness/worker.env
 ExecStart=/usr/bin/node --import tsx src/index.ts
+# Stopping or updating the worker signals only the worker, which ends its own
+# turns. Long jobs an agent started in the background (builds, simulations)
+# keep running; with the default control-group mode systemd would kill them.
+KillMode=process
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=15
