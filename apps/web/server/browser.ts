@@ -278,7 +278,7 @@ export class BrowserBroker {
           );
           if (command && identity)
             assignments.push({
-              command,
+              command: await this.withTab(command),
               identity,
               stateKey: encryptionKey(`browser:${identity.id}`),
             });
@@ -342,7 +342,7 @@ export class BrowserBroker {
           )
           .run(row.id);
         assignments.push({
-          command: row,
+          command: await this.withTab(row),
           identity: browser,
           stateKey: encryptionKey(`browser:${browser.id}`),
         });
@@ -573,6 +573,22 @@ export class BrowserBroker {
         );
       return this.get(id);
     });
+  }
+  /**
+   * Names the tab a command runs in: its turn's session, so sessions sharing a
+   * browser each keep their own page. Commands the owner's UI sends name
+   * their session in a tab argument.
+   */
+  private async withTab(command: BrowserCommand): Promise<BrowserCommand> {
+    if (command.turnId) {
+      const turn = await this.store.getTurn(command.turnId).catch(() => null);
+      return turn ? { ...command, tab: turn.sessionId } : command;
+    }
+    try {
+      const tab = (JSON.parse(command.arguments) as { tab?: unknown }).tab;
+      if (typeof tab === "string" && tab) return { ...command, tab };
+    } catch {}
+    return command;
   }
   /**
    * Keeps a host's live leases while it runs a slow action. Polls renew them

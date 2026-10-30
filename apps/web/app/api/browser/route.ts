@@ -121,7 +121,12 @@ export async function POST(request: Request) {
     const identity = await broker.ensure(workspaceId);
     if (body.action === "screenshot") {
       const id = crypto.randomUUID();
-      await broker.command(id, identity.id, "screenshot", {});
+      await broker.command(
+        id,
+        identity.id,
+        "screenshot",
+        session ? { tab: session.id } : {},
+      );
       const command = await broker.wait(id);
       if (command.status !== "completed")
         throw new HarnessError(

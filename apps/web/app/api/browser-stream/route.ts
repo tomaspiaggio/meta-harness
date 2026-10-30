@@ -44,6 +44,16 @@ export async function GET(request: Request) {
         "This browser is controlled in another view or needs a new takeover.",
         409,
       );
+    // The view shows the tab of the session it was opened from.
+    const sessionId = query.get("session");
+    const tab = sessionId
+      ? await store.getSession(requiredText(sessionId, "Session ID", 100))
+      : null;
+    if (tab && tab.workspaceId !== browser.workspaceId)
+      throw new HarnessError(
+        "Session is outside this browser's workspace.",
+        403,
+      );
     const worker = (await store.listWorkers()).find(
       (w) => w.id === browser.workerId,
     );
@@ -63,7 +73,12 @@ export async function GET(request: Request) {
         assignment: {
           identity: browser,
           stateKey: encryptionKey(`browser:${browser.id}`),
-          command: { id: "live-view", action: "manual", arguments: "{}" },
+          command: {
+            id: "live-view",
+            action: "manual",
+            arguments: "{}",
+            ...(tab ? { tab: tab.id } : {}),
+          },
         },
       },
       { headers: { "Cache-Control": "no-store" } },

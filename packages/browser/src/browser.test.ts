@@ -256,3 +256,112 @@ test("real Chromium: screenshots, encrypted takeover, no model capture during lo
     await rm(root, { recursive: true, force: true });
   }
 });
+test("real Chromium: sessions share logins but each acts in its own tab", {
+  skip: process.env.HARNESS_TEST_BROWSER !== "1",
+  timeout: 60000,
+}, async () => {
+  const root = await mkdtemp(join(tmpdir(), "harness-browser-tabs-"));
+  const server = createServer((request, response) => {
+    response.setHeader("Content-Type", "text/html");
+    if (request.url === "/login") response.setHeader("Set-Cookie", "who=owner");
+    response.end(
+      `<html><head><title>${request.url}</title></head><body><h1>${request.url} ${request.headers.cookie ?? "no cookie"}</h1><button id="pop" onclick="window.open('/popup')">Pop</button></body></html>`,
+    );
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const url = `http://127.0.0.1:${address.port}`;
+  const identity: BrowserIdentity = {
+    id: "tabs",
+    workspaceId: "business",
+    name: "Tabs",
+    workerId: "worker",
+    status: "ready",
+    mode: "agent",
+    generation: 1,
+    leaseUntil: Date.now() + 60000,
+    userPublicKey: null,
+    expiresAt: null,
+    lastUrl: null,
+    frame: null,
+    frameAt: null,
+    error: null,
+    stateCipher: null,
+    updatedAt: Date.now(),
+  };
+  const host = new BrowserHost(root, {
+    backend: "managed",
+    headless: true,
+    allowTestLoopback: true,
+  });
+  let sequence = 0;
+  const assignment = (
+    tab: string,
+    action: string,
+    args: Record<string, unknown> = {},
+  ): BrowserAssignment => ({
+    identity: { ...identity },
+    stateKey: randomBytes(32).toString("base64"),
+    command: {
+      id: `command-${++sequence}`,
+      browserId: identity.id,
+      turnId: "turn",
+      turnGeneration: 1,
+      browserGeneration: identity.generation,
+      action,
+      arguments: JSON.stringify(args),
+      status: "running",
+      result: null,
+      error: null,
+      createdAt: Date.now(),
+      completedAt: null,
+      tab,
+    },
+  });
+  const read = async (tab: string) =>
+    String((await host.execute(assignment(tab, "read"))).result.text);
+  try {
+    await host.execute(
+      assignment("reddit", "navigate", { url: `${url}/login` }),
+    );
+    await host.execute(
+      assignment("discord", "navigate", { url: `${url}/discord` }),
+    );
+    // Discord's navigation didn't move Reddit's page, and the login is shared.
+    assert.match(await read("reddit"), /\/login/);
+    assert.match(await read("discord"), /\/discord who=owner/);
+    const reddit = await host.livePage(assignment("reddit", "manual"));
+    const discord = await host.livePage(assignment("discord", "manual"));
+    assert.match(reddit.current().url(), /\/login$/);
+    assert.match(discord.current().url(), /\/discord$/);
+    // A popup takes over the tab that opened it, and only that one.
+    const seen: string[] = [];
+    reddit.onPage((page) => seen.push(page.url()));
+    await host.execute(assignment("reddit", "click", { selector: "#pop" }));
+    for (let i = 0; i < 50 && !/popup/.test(reddit.current().url()); i++)
+      await new Promise((done) => setTimeout(done, 100));
+    assert.match(reddit.current().url(), /\/popup$/);
+    assert.match(discord.current().url(), /\/discord$/);
+    assert.match(await read("reddit"), /\/popup/);
+    await reddit.current().close();
+    assert.match(reddit.current().url(), /\/login$/);
+    assert.ok(seen.length >= 2);
+    // Sessions beyond the limit close the least recently used tab.
+    for (let index = 0; index < 8; index++)
+      await host.execute(
+        assignment(`extra-${index}`, "navigate", {
+          url: `${url}/extra-${index}`,
+        }),
+      );
+    const pages = reddit.current().context().pages();
+    assert.ok(pages.filter((page) => !page.isClosed()).length <= 6);
+    assert.match(await read("extra-7"), /\/extra-7/);
+  } finally {
+    await host.close();
+    await new Promise<void>((done, reject) =>
+      server.close((error) => (error ? reject(error) : done())),
+    );
+    await rm(root, { recursive: true, force: true });
+  }
+});
