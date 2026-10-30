@@ -40,7 +40,8 @@ export class SqliteStore implements TurnStore {
       PRAGMA busy_timeout = 5000;
       PRAGMA cache_size = -2048;
       CREATE TABLE IF NOT EXISTS workspaces (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL, instructions TEXT NOT NULL
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, instructions TEXT NOT NULL,
+        sortOrder INTEGER
       );
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY, workspaceId TEXT NOT NULL REFERENCES workspaces(id),
@@ -185,20 +186,23 @@ export class SqliteStore implements TurnStore {
   }
   async listWorkspaces(): Promise<Workspace[]> {
     return (await this.db
-      .prepare("SELECT * FROM workspaces ORDER BY name")
+      .prepare(
+        "SELECT * FROM workspaces ORDER BY sortOrder IS NULL, sortOrder, name",
+      )
       .all()) as unknown as Workspace[];
   }
   async createWorkspace(
     name: string,
     instructions: string,
   ): Promise<Workspace> {
-    const workspace = { id: crypto.randomUUID(), name, instructions };
+    const id = crypto.randomUUID();
+    // Once the owner has set an order, a new workspace goes last in it.
     await this.db
       .prepare(
-        "INSERT INTO workspaces(id, name, instructions) VALUES (?, ?, ?)",
+        "INSERT INTO workspaces(id, name, instructions, sortOrder) VALUES (?, ?, ?, (SELECT MAX(sortOrder) + 1 FROM workspaces))",
       )
-      .run(workspace.id, name, instructions);
-    return workspace;
+      .run(id, name, instructions);
+    return await this.getWorkspace(id);
   }
   async getWorkspace(id: string): Promise<Workspace> {
     const row = await this.db

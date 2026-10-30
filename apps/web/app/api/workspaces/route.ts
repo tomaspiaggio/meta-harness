@@ -50,16 +50,29 @@ export async function POST(request: Request) {
     return failure(error);
   }
 }
-/** Where the workspace's agents work, on machines that have the folder. */
+/**
+ * The sidebar order (`order`: every workspace ID, top first), a workspace's
+ * name, or where its agents work on machines that have the folder.
+ */
 export async function PATCH(request: Request) {
   try {
     const body = await jsonBody(request);
-    return Response.json(
-      await (await getStore()).setWorkspaceFolder(
-        requiredText(body.id, "Workspace ID", 100),
-        body.folder,
-      ),
-    );
+    const store = await getStore();
+    if (body.order !== undefined) {
+      if (
+        !Array.isArray(body.order) ||
+        body.order.length > 500 ||
+        body.order.some((id) => typeof id !== "string")
+      )
+        throw new HarnessError("Order must list workspace IDs.");
+      return Response.json(await store.orderWorkspaces(body.order as string[]));
+    }
+    const id = requiredText(body.id, "Workspace ID", 100);
+    if (body.name !== undefined)
+      return Response.json(
+        await store.renameWorkspace(id, requiredText(body.name, "Name", 100)),
+      );
+    return Response.json(await store.setWorkspaceFolder(id, body.folder));
   } catch (error) {
     return failure(error);
   }
