@@ -1205,6 +1205,14 @@ ${blocks.reverse().join("\n\n---\n\n")}
       )
       .all(sessionId)) as unknown as InputRequest[];
   }
+  /** The owner answered elsewhere or no longer needs to; nothing is sent. */
+  async dismissInput(id: string): Promise<void> {
+    await this.db
+      .prepare(
+        "UPDATE input_requests SET status = 'dismissed', resolvedAt = ? WHERE id = ? AND status = 'pending'",
+      )
+      .run(Date.now(), id);
+  }
   async answerInput(id: string, response: string): Promise<void> {
     await this.transaction(async () => {
       const input = await this.db
