@@ -8,13 +8,13 @@
 //   node <release>/scripts/update-control.mjs --commit <sha> --url http://127.0.0.1:3000
 //
 // 1. Fetch origin/main and refuse commits that aren't on it.
-// 2. If another machine can run agents, pause this host's worker and wait for
-//    its turns: building beside running turns once stalled the server.
+// 2. Wait until this host isn't swapping hard (its worker reports critical
+//    memory pressure): a build beside a large compile stalled the server.
+//    The worker keeps taking work; restarting the server doesn't stop turns.
 // 3. Install and build releases/<commit> at low priority.
 // 4. Back up the database, point the user units at the new release, restart
 //    the server and check /api/version. If it doesn't come back on the new
 //    build within 3 minutes, restore the units and restart the old release.
-// 5. Unpause the worker, whatever happened.
 //
 // Progress goes to <HARNESS_DATA_DIR>/control-update.json; one update runs at
 // a time (control-update.lock). Settings: HARNESS_DATA_DIR (required),
@@ -139,7 +139,6 @@ async function main() {
   };
   const db = new DatabaseSync(join(dataDir, "harness.sqlite"));
   db.exec("PRAGMA busy_timeout = 10000");
-  let paused = null;
   try {
     status("preparing");
     const before = await version();
@@ -170,43 +169,30 @@ async function main() {
     const name = commit.slice(0, 7);
     const release = join(releases, name);
 
-    // Pause this host's worker only while another machine can run agents.
-    const workers = db
-      .prepare(
-        "SELECT id, report, seenAt, draining FROM workers WHERE tokenHash != ''",
-      )
-      .all()
-      .map((row) => ({
-        ...row,
-        report: row.report ? JSON.parse(row.report) : null,
-      }));
-    const live = (worker) =>
-      !worker.draining &&
-      !worker.report?.draining &&
-      Number(worker.seenAt) > Date.now() - 30000 &&
-      worker.report?.providers?.some((provider) => provider !== "demo");
-    const local = workers.find(
-      (worker) => !worker.draining && worker.report?.hostname === hostname(),
-    );
-    if (
-      local &&
-      workers.some((worker) => worker.id !== local.id && live(worker))
-    ) {
-      db.prepare("UPDATE workers SET draining = 1 WHERE id = ?").run(local.id);
-      paused = local.id;
+    // The worker keeps working; wait only while this host is swapping hard.
+    const pressure = () => {
+      for (const row of db
+        .prepare(
+          "SELECT report FROM workers WHERE tokenHash != '' AND seenAt > ?",
+        )
+        .all(Date.now() - 60000)) {
+        const report = row.report ? JSON.parse(row.report) : null;
+        if (report?.hostname === hostname()) return report.memoryPressure;
+      }
+      return undefined;
+    };
+    if (pressure() === "critical") {
       status("waiting", {
-        message: "Waiting for this host's running turns before building.",
+        message:
+          "Waiting for this host's memory pressure to ease before building.",
       });
       for (const until = Date.now() + 4 * 3600 * 1000; ; ) {
-        const { n } = db
-          .prepare(
-            "SELECT count(*) AS n FROM turns WHERE workerId = ? AND status IN ('running', 'stopping')",
-          )
-          .get(local.id);
-        if (!n) break;
-        if (Date.now() > until)
-          throw new Error("This host's turns didn't finish within 4 hours.");
         await delay(15000);
+        if (pressure() !== "critical") break;
+        if (Date.now() > until)
+          throw new Error(
+            "This host stayed under critical memory pressure for 4 hours.",
+          );
       }
     }
 
@@ -308,8 +294,6 @@ async function main() {
     });
     process.exitCode = 1;
   } finally {
-    if (paused)
-      db.prepare("UPDATE workers SET draining = 0 WHERE id = ?").run(paused);
     db.close();
     rmSync(lockFile, { force: true });
   }

@@ -147,6 +147,12 @@ const releaseName = process.env.HARNESS_RELEASE;
 let updating: WorkerReport["update"];
 let restarting = false;
 let running = 0;
+// Claims posted but not yet started; an idle check must count them.
+let claiming = 0;
+// A queued update stops taking new work after this long without an idle moment.
+const drainAfterMs = Number(
+  process.env.HARNESS_UPDATE_DRAIN_AFTER_MS ?? 2 * 60 * 60 * 1000,
+);
 // A release the launcher just rolled back is reported as a failed update.
 if (releaseRoot)
   try {
@@ -160,8 +166,14 @@ if (releaseRoot)
   } catch {
     // A missing or unreadable state file only means nothing to report.
   }
-/** Claiming stops while an update waits for running work to finish. */
-const paused = () => !!updating && updating.phase !== "failed";
+/**
+ * A queued update keeps taking work; claiming stops only when it restarts, or
+ * when it has waited too long for an idle moment and drains instead.
+ */
+const paused = () =>
+  restarting ||
+  updating?.phase === "waiting" ||
+  updating?.phase === "restarting";
 const maxLoad = Number(process.env.HARNESS_MAX_LOAD_PER_CPU ?? 1.5);
 if (!Number.isFinite(maxLoad) || maxLoad < 0)
   throw new Error("Invalid HARNESS_MAX_LOAD_PER_CPU.");
@@ -246,8 +258,10 @@ function handleUpdate(target: string | null) {
   void performUpdate(target);
 }
 /**
- * Prepares the release while running turns finish, then restarts into it. No
- * turn is interrupted: the switch waits until this worker is idle.
+ * Prepares the release, then restarts into it the first moment this worker is
+ * idle, taking work as usual until then. No turn is interrupted. A worker that
+ * never goes idle stops taking new work after HARNESS_UPDATE_DRAIN_AFTER_MS
+ * (2 hours) so its running turns can finish.
  */
 async function performUpdate(target: string) {
   const current = () =>
@@ -260,13 +274,27 @@ async function performUpdate(target: string) {
       throw new Error(
         "This worker wasn't started by the release launcher, so it can't update itself.",
       );
-    console.log(`Updating to ${target}: preparing; no new work meanwhile.`);
+    console.log(`Updating to ${target}: preparing while work continues.`);
+    const queuedAt = Date.now();
     const name = await prepareRelease(releaseRoot, target);
     if (!current()) return;
-    updating = { target, phase: "waiting" };
-    while (running > 0 || (browserHost?.active().length ?? 0) > 0) {
+    updating = { target, phase: "queued" };
+    console.log(`Update to ${target} queued until this worker is idle.`);
+    // Checked and acted on without an await in between, so no lane can claim
+    // a turn after the check and before claiming stops.
+    while (
+      running > 0 ||
+      claiming > 0 ||
+      (browserHost?.active().length ?? 0) > 0
+    ) {
       await delay(2000);
       if (!current()) return;
+      if (updating.phase === "queued" && Date.now() - queuedAt > drainAfterMs) {
+        updating = { target, phase: "waiting" };
+        console.log(
+          `Update to ${target}: no idle moment in ${Math.round(drainAfterMs / 60000)} min; no new work until running turns finish.`,
+        );
+      }
     }
     restarting = true;
     updating = { target, phase: "restarting" };
@@ -575,9 +603,18 @@ async function lane() {
     }
     try {
       await cleanupLocal();
-      const assignment = await client.post<WorkerAssignment | null>("claim", {
-        requestId: crypto.randomUUID(),
-      });
+      if (paused()) continue;
+      claiming++;
+      let assignment: WorkerAssignment | null;
+      try {
+        assignment = await client.post<WorkerAssignment | null>("claim", {
+          requestId: crypto.randomUUID(),
+        });
+      } finally {
+        // run() counts the turn before its first await, so the update never
+        // sees this claim as neither claiming nor running.
+        claiming--;
+      }
       if (assignment) {
         idleDelay = pollMs;
         await run(assignment);

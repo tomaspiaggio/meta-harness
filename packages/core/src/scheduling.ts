@@ -49,7 +49,12 @@ export interface WorkerReport {
   /** Progress of an update control asked for, or why it failed. */
   update?: { target: string; phase: UpdatePhase; message?: string };
 }
-export type UpdatePhase = "preparing" | "waiting" | "restarting" | "failed";
+export type UpdatePhase =
+  | "preparing"
+  | "queued"
+  | "waiting"
+  | "restarting"
+  | "failed";
 /** An update control asked a worker for, kept on the worker's row. */
 export interface WorkerUpdate {
   target: string;
@@ -62,7 +67,9 @@ export interface WorkerUpdate {
 }
 export const updateActive = (update?: WorkerUpdate | null) =>
   !!update &&
-  ["requested", "preparing", "waiting", "restarting"].includes(update.status);
+  ["requested", "preparing", "queued", "waiting", "restarting"].includes(
+    update.status,
+  );
 /** Two commit prefixes name the same commit (at least 7 hex digits each). */
 export function sameCommit(a?: string, b?: string): boolean {
   if (!a || !b || a.length < 7 || b.length < 7) return false;
@@ -328,7 +335,7 @@ function parseUpdate(value: unknown): Pick<WorkerReport, "update"> | null {
   if (
     typeof row.target !== "string" ||
     !COMMIT.test(row.target) ||
-    !["preparing", "waiting", "restarting", "failed"].includes(
+    !["preparing", "queued", "waiting", "restarting", "failed"].includes(
       row.phase as string,
     )
   )

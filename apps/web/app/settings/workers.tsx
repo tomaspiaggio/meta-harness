@@ -26,8 +26,9 @@ const ago = (value: number | null) => {
 const controlBuild = process.env.HARNESS_BUILD;
 const phases: Record<string, string> = {
   requested: "asked; waiting for it to check in",
-  preparing: "installing the new release; it takes no new work meanwhile",
-  waiting: "waiting for its running work to finish",
+  preparing: "installing the new release while it keeps working",
+  queued: "ready; restarts the next time it's idle",
+  waiting: "not idle for 2 hours; finishing its running work, no new work",
   restarting: "restarting into the new release",
 };
 
@@ -535,7 +536,7 @@ type ServerUpdate = {
 const serverPhases: Record<string, string> = {
   requested: "starting",
   preparing: "fetching the commit",
-  waiting: "waiting for this host's running work",
+  waiting: "waiting for this host's memory pressure to ease",
   building: "building (about 5 minutes)",
   switching: "switching",
   restarting: "restarting the server",

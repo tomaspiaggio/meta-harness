@@ -274,7 +274,7 @@ const tools = [
   {
     name: "machine_update",
     description:
-      "Update one of the owner's machines to a commit on main (default: the commit control runs). The machine stops taking new work, prepares the release while its running turns finish (including yours if you run there), restarts into it, and goes back to its previous release by itself if the new one fails to start or reach control within 5 minutes. Only one machine updates at a time, and control refuses when no other machine could run agents meanwhile. Follow progress with machines_list; cancel: true stops an update that hasn't restarted yet. If you are on that machine, end your turn after calling this and continue_on another machine to check the result.",
+      "Update one of the owner's machines to a commit on main (default: the commit control runs). The update is queued: the machine prepares the release and keeps taking work, then restarts into it the first moment it has no running turns or open browsers (yours counts if you run there). Only if it isn't idle within 2 hours does it stop taking new work so its turns can finish. It restarts into the release and goes back to its previous release by itself if the new one fails to start or reach control within 5 minutes. Only one machine updates at a time, and control refuses when no other machine could run agents meanwhile. Follow progress with machines_list; cancel: true stops an update that hasn't restarted yet. If you are on that machine, end your turn after calling this and continue_on another machine to check the result.",
     inputSchema: {
       ...object,
       properties: {
@@ -291,7 +291,7 @@ const tools = [
   {
     name: "control_update",
     description:
-      "Update the control server itself to a commit on main. It runs outside the server: fetches and checks the commit, pauses the control host's worker while another machine can run agents and waits for its turns, builds the release at low priority, backs up the database, restarts the server and checks it comes back on the new commit; if it doesn't within 3 minutes it restores the previous release by itself. Takes about 5-10 minutes; running turns elsewhere survive the short restart. Call with status: true to read progress (also in machines_list as control).",
+      "Update the control server itself to a commit on main. It runs outside the server: fetches and checks the commit, waits while the control host is under critical memory pressure (its worker keeps working), builds the release at low priority, backs up the database, restarts the server and checks it comes back on the new commit; if it doesn't within 3 minutes it restores the previous release by itself. Takes about 5-10 minutes; running turns elsewhere survive the short restart. Call with status: true to read progress (also in machines_list as control).",
     inputSchema: {
       ...object,
       properties: {
