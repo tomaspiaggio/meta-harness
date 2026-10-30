@@ -45,9 +45,11 @@ export async function browserDisplay() {
     const process = child;
     const display = await new Promise<string>((resolve, reject) => {
       let value = "";
+      // Xvfb starts in well under a second, but a host that is swapping can
+      // take far longer; 5 s failed three browser starts on the Pi in one day.
       const timer = setTimeout(
         () => reject(new Error("Private browser display did not start.")),
-        5000,
+        30000,
       );
       process.once("error", (error) => {
         clearTimeout(timer);

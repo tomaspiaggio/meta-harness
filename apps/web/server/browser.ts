@@ -574,6 +574,18 @@ export class BrowserBroker {
       return this.get(id);
     });
   }
+  /**
+   * Keeps a host's live leases while it runs a slow action. Polls renew them
+   * too, but a host doesn't poll during an action, and starting Chromium and
+   * loading a page on a busy machine can take longer than the lease.
+   */
+  async renew(workerId: string, now = Date.now()) {
+    await this.db
+      .prepare(
+        "UPDATE browser_identities SET leaseUntil = ? WHERE workerId = ? AND leaseUntil > ?",
+      )
+      .run(now + 30000, workerId, now);
+  }
   async release(workerId: string, id: string, generation: number) {
     await this.db
       .prepare(

@@ -128,6 +128,10 @@ export async function POST(
       );
       return Response.json({ ok: true });
     }
+    if (action === "browser-renew") {
+      await new BrowserBroker(store).renew(workerId);
+      return Response.json({ ok: true });
+    }
     if (action === "browser-poll")
       return Response.json(
         await new BrowserBroker(store).poll(
