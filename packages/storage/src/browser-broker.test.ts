@@ -497,3 +497,55 @@ test("logical browser operation IDs survive explicit follow-up without crossing 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a host renewing during a slow action keeps its lease; one that stops loses it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "harness-browser-renew-"));
+  const store = new HarnessStore(join(root, "db.sqlite"));
+  await store.ready;
+  try {
+    const host = await store.createWorker("Slow host");
+    const other = await store.createWorker("Other host");
+    const report = {
+      hostname: "fixture",
+      providers: ["demo" as const],
+      labels: [],
+      maxAgents: 1,
+      memoryBudgetMiB: 4096,
+      cpuSlots: 2,
+      maxBuilds: 1,
+      maxBrowsers: 1,
+      availableMemoryMiB: 8192,
+      reserveMemoryMiB: 512,
+      loadPerCpu: 0,
+      maxLoadPerCpu: 2,
+      draining: false,
+      browserHost: true,
+      browserBackend: "managed" as const,
+    };
+    await store.reportWorker(host.id, report);
+    const broker = new BrowserBroker(store);
+    const browser = await broker.ensure("tech", host.id);
+    assert.equal(browser.workerId, host.id);
+    const db = store.databaseConnection();
+    const lease = async () =>
+      Number(
+        (
+          (await db
+            .prepare("SELECT leaseUntil FROM browser_identities WHERE id = ?")
+            .get(browser.id)) as { leaseUntil: number }
+        ).leaseUntil,
+      );
+    const now = Date.now();
+    // Another host's renewal touches nothing it doesn't hold.
+    await broker.renew(other.id, now + 20000);
+    assert.ok((await lease()) < now + 40000);
+    await broker.renew(host.id, now + 20000);
+    assert.equal(await lease(), now + 50000);
+    // An expired lease isn't revived.
+    await broker.renew(host.id, now + 60000);
+    assert.equal(await lease(), now + 50000);
+  } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

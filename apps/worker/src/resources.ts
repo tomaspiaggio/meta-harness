@@ -44,6 +44,48 @@ export function linuxMemory(info: string, freeBytes: number): Memory {
     ),
   };
 }
+type SwapSample = { at: number; pages: number };
+/**
+ * Linux reports no pressure level, and kernels without PSI (the Raspberry Pi's)
+ * give no other signal: MemAvailable stays healthy while a large build pushes
+ * everything else into swap. Sustained swap-in is the symptom that stalls the
+ * browser and the server, so it sets the level.
+ */
+export function swapPressure(
+  samples: SwapSample[],
+  pageBytes: number,
+): WorkerReport["memoryPressure"] {
+  const first = samples[0];
+  const last = samples.at(-1);
+  if (!first || !last || last.at - first.at < 20000) return undefined;
+  const bytesPerSecond =
+    ((last.pages - first.pages) * pageBytes * 1000) / (last.at - first.at);
+  return bytesPerSecond >= 2 * MiB
+    ? "critical"
+    : bytesPerSecond >= MiB / 2
+      ? "warning"
+      : "normal";
+}
+const swapSamples: SwapSample[] = [];
+let pageBytes: number | undefined;
+function linuxSwapPressure(): WorkerReport["memoryPressure"] {
+  const pages = Number(
+    readFileSync("/proc/vmstat", "utf8").match(/^pswpin (\d+)$/m)?.[1],
+  );
+  if (!Number.isFinite(pages)) return undefined;
+  pageBytes ??=
+    Number(
+      execFileSync("getconf", ["PAGESIZE"], {
+        encoding: "utf8",
+        timeout: 500,
+      }).trim(),
+    ) || 4096;
+  const at = performance.now();
+  swapSamples.push({ at, pages });
+  while (swapSamples.length > 2 && at - (swapSamples[1]?.at ?? at) >= 30000)
+    swapSamples.shift();
+  return swapPressure(swapSamples, pageBytes);
+}
 let cached:
   | {
       at: number;
@@ -71,6 +113,8 @@ export function hostMemory(): Memory {
       memory = macMemory(stats, pressure, freeBytes);
     } else if (platform() === "linux") {
       memory = linuxMemory(readFileSync("/proc/meminfo", "utf8"), freeBytes);
+      const memoryPressure = linuxSwapPressure();
+      if (memoryPressure) memory = { ...memory, memoryPressure };
     }
   } catch {
     // Unknown hosts or failed probes retain the conservative free-memory check.
