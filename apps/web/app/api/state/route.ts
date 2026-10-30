@@ -1,3 +1,4 @@
+import { requiredText, type Turn } from "@harness/core";
 import {
   labelList,
   type WorkerRecord,
@@ -53,6 +54,36 @@ async function noteTag(
       : null,
   };
 }
+/** Turns as the conversation shows them, with who ran them and what they made. */
+async function turnViews(
+  store: Awaited<ReturnType<typeof getStore>>,
+  turns: Turn[],
+  workers: WorkerRecord[],
+) {
+  const workerNames = new Map(
+    workers.map((worker) => [
+      worker.id,
+      {
+        name: worker.name,
+        hostname: worker.report?.hostname ?? null,
+      },
+    ]),
+  );
+  return await Promise.all(
+    turns.map(async (turn) => ({
+      ...turn,
+      worker: turn.workerId ? (workerNames.get(turn.workerId) ?? null) : null,
+      waitingReason: await store.waitingReason(turn.id),
+      publications: await store.decisionsForTurn(turn.id),
+      attachments: await store.attachmentsForTurn(turn.id),
+      delegation: await delegationTag(store, turn.id),
+      note: await noteTag(store, turn.id),
+    })),
+  );
+}
+/** A switch shows the latest turns first; earlier ones load as the reader scrolls up. */
+const LATEST_TURNS = 12;
+const OLDER_TURNS = 20;
 export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
@@ -78,15 +109,6 @@ export async function GET(request: Request) {
     await store.getWorkspace(workspaceId);
     const sessionId = query.get("session");
     const workers = await store.listWorkers();
-    const workerNames = new Map(
-      workers.map((worker) => [
-        worker.id,
-        {
-          name: worker.name,
-          hostname: worker.report?.hostname ?? null,
-        },
-      ]),
-    );
     if (
       sessionId &&
       (await store.getSession(sessionId)).workspaceId !== workspaceId
@@ -96,25 +118,30 @@ export async function GET(request: Request) {
         { status: 404 },
       );
     }
+    const before = query.get("before");
+    if (sessionId && before) {
+      const page = await store.turnPage(
+        sessionId,
+        OLDER_TURNS,
+        requiredText(before, "Turn ID", 100),
+      );
+      return Response.json(
+        {
+          turns: await turnViews(store, page.turns, workers),
+          older: page.older,
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    const page = sessionId
+      ? await store.turnPage(sessionId, LATEST_TURNS)
+      : { turns: [], older: false };
     return Response.json(
       {
         workspaces,
         sessions: await store.listSessions(workspaceId),
-        turns: sessionId
-          ? await Promise.all(
-              (await store.listTurns(sessionId)).map(async (turn) => ({
-                ...turn,
-                worker: turn.workerId
-                  ? (workerNames.get(turn.workerId) ?? null)
-                  : null,
-                waitingReason: await store.waitingReason(turn.id),
-                publications: await store.decisionsForTurn(turn.id),
-                attachments: await store.attachmentsForTurn(turn.id),
-                delegation: await delegationTag(store, turn.id),
-                note: await noteTag(store, turn.id),
-              })),
-            )
-          : [],
+        turns: await turnViews(store, page.turns, workers),
+        older: page.older,
         schedules: sessionId ? await store.listSchedules(sessionId) : [],
         delegations: sessionId
           ? await store.delegationsForSession(sessionId)

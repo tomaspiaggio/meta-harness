@@ -363,11 +363,33 @@ export class SqliteStore implements TurnStore {
   }
   async listTurns(sessionId: string): Promise<Turn[]> {
     // Bound responses and browser memory. The full history remains on disk.
-    return (await this.db
+    return (await this.turnPage(sessionId, 50)).turns;
+  }
+  /**
+   * The latest `limit` turns, or the `limit` turns before the turn `before`,
+   * oldest first. `older` says whether earlier turns remain.
+   */
+  async turnPage(
+    sessionId: string,
+    limit: number,
+    before?: string,
+  ): Promise<{ turns: Turn[]; older: boolean }> {
+    const rows = (await this.db
       .prepare(
-        "SELECT * FROM (SELECT * FROM turns WHERE sessionId = ? ORDER BY createdAt DESC, rowid DESC LIMIT 50) ORDER BY createdAt",
+        `SELECT * FROM turns WHERE sessionId = ?${
+          before
+            ? " AND EXISTS (SELECT 1 FROM turns AS cursor WHERE cursor.id = ? AND (turns.createdAt < cursor.createdAt OR (turns.createdAt = cursor.createdAt AND turns.rowid < cursor.rowid)))"
+            : ""
+        } ORDER BY createdAt DESC, rowid DESC LIMIT ?`,
       )
-      .all(sessionId)) as unknown as Turn[];
+      .all(
+        ...(before ? [sessionId, before] : [sessionId]),
+        limit + 1,
+      )) as unknown as Turn[];
+    return {
+      turns: rows.slice(0, limit).reverse(),
+      older: rows.length > limit,
+    };
   }
   async pendingDispatch(): Promise<string[]> {
     return (
