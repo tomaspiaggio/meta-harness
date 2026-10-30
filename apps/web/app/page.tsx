@@ -98,6 +98,13 @@ async function post<T>(
   if (!response.ok) throw new Error(result.error ?? "Request failed.");
   return result;
 }
+/** A touch screen without a mouse, where Return should add a line. */
+function touchKeyboard(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia("(hover: none) and (pointer: coarse)").matches
+  );
+}
 export default function Page() {
   return (
     <Shell>
@@ -920,11 +927,14 @@ function Conversation() {
               }
             }}
             onChange={(event) => setPrompt(event.target.value)}
+            // Phone keyboards have no Shift+Return: Return adds a line there
+            // and the send button sends. Keyboards with a pointer send on Return.
             onKeyDown={(event) => {
               if (
                 event.key === "Enter" &&
                 !event.shiftKey &&
-                !event.nativeEvent.isComposing
+                !event.nativeEvent.isComposing &&
+                !touchKeyboard()
               ) {
                 event.preventDefault();
                 send();
