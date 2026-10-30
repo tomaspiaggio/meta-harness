@@ -139,6 +139,24 @@ test("a worker's question to the owner reaches the planner, and the answer stays
     assert.match(String(report?.prompt), /waiting-on-owner/);
     assert.match(String(report?.prompt), /npm org/);
 
+    // A dismissed question leaves the session and sends nothing.
+    const extra = await store.requestInput(
+      "input-2",
+      runtime.id,
+      task.id,
+      "question",
+      "Answered in chat instead",
+    );
+    await store.dismissInput(extra.id);
+    assert.deepEqual(
+      (await store.inputsForSession(runtime.id)).map((item) => item.id),
+      [input.id],
+    );
+    await assert.rejects(
+      store.answerInput(extra.id, "late"),
+      /no longer pending/,
+    );
+
     await store.answerInput(input.id, "Yes, up to $10.");
     const link = await store.delegationForTurn(`input:${input.id}`);
     assert.equal(link?.role, "reply");

@@ -15,3 +15,14 @@ export async function POST(request: Request) {
     return failure(error);
   }
 }
+export async function DELETE(request: Request) {
+  try {
+    const body = await jsonBody(request);
+    await (await getStore()).dismissInput(
+      requiredText(body.id, "Request ID", 100),
+    );
+    return Response.json({ ok: true });
+  } catch (error) {
+    return failure(error);
+  }
+}

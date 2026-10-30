@@ -977,9 +977,31 @@ function Conversation() {
                         required
                         className="mb-2 w-full rounded border bg-background p-2 text-sm"
                       />
-                      <Button size="sm" disabled={busy}>
-                        Send answer
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button size="sm" disabled={busy}>
+                          Send answer
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          disabled={busy}
+                          title="Hide this question without sending anything"
+                          onClick={() =>
+                            void perform(async () => {
+                              await post(
+                                "inputs",
+                                { id: request.id },
+                                "DELETE",
+                              );
+                              await refresh.current();
+                              refreshTree();
+                            })
+                          }
+                        >
+                          Dismiss
+                        </Button>
+                      </div>
                     </form>
                   )}
                 </div>
