@@ -495,6 +495,10 @@ Control updates one machine at a time and refuses when no other online machine
 could run agents meanwhile, so an update never leaves you without one. Set
 `HARNESS_DATA_DIR`, `HARNESS_WORKER_DATA_DIR` and `HARNESS_WORKER_TOKEN_FILE`
 explicitly: releases change folders, the worker's identity and cache must not.
+An update waits for the worker's turns, not for jobs an agent left running in
+the background. Keep those alive across restarts with `KillMode=process`
+(systemd) or `AbandonProcessGroup` (launchd); by default both kill everything
+the worker started.
 
 ### The server updates itself
 
