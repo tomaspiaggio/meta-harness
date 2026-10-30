@@ -54,20 +54,46 @@ export function visibleUserAgent(value: string): string {
   return value.replace(/HeadlessChrome\//, "Chrome/");
 }
 
+/** One session's page in a shared browser, and the live views watching it. */
+type Tab = {
+  page: Page;
+  lastUsed: number;
+  listeners: Set<(page: Page) => void>;
+};
+/** Commands and views without a session share this tab. */
+const DEFAULT_TAB = "";
+/** Each tab costs memory; the oldest idle one closes past this many. */
+const MAX_TABS = 6;
+/** A tab nobody used for this long closes, unless it shows a sign-in. */
+const TAB_IDLE_MS = 10 * 60000;
 type Context = {
   attached: boolean;
   context: BrowserContext;
-  page: Page;
+  /**
+   * Pages by session: sessions share the profile (logins, cookies) but not a
+   * page, so one session's navigation never moves another's. An attached
+   * personal Chrome has only the one tab the harness owns.
+   */
+  tabs: Map<string, Tab>;
+  /** The tab that acted last; a popup without an opener belongs to it. */
+  current: string;
+  closed?: boolean;
+  /** Pages the harness opened itself, which aren't popups. */
+  opening?: Set<Page>;
   lastUsed: number;
   generation: number;
   peer?: ReturnType<typeof browserPeer>;
   userKey?: string;
   display?: Awaited<ReturnType<typeof browserDisplay>>;
   downloads?: BrowserDownloads;
-  listeners: Set<(page: Page) => void>;
   notices?: NativeNotice[];
   noticeListeners?: Set<(value: NativeNotice) => void>;
 };
+/** Points a tab at another page and tells its live views. */
+function show(tab: Tab, page: Page) {
+  tab.page = page;
+  for (const listener of tab.listeners) listener(page);
+}
 function privateAddress(address: string): boolean {
   if (address.includes(":"))
     return (
@@ -224,13 +250,19 @@ export class BrowserHost {
       const generation = allowed.get(id);
       // A browser waiting on a sign-in page keeps its progress (typed email,
       // challenge step) long enough for the owner to come back to it.
-      const idle = browserLoginState(context.page.url())
+      const signingIn = [...context.tabs.values()].some(
+        (tab) => !tab.page.isClosed() && browserLoginState(tab.page.url()),
+      );
+      const idle = signingIn
         ? Math.max(this.options.idleMs ?? 120000, 15 * 60000)
         : (this.options.idleMs ?? 120000);
       if (generation === undefined || Date.now() - context.lastUsed > idle) {
         await this.release(context);
         this.contexts.delete(id);
-      } else context.generation = generation;
+      } else {
+        context.generation = generation;
+        await this.closeIdleTabs(context);
+      }
     }
     // An approved personal Chrome transport survives idle tab cleanup.
     // No agent or additional browser process is kept alive.
@@ -258,7 +290,11 @@ export class BrowserHost {
   }
   private async release(context: Context) {
     // Never close a user's default browser context. We own only this tab.
-    if (context.attached) await context.page.close().catch(() => {});
+    if (context.attached)
+      await context.tabs
+        .get(DEFAULT_TAB)
+        ?.page.close()
+        .catch(() => {});
     else {
       try {
         await context.context.close();
@@ -343,10 +379,12 @@ export class BrowserHost {
       const result: Context = {
         attached: true,
         context,
-        page,
+        tabs: new Map([
+          [DEFAULT_TAB, { page, lastUsed: Date.now(), listeners: new Set() }],
+        ]),
+        current: DEFAULT_TAB,
         lastUsed: Date.now(),
         generation: identity.generation,
-        listeners: new Set(),
       };
       this.contexts.set(identity.id, result);
       return result;
@@ -395,8 +433,11 @@ export class BrowserHost {
     const existing = this.contexts.get(identity.id);
     if (
       existing &&
-      !existing.page.isClosed() &&
-      (!existing.attached || this.attachedBrowser?.isConnected())
+      !existing.closed &&
+      (existing.attached
+        ? this.attachedBrowser?.isConnected() &&
+          !existing.tabs.get(DEFAULT_TAB)?.page.isClosed()
+        : true)
     ) {
       existing.generation = identity.generation;
       existing.lastUsed = Date.now();
@@ -517,31 +558,43 @@ export class BrowserHost {
       };
       context.pages().forEach(watch);
       context.on("page", watch);
-      const page = context.pages()[0] ?? (await context.newPage());
       const result: Context = {
         attached: false,
         display,
         downloads,
         context,
-        page,
+        tabs: new Map(),
+        current: DEFAULT_TAB,
         lastUsed: Date.now(),
         generation: identity.generation,
-        listeners: new Set(),
         notices,
         noticeListeners,
       };
-      // The newest open tab is the active one, as in a person's browser.
-      const activate = (next: Page) => {
-        result.page = next;
-        for (const listener of result.listeners) listener(next);
-      };
+      context.on("close", () => {
+        result.closed = true;
+      });
+      // A popup (sign-in, OAuth, a link to a new window) takes over the tab
+      // that opened it, as the newest window does in a person's browser, and
+      // hands it back when it closes. Pages the harness opens have no opener.
+      const opening = new Set<Page>();
+      result.opening = opening;
       context.on("page", (opened) => {
-        activate(opened);
-        opened.on("close", () => {
-          const remaining = context.pages().filter((item) => !item.isClosed());
-          const last = remaining.at(-1);
-          if (result.page === opened && last) activate(last);
-        });
+        if (opening.has(opened)) return;
+        void opened
+          .opener()
+          .catch(() => null)
+          .then((opener) => {
+            const owner =
+              [...result.tabs.values()].find((tab) => tab.page === opener) ??
+              result.tabs.get(result.current);
+            if (!owner || opening.has(opened)) return;
+            const previous = owner.page;
+            show(owner, opened);
+            opened.on("close", () => {
+              if (owner.page === opened && !previous.isClosed())
+                show(owner, previous);
+            });
+          });
       });
       this.contexts.set(identity.id, result);
       return result;
@@ -549,6 +602,69 @@ export class BrowserHost {
       await context.close().catch(() => {});
       await display?.close();
       throw error;
+    }
+  }
+  /** A session's page, opened on first use and reopened if it was closed. */
+  private async tab(context: Context, key = DEFAULT_TAB): Promise<Tab> {
+    if (context.attached) key = DEFAULT_TAB;
+    context.current = key;
+    const existing = context.tabs.get(key);
+    if (existing && !existing.page.isClosed()) {
+      existing.lastUsed = Date.now();
+      return existing;
+    }
+    const owned = new Set([...context.tabs.values()].map((tab) => tab.page));
+    // A new profile opens with one blank page; it becomes the first tab.
+    const spare = context.context
+      .pages()
+      .find(
+        (page) =>
+          !page.isClosed() && !owned.has(page) && page.url() === "about:blank",
+      );
+    let page = spare;
+    if (!page) {
+      const open = [...context.tabs.entries()].filter(
+        ([other, tab]) => other !== key && !tab.page.isClosed(),
+      );
+      if (open.length >= MAX_TABS) {
+        const [oldest, tab] =
+          open.sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0] ?? [];
+        if (oldest !== undefined && tab) {
+          context.tabs.delete(oldest);
+          await tab.page.close().catch(() => {});
+        }
+      }
+      const created = context.context.newPage();
+      // The page event can fire before newPage resolves.
+      void created.then((value) => context.opening?.add(value)).catch(() => {});
+      page = await created;
+      context.opening?.add(page);
+    }
+    if (existing) {
+      show(existing, page);
+      existing.lastUsed = Date.now();
+      return existing;
+    }
+    const tab: Tab = { page, lastUsed: Date.now(), listeners: new Set() };
+    context.tabs.set(key, tab);
+    return tab;
+  }
+  /** Closes tabs idle for TAB_IDLE_MS, keeping sign-ins and the last tab. */
+  private async closeIdleTabs(context: Context) {
+    if (context.attached) return;
+    for (const [key, tab] of context.tabs) {
+      const open = [...context.tabs.values()].filter(
+        (item) => !item.page.isClosed(),
+      );
+      if (
+        open.length > 1 &&
+        Date.now() - tab.lastUsed > TAB_IDLE_MS &&
+        tab.listeners.size === 0 &&
+        !browserLoginState(tab.page.url())
+      ) {
+        context.tabs.delete(key);
+        await tab.page.close().catch(() => {});
+      }
     }
   }
   async liveNavigate(page: Page, url: string) {
@@ -564,6 +680,7 @@ export class BrowserHost {
       );
     const context = await this.get(assignment);
     context.lastUsed = Date.now();
+    const tab = await this.tab(context, assignment.command.tab);
     // A profile reopened after its idle timeout starts blank. Return to the
     // page that asked for sign-in so the viewer sees the real login screen.
     const last = assignment.identity.lastUrl;
@@ -573,13 +690,13 @@ export class BrowserHost {
       last && /^https:\/\/accounts\.google\.com\//.test(last)
         ? "https://accounts.google.com/"
         : last;
-    if (context.page.url() === "about:blank" && resume)
-      await this.liveNavigate(context.page, resume).catch(() => {});
+    if (tab.page.url() === "about:blank" && resume)
+      await this.liveNavigate(tab.page, resume).catch(() => {});
     return {
-      current: () => context.page,
+      current: () => tab.page,
       onPage: (listener: (page: Page) => void) => {
-        context.listeners.add(listener);
-        return () => context.listeners.delete(listener);
+        tab.listeners.add(listener);
+        return () => tab.listeners.delete(listener);
       },
       onNotice: (listener: (value: NativeNotice) => void) => {
         context.noticeListeners?.add(listener);
@@ -588,6 +705,8 @@ export class BrowserHost {
       downloads: context.downloads,
       touch: () => {
         context.lastUsed = Date.now();
+        tab.lastUsed = Date.now();
+        context.current = assignment.command.tab ?? DEFAULT_TAB;
       },
     };
   }
@@ -596,8 +715,10 @@ export class BrowserHost {
   ): Promise<{ result: Record<string, unknown>; stateCipher?: string }> {
     const { command, identity } = assignment;
     let context: Context;
+    let page: Page;
     try {
       context = await this.get(assignment);
+      page = (await this.tab(context, command.tab)).page;
     } catch (error) {
       throw new BrowserActionNotStarted(
         error instanceof Error
@@ -606,7 +727,6 @@ export class BrowserHost {
       );
     }
     const args = JSON.parse(command.arguments) as Record<string, unknown>;
-    const page = context.page;
     const actionStarted = Date.now();
     context.lastUsed = Date.now();
     if (command.action === "manual") {

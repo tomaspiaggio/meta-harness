@@ -211,6 +211,7 @@ export function BrowserPanel({
       target.protocol = location.protocol === "https:" ? "wss:" : "ws:";
       target.searchParams.set("browser", data.browser.id);
       target.searchParams.set("key", publicKey);
+      target.searchParams.set("session", sessionId);
       const ws = new WebSocket(target);
       socket.current = ws;
       setFields(null);

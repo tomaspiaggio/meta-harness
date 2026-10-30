@@ -29,6 +29,11 @@ export interface BrowserCommand {
   error: string | null;
   createdAt: number;
   completedAt: number | null;
+  /**
+   * The session whose tab runs this command, set by control when it hands the
+   * command to a host; it isn't stored. Without one, the shared default tab.
+   */
+  tab?: string;
 }
 export interface BrowserAssignment {
   command: BrowserCommand;
