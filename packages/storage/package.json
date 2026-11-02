@@ -10,7 +10,8 @@
     "./database": "./src/database.ts",
     "./objects": "./src/objects.ts",
     "./google": "./src/google.ts",
-    "./mcp": "./src/mcp.ts"
+    "./mcp": "./src/mcp.ts",
+    "./extensions": "./src/extensions.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

@@ -207,6 +207,16 @@ Calls run on demand in the control process; native Claude/Codex loops and worker
 receive only the existing scoped harness gateway. No extra daemon starts.
 See [supported MCP transport, authentication and fixture verification](docs/mcp-connections-plan.md#shipped-http-slice-2026-10-23).
 
+## Extensions
+
+Extensions watch something outside (an inbox, a feed, a webhook) without an
+agent and send what is new to the conversations subscribed to them. Each is a
+manifest plus one TypeScript module, kept in its own repository and installed
+from **Extensions** by URL or by pasting the files; agents can propose them
+with `extension_propose`. Nothing runs until the owner approves a revision.
+Scripts run on any worker that has [Deno](https://deno.com), in a sandbox that
+reaches only the hosts the manifest lists. See [the extension contract](docs/extensions.md).
+
 ## Persistence and recovery
 
 Without `DATABASE_URL`, the launcher puts application state in `.data/harness.sqlite` and Workflow state

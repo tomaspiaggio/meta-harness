@@ -47,6 +47,7 @@ import {
 import { materializeAttachments } from "./attachments";
 import { browserWorker, createBrowserHost } from "./browser";
 import { WorkerClient } from "./client";
+import { denoBinary, extensionLane } from "./extensions";
 import { workerIdentity } from "./identity";
 import { isolatedAgents, prepareIdentity } from "./isolation";
 import {
@@ -147,6 +148,8 @@ const releaseName = process.env.HARNESS_RELEASE;
 let updating: WorkerReport["update"];
 let restarting = false;
 let running = 0;
+// Extension scripts run in a sandbox when Deno is installed here.
+const deno = process.env.HARNESS_EXTENSIONS === "0" ? null : denoBinary();
 // Claims posted but not yet started; an idle check must count them.
 let claiming = 0;
 // A queued update stops taking new work after this long without an idle moment.
@@ -201,7 +204,10 @@ function report(): WorkerReport {
       process.env.HARNESS_CLAUDE_RUNTIME === "sdk"
         ? ["demo", "claude"]
         : ["demo"],
-    labels: (process.env.HARNESS_WORKER_LABELS ?? process.arch).split(","),
+    labels: [
+      ...(process.env.HARNESS_WORKER_LABELS ?? process.arch).split(","),
+      ...(deno ? ["deno"] : []),
+    ],
     maxAgents: concurrency,
     // Half the machine's memory by default; free memory is checked separately.
     memoryBudgetMiB: setting(
@@ -657,6 +663,22 @@ const reportingTimer = setInterval(() => {
 try {
   await Promise.all([
     ...Array.from({ length: concurrency }, lane),
+    ...(deno
+      ? [
+          extensionLane({
+            client,
+            deno,
+            cache,
+            signal: shutdown.signal,
+            paused,
+            busy: (delta) => {
+              running += delta;
+            },
+            pollMs: Math.max(pollMs, 2000),
+            idlePollMs,
+          }),
+        ]
+      : []),
     ...(browserHost
       ? [
           browserWorker(client, cache, shutdown.signal, browserHost),

@@ -21,6 +21,7 @@ export function publicPath(raw) {
         "/login",
         "/knowledge",
         "/schedules",
+        "/extensions",
         "/settings",
         "/manifest.webmanifest",
         "/sw.js",
@@ -39,7 +40,11 @@ export function publicPath(raw) {
       /^\/api\/integrations(?:\/mcp|\/google\/(?:status|start|callback|disconnect|binding|client))?$/.test(
         path,
       ) ||
-      /^\/api\/worker\/[a-z-]+$/.test(path)
+      /^\/api\/worker\/[a-z-]+$/.test(path) ||
+      /^\/api\/extensions(?:\/[a-z0-9][a-z0-9-]{1,49})?$/.test(path) ||
+      /^\/api\/hooks\/[a-z0-9][a-z0-9-]{1,49}\/[\w-]{1,40}\/[\w-]{1,100}$/.test(
+        path,
+      )
     );
   } catch {
     return false;
