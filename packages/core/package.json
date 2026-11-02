@@ -17,7 +17,8 @@
     "./resources": "./src/resources.ts",
     "./idempotency": "./src/idempotency.ts",
     "./models": "./src/models.ts",
-    "./integrations": "./src/integrations.ts"
+    "./integrations": "./src/integrations.ts",
+    "./extensions": "./src/extensions.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

@@ -345,6 +345,69 @@ const tools = [
     },
   },
   {
+    name: "extension_list",
+    description:
+      "List the owner's extensions: small approved scripts that watch something outside (an inbox, a feed, a webhook) without an agent and send new events to the sessions subscribed to them as a message. Shows each one's triggers, whether it is on, whether this session is subscribed, and any proposal waiting for the owner.",
+    inputSchema: { ...object, properties: {} },
+  },
+  {
+    name: "extension_subscribe",
+    description:
+      "Subscribe this session to an approved extension, so its new events arrive here as messages and you can act on them (for example draft a reply). Optionally only some event types. Subscribe only when this conversation is meant to handle those events; each batch starts a turn.",
+    inputSchema: {
+      ...object,
+      properties: {
+        extension_id: text,
+        types: { type: "array", items: text },
+      },
+      required: ["extension_id"],
+    },
+  },
+  {
+    name: "extension_unsubscribe",
+    description: "Stop an extension's events from arriving in this session.",
+    inputSchema: {
+      ...object,
+      properties: { extension_id: text },
+      required: ["extension_id"],
+    },
+  },
+  {
+    name: "extension_runs",
+    description:
+      "Recent runs of an extension with their status, number of new events, logs and errors, to check or debug it.",
+    inputSchema: {
+      ...object,
+      properties: { extension_id: text },
+      required: ["extension_id"],
+    },
+  },
+  {
+    name: "extension_run",
+    description:
+      "Run an approved, switched-on extension's trigger now instead of waiting for its timer, for example to test it after the owner approved a change. Then check extension_runs; the run takes a few seconds.",
+    inputSchema: {
+      ...object,
+      properties: { extension_id: text, trigger: text },
+      required: ["extension_id", "trigger"],
+    },
+  },
+  {
+    name: "extension_propose",
+    description: `Propose a new extension, or a new revision of one, for the owner to review. Nothing runs until they approve it in Extensions, so tell them what it does and why. Use it to watch something without spending agent turns on polling: the script runs with no AI and only messages subscribed sessions when it finds something new.
+manifest: {id (lowercase-dashes), name, description, version, runtime: "deno", permissions: {net: ["exact.host.name", …]} (the only hosts it may reach; no disk, no environment), timeoutSeconds (≤300, default 60), config: {properties: {name: {type: string|number|integer|boolean, title, description?, secret?: true, enum?, default?}}, required: [names]}, triggers: [{name, type: "cron", cron: "*/5 * * * *", timezone?} | {name, type: "webhook"}]}.
+code: one TypeScript module for Deno with a default export: export default async function run(ctx) { … }. ctx.config has the settings (secrets included); ctx.trigger is {name, type}; ctx.request is {method, query, headers, body} for a webhook; ctx.state.get/set/delete keep small JSON (≤256 KB, e.g. a cursor) between runs; ctx.emit({key, title, text?, url?, type?, data?}) reports an event (a key seen before is dropped, so use the item's own ID); ctx.log(...) and console go to the run's log; ctx.signal aborts at the timeout. Use fetch for HTTP. A run that throws saves no state and sends no events. Keep it small and dependency-free when possible; pin versions of any npm: or jsr: imports.`,
+    inputSchema: {
+      ...object,
+      properties: {
+        manifest: { type: "object" },
+        code: text,
+        note: text,
+      },
+      required: ["manifest", "code", "note"],
+    },
+  },
+  {
     name: "request_input",
     description:
       "Persist a question requiring the user. Then end the turn; do not keep an agent process waiting. The answer will continue the same session.",
@@ -525,6 +588,100 @@ export async function POST(request: Request) {
           args.revision,
           args.action,
         );
+      } else if (parameters?.name === "extension_list") {
+        const subscribed = new Set(
+          (await store.extensions.subscriptions({ sessionId: session.id })).map(
+            (subscription) => subscription.extensionId,
+          ),
+        );
+        result = (await store.extensions.list()).map((extension) => ({
+          id: extension.id,
+          name: extension.manifest?.name ?? extension.proposal?.manifest.name,
+          description:
+            extension.manifest?.description ??
+            extension.proposal?.manifest.description,
+          approved_revision: extension.activeRevision,
+          on: extension.enabled,
+          triggers: extension.manifest?.triggers ?? [],
+          missing_settings: extension.missing,
+          subscribed: subscribed.has(extension.id),
+          proposal: extension.proposal
+            ? {
+                revision: extension.proposal.revision,
+                note: extension.proposal.note,
+              }
+            : null,
+          last_run: extension.lastRun
+            ? {
+                status: extension.lastRun.status,
+                at: new Date(extension.lastRun.createdAt).toISOString(),
+                events: extension.lastRun.events,
+                error: extension.lastRun.error,
+              }
+            : null,
+        }));
+      } else if (parameters?.name === "extension_subscribe") {
+        const extension = await store.extensions.get(
+          requiredText(args.extension_id, "Extension ID", 50),
+        );
+        if (extension.activeRevision === null)
+          throw new HarnessError(
+            "The owner has not approved this extension yet.",
+            409,
+          );
+        result = await store.extensions.subscribe({
+          extensionId: extension.id,
+          sessionId: session.id,
+          types: args.types,
+          createdBy: `session:${session.id}`,
+        });
+      } else if (parameters?.name === "extension_unsubscribe") {
+        await store.extensions.unsubscribe(
+          requiredText(args.extension_id, "Extension ID", 50),
+          session.id,
+        );
+        result = { unsubscribed: true };
+      } else if (parameters?.name === "extension_runs") {
+        result = (
+          await store.extensions.runs(
+            requiredText(args.extension_id, "Extension ID", 50),
+            10,
+          )
+        ).map((run) => ({
+          trigger: run.trigger,
+          status: run.status,
+          revision: run.revision,
+          at: new Date(run.createdAt).toISOString(),
+          events: run.events,
+          error: run.error,
+          logs: run.logs?.slice(-4000) ?? null,
+        }));
+      } else if (parameters?.name === "extension_run") {
+        const run = await store.extensions.enqueue(
+          requiredText(args.extension_id, "Extension ID", 50),
+          requiredText(args.trigger, "Trigger", 40),
+          { manual: true },
+        );
+        result = {
+          queued: run?.id ?? null,
+          note: "Queued. Check extension_runs in a few seconds.",
+        };
+      } else if (parameters?.name === "extension_propose") {
+        const revision = await store.extensions.propose({
+          manifest: args.manifest,
+          code: args.code,
+          note: requiredText(args.note, "Note", 4000),
+          proposedBy: `session:${session.id}`,
+        });
+        result = {
+          extension: revision.extensionId,
+          revision: revision.revision,
+          status: revision.status,
+          note:
+            revision.status === "approved"
+              ? "This exact code is already approved."
+              : "Waiting for the owner. Tell them to review it under Extensions; nothing runs until they approve it and fill in its settings.",
+        };
       } else if (parameters?.name === "request_input") {
         result = await store.requestInput(
           `input-${createHash("sha256")

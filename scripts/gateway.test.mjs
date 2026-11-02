@@ -26,6 +26,10 @@ test("gateway admits only the public UI/API surface, regardless of encoded inter
     "/api/integrations/google/disconnect",
     "/api/integrations/google/binding",
     "/api/auth/sign-out",
+    "/extensions",
+    "/api/extensions",
+    "/api/extensions/reddit-inbox",
+    "/api/hooks/reddit-inbox/push/abc_DEF-123",
     "/_next/static/app.js",
   ])
     assert.equal(publicPath(path), true, path);
@@ -39,6 +43,10 @@ test("gateway admits only the public UI/API surface, regardless of encoded inter
     "/api/auth/callback/github",
     "/api/integrations/google/private",
     "/api/integrations/mcp/extra",
+    "/api/extensions/reddit-inbox/extra",
+    "/api/extensions/Bad",
+    "/api/hooks/reddit-inbox/push",
+    "/api/hooks/reddit-inbox/push/token/extra",
     "/_next/%2e%2e/.well-known/workflow/v1/flow",
     "/_next/%252e%252e/.well-known/workflow/v1/flow",
     "http://attacker.invalid/api/state",

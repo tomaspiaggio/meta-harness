@@ -4,6 +4,7 @@ import { BrowserBroker } from "./browser";
 import { deliverDelegationReports } from "./delegation";
 import { cleanupDeleted } from "./deletion";
 import { flushDispatch } from "./dispatcher";
+import { dispatchExtensions } from "./extensions";
 import { dispatchOutcomes } from "./outcomes";
 import { reconcileSandboxes } from "./sandbox";
 import { dispatchSchedules } from "./schedules";
@@ -38,6 +39,7 @@ export function maintain(): Promise<void> {
       dispatchOutcomes,
       deliverDelegationReports,
       dispatchSchedules,
+      dispatchExtensions,
       reconcileSandboxes,
       generateTitles,
       deliverTelegramInbox,

@@ -8,57 +8,58 @@ datasource db {
 }
 
 model Workspaces {
- integrationBindings IntegrationBindings[]
-  id                              String              @id
+  integrationBindings             IntegrationBindings[]
+  id                              String                @id
   name                            String
   instructions                    String
   folder                          String?
   sortOrder                       Int?
-  sessions_workspaceId            Sessions[]          @relation("sessions_workspaceId")
-  tasks_workspaceId               Tasks[]             @relation("tasks_workspaceId")
-  browser_identities_workspaceId  BrowserIdentities[] @relation("browser_identities_workspaceId")
-  workspace_resources_workspaceId WorkspaceResources? @relation("workspace_resources_workspaceId")
+  sessions_workspaceId            Sessions[]            @relation("sessions_workspaceId")
+  tasks_workspaceId               Tasks[]               @relation("tasks_workspaceId")
+  browser_identities_workspaceId  BrowserIdentities[]   @relation("browser_identities_workspaceId")
+  workspace_resources_workspaceId WorkspaceResources?   @relation("workspace_resources_workspaceId")
 
   @@map("workspaces")
 }
 
 model Sessions {
-  model String?
-  id                            String               @id
-  workspaceId                   String
-  title                         String
-  provider                      String
-  nativeId                      String?
-  createdAt                     BigInt
-  titleSource                   String               @default("prompt")
-  readThroughSequence           BigInt               @default(0)
-  ownerWorkerId                 String?
-  requiredLabels                String?
-  sandboxed                     Int                  @default(0)
-  checkpointId                  String?
-  nativeRevision                Int                  @default(0)
-  role                          String?
-  related_workspaceId           Workspaces           @relation("sessions_workspaceId", fields: [workspaceId], references: [id], onDelete: Restrict)
-  turns_sessionId               Turns[]              @relation("turns_sessionId")
-  session_attention_sessionId   SessionAttention[]   @relation("session_attention_sessionId")
-  tasks_sessionId               Tasks?               @relation("tasks_sessionId")
-  checkpoints_sessionId         Checkpoints[]        @relation("checkpoints_sessionId")
-  native_entries_sessionId      NativeEntries[]      @relation("native_entries_sessionId")
-  native_writes_sessionId       NativeWrites[]       @relation("native_writes_sessionId")
-  decision_history_sessionId    DecisionHistory[]    @relation("decision_history_sessionId")
-  schedules_sessionId           Schedules[]          @relation("schedules_sessionId")
-  attachments_sessionId         Attachments[]        @relation("attachments_sessionId")
-  channel_bindings_sessionId    ChannelBindings?     @relation("channel_bindings_sessionId")
-  notification_outbox_sessionId NotificationOutbox[] @relation("notification_outbox_sessionId")
-  input_requests_sessionId      InputRequests[]      @relation("input_requests_sessionId")
-  title_jobs_sessionId          TitleJobs?           @relation("title_jobs_sessionId")
-  telegram_updates_sessionId    TelegramUpdates[]    @relation("telegram_updates_sessionId")
+  model                             String?
+  id                                String                   @id
+  workspaceId                       String
+  title                             String
+  provider                          String
+  nativeId                          String?
+  createdAt                         BigInt
+  titleSource                       String                   @default("prompt")
+  readThroughSequence               BigInt                   @default(0)
+  ownerWorkerId                     String?
+  requiredLabels                    String?
+  sandboxed                         Int                      @default(0)
+  checkpointId                      String?
+  nativeRevision                    Int                      @default(0)
+  role                              String?
+  related_workspaceId               Workspaces               @relation("sessions_workspaceId", fields: [workspaceId], references: [id], onDelete: Restrict)
+  turns_sessionId                   Turns[]                  @relation("turns_sessionId")
+  session_attention_sessionId       SessionAttention[]       @relation("session_attention_sessionId")
+  tasks_sessionId                   Tasks?                   @relation("tasks_sessionId")
+  checkpoints_sessionId             Checkpoints[]            @relation("checkpoints_sessionId")
+  native_entries_sessionId          NativeEntries[]          @relation("native_entries_sessionId")
+  native_writes_sessionId           NativeWrites[]           @relation("native_writes_sessionId")
+  decision_history_sessionId        DecisionHistory[]        @relation("decision_history_sessionId")
+  schedules_sessionId               Schedules[]              @relation("schedules_sessionId")
+  extension_subscriptions_sessionId ExtensionSubscriptions[] @relation("extension_subscriptions_sessionId")
+  attachments_sessionId             Attachments[]            @relation("attachments_sessionId")
+  channel_bindings_sessionId        ChannelBindings?         @relation("channel_bindings_sessionId")
+  notification_outbox_sessionId     NotificationOutbox[]     @relation("notification_outbox_sessionId")
+  input_requests_sessionId          InputRequests[]          @relation("input_requests_sessionId")
+  title_jobs_sessionId              TitleJobs?               @relation("title_jobs_sessionId")
+  telegram_updates_sessionId        TelegramUpdates[]        @relation("telegram_updates_sessionId")
 
   @@map("sessions")
 }
 
 model Turns {
-  model String?
+  model                       String?
   worker_grants               WorkerGrants[]        @relation("worker_grants_turn")
   workflow_waiters            WorkflowWaiters[]     @relation("workflow_waiters_turn")
   id                          String                @id
@@ -109,7 +110,7 @@ model SessionAttention {
 }
 
 model Workers {
-  cleanups WorkerCleanup[]
+  cleanups                    WorkerCleanup[]
   worker_grant                WorkerGrants?       @relation("worker_grants_worker")
   browser_polls               BrowserPolls[]      @relation("browser_polls_worker")
   id                          String              @id
@@ -219,16 +220,16 @@ model ProviderCooldowns {
 }
 
 model DecisionHistory {
-  sequence            BigInt     @id @default(autoincrement())
-  key                 String
-  content             String?
-  revision            Int
-  workspaceId         String
-  sessionId           String?
-  turnId              String?
-  updatedAt           BigInt
-  related_turnId      Turns?     @relation("decision_history_turnId", fields: [turnId], references: [id], onDelete: Restrict)
-  related_sessionId   Sessions?  @relation("decision_history_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+  sequence          BigInt    @id @default(autoincrement())
+  key               String
+  content           String?
+  revision          Int
+  workspaceId       String
+  sessionId         String?
+  turnId            String?
+  updatedAt         BigInt
+  related_turnId    Turns?    @relation("decision_history_turnId", fields: [turnId], references: [id], onDelete: Restrict)
+  related_sessionId Sessions? @relation("decision_history_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
 
   @@unique([key, revision])
   @@map("decision_history")
@@ -689,108 +690,248 @@ model ChatStateQueues {
 }
 
 model HarnessSettings {
-  key String @id
+  key   String @id
   value String
+
   @@map("harness_settings")
 }
+
 model DeletedResources {
-  kind String
-  id String
+  kind      String
+  id        String
   createdAt BigInt
-  @@id([kind,id])
+
+  @@id([kind, id])
   @@map("deleted_resources")
 }
+
 model WorkerCleanup {
-  workerId String
-  kind String
+  workerId   String
+  kind       String
   resourceId String
-  worker Workers @relation(fields:[workerId],references:[id],onDelete:Restrict)
-  @@id([workerId,kind,resourceId])
+  worker     Workers @relation(fields: [workerId], references: [id], onDelete: Restrict)
+
+  @@id([workerId, kind, resourceId])
   @@map("worker_cleanup")
 }
+
 model CleanupJobs {
-  id String @id
-  kind String
-  payload String
-  nextAt BigInt
+  id         String  @id
+  kind       String
+  payload    String
+  nextAt     BigInt
   leaseUntil BigInt?
-  error String?
+  error      String?
+
   @@map("cleanup_jobs")
 }
 
 model IntegrationDefinitions {
- id String @id
- revision String
- record String
- connections IntegrationConnections[]
- @@map("integration_definitions")
+  id          String                   @id
+  revision    String
+  record      String
+  connections IntegrationConnections[]
+
+  @@map("integration_definitions")
 }
+
 model IntegrationConnections {
- mcpDiscovery McpDiscoverySnapshots?
- id String @id
- googleAuthorization GoogleAccountAuthorizations?
- googleOAuthStates GoogleOAuthStates[]
- integrationId String
- revision String
- record String
- definition IntegrationDefinitions @relation(fields:[integrationId],references:[id],onDelete:Restrict)
- bindings IntegrationBindings[]
- @@map("integration_connections")
+  mcpDiscovery        McpDiscoverySnapshots?
+  id                  String                       @id
+  googleAuthorization GoogleAccountAuthorizations?
+  googleOAuthStates   GoogleOAuthStates[]
+  integrationId       String
+  revision            String
+  record              String
+  definition          IntegrationDefinitions       @relation(fields: [integrationId], references: [id], onDelete: Restrict)
+  bindings            IntegrationBindings[]
+
+  @@map("integration_connections")
 }
+
 model IntegrationBindings {
- workspaceId String
- connectionId String
- revision String
- record String
- connection IntegrationConnections @relation(fields:[connectionId],references:[id],onDelete:Restrict)
- workspace Workspaces @relation(fields:[workspaceId],references:[id],onDelete:Restrict)
- @@id([workspaceId,connectionId])
- @@map("integration_bindings")
+  workspaceId  String
+  connectionId String
+  revision     String
+  record       String
+  connection   IntegrationConnections @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  workspace    Workspaces             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@id([workspaceId, connectionId])
+  @@map("integration_bindings")
 }
 
 model McpDiscoverySnapshots {
- connectionId String @id
- revision String?
- descriptors String?
- status String
- error String?
- testedAt BigInt
- connection IntegrationConnections @relation(fields:[connectionId],references:[id],onDelete:Cascade)
- @@map("mcp_discovery_snapshots")
+  connectionId String                 @id
+  revision     String?
+  descriptors  String?
+  status       String
+  error        String?
+  testedAt     BigInt
+  connection   IntegrationConnections @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@map("mcp_discovery_snapshots")
 }
 
 model GoogleAccountAuthorizations {
- refreshExpiresAt BigInt?
- connectionId String @id
- subject String @default("")
- email String @default("")
- scopes String @default("[]")
- status String @default("disconnected")
- revision Int @default(0)
- lockOwner String?
- lockUntil BigInt @default(0)
- connection IntegrationConnections @relation(fields:[connectionId],references:[id],onDelete:Cascade)
- credential GoogleCredentials?
- @@map("google_account_authorizations")
+  refreshExpiresAt BigInt?
+  connectionId     String                 @id
+  subject          String                 @default("")
+  email            String                 @default("")
+  scopes           String                 @default("[]")
+  status           String                 @default("disconnected")
+  revision         Int                    @default(0)
+  lockOwner        String?
+  lockUntil        BigInt                 @default(0)
+  connection       IntegrationConnections @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  credential       GoogleCredentials?
+
+  @@map("google_account_authorizations")
 }
+
 model GoogleCredentials {
- connectionId String @id
- cipher String
- revision Int
- authorization GoogleAccountAuthorizations @relation(fields:[connectionId],references:[connectionId],onDelete:Cascade)
- @@map("google_credentials")
+  connectionId  String                      @id
+  cipher        String
+  revision      Int
+  authorization GoogleAccountAuthorizations @relation(fields: [connectionId], references: [connectionId], onDelete: Cascade)
+
+  @@map("google_credentials")
 }
+
 model GoogleOAuthStates {
- stateHash String @id
- ownerHash String
- connectionId String
- connectionRevision String
- verifierCipher String
- nonce String
- scopes String
- redirectUri String
- expiresAt BigInt
- connection IntegrationConnections @relation(fields:[connectionId],references:[id],onDelete:Cascade)
- @@index([expiresAt],map:"google_oauth_expiry")
- @@map("google_oauth_states")
+  stateHash          String                 @id
+  ownerHash          String
+  connectionId       String
+  connectionRevision String
+  verifierCipher     String
+  nonce              String
+  scopes             String
+  redirectUri        String
+  expiresAt          BigInt
+  connection         IntegrationConnections @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt], map: "google_oauth_expiry")
+  @@map("google_oauth_states")
+}
+
+model Extensions {
+  id                                  String                   @id
+  activeRevision                      Int?
+  enabled                             Int                      @default(0)
+  config                              String                   @default("{}")
+  secrets                             String?
+  requiredLabels                      String?
+  webhookToken                        String
+  createdAt                           BigInt
+  updatedAt                           BigInt
+  extension_revisions_extensionId     ExtensionRevisions[]     @relation("extension_revisions_extensionId")
+  extension_timers_extensionId        ExtensionTimers[]        @relation("extension_timers_extensionId")
+  extension_runs_extensionId          ExtensionRuns[]          @relation("extension_runs_extensionId")
+  extension_state_extensionId         ExtensionState[]         @relation("extension_state_extensionId")
+  extension_events_extensionId        ExtensionEvents[]        @relation("extension_events_extensionId")
+  extension_subscriptions_extensionId ExtensionSubscriptions[] @relation("extension_subscriptions_extensionId")
+
+  @@map("extensions")
+}
+
+model ExtensionRevisions {
+  extensionId         String
+  revision            Int
+  manifest            String
+  code                String
+  hash                String
+  status              String
+  proposedBy          String
+  note                String?
+  createdAt           BigInt
+  decidedAt           BigInt?
+  related_extensionId Extensions @relation("extension_revisions_extensionId", fields: [extensionId], references: [id], onDelete: Restrict)
+
+  @@id([extensionId, revision])
+  @@map("extension_revisions")
+}
+
+model ExtensionTimers {
+  extensionId         String
+  trigger             String
+  revision            Int
+  nextAt              BigInt
+  related_extensionId Extensions @relation("extension_timers_extensionId", fields: [extensionId], references: [id], onDelete: Restrict)
+
+  @@id([extensionId, trigger])
+  @@map("extension_timers")
+}
+
+model ExtensionRuns {
+  id                  String     @id
+  extensionId         String
+  revision            Int
+  trigger             String
+  input               String?
+  status              String
+  workerId            String?
+  leaseUntil          BigInt?
+  events              Int        @default(0)
+  logs                String?
+  error               String?
+  createdAt           BigInt
+  startedAt           BigInt?
+  finishedAt          BigInt?
+  related_extensionId Extensions @relation("extension_runs_extensionId", fields: [extensionId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt], map: "extension_runs_status")
+  @@index([extensionId, createdAt], map: "extension_runs_extension")
+  @@map("extension_runs")
+}
+
+model ExtensionState {
+  extensionId         String
+  key                 String
+  value               String
+  related_extensionId Extensions @relation("extension_state_extensionId", fields: [extensionId], references: [id], onDelete: Restrict)
+
+  @@id([extensionId, key])
+  @@map("extension_state")
+}
+
+model ExtensionEvents {
+  id                  String     @id
+  extensionId         String
+  key                 String
+  runId               String
+  type                String
+  title               String
+  text                String
+  url                 String?
+  data                String?
+  createdAt           BigInt
+  related_extensionId Extensions @relation("extension_events_extensionId", fields: [extensionId], references: [id], onDelete: Restrict)
+
+  @@unique([extensionId, key])
+  @@index([extensionId, createdAt], map: "extension_events_recent")
+  @@map("extension_events")
+}
+
+model ExtensionSubscriptions {
+  id                  String     @id
+  extensionId         String
+  sessionId           String
+  types               String?
+  createdBy           String
+  createdAt           BigInt
+  related_extensionId Extensions @relation("extension_subscriptions_extensionId", fields: [extensionId], references: [id], onDelete: Restrict)
+  related_sessionId   Sessions   @relation("extension_subscriptions_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@unique([extensionId, sessionId])
+  @@map("extension_subscriptions")
+}
+
+model ExtensionDeliveries {
+  turnId      String @id
+  extensionId String
+  runId       String
+  events      Int
+  createdAt   BigInt
+
+  @@map("extension_deliveries")
 }

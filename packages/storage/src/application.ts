@@ -52,6 +52,7 @@ import {
 import { ControlStore } from "./control";
 import { connectPostgres, LocalDatabase, type SqlDatabase } from "./database";
 import { deleteResource } from "./deletion";
+import { ExtensionStore } from "./extensions";
 import { featureSchema } from "./features-schema";
 
 export interface ChannelBinding {
@@ -214,6 +215,16 @@ const delegationTitle = (message: string) => {
 export class HarnessStore extends ControlStore {
   databaseConnection(): SqlDatabase {
     return this.db;
+  }
+  private extensionStore?: ExtensionStore;
+  /** Owner-approved scripts, their runs and the events they deliver. */
+  get extensions(): ExtensionStore {
+    this.extensionStore ??= new ExtensionStore(
+      this.db,
+      (id, sessionId, prompt) => this.createTurn(id, sessionId, prompt),
+      (id) => this.getSession(id),
+    );
+    return this.extensionStore;
   }
   constructor(database?: string | SqlDatabase) {
     super(database);

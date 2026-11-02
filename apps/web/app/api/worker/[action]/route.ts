@@ -4,6 +4,7 @@ import { validateSnapshot } from "@harness/checkpoints";
 import { MAX_PAYLOAD_BYTES, payloadHash } from "@harness/checkpoints/transport";
 import { HarnessError, type RuntimeEvent, requiredText } from "@harness/core";
 import { MAX_ATTACHMENT_BYTES } from "@harness/core/attachments";
+import { parseExtensionRunResult } from "@harness/core/extensions";
 import { parseDecisionUpdates } from "@harness/core/knowledge";
 import type {
   NativeSessionEntry,
@@ -18,6 +19,7 @@ import {
 } from "../../../../server/agent-instructions";
 import { BrowserBroker } from "../../../../server/browser";
 import { delegationInstructions } from "../../../../server/delegation";
+import { completeExtensionRun, runConfig } from "../../../../server/extensions";
 import { mintAttemptGrant } from "../../../../server/grants";
 import { hosted, publicOrigin } from "../../../../server/hosted-auth";
 import { failure, readJson } from "../../../../server/http";
@@ -55,7 +57,9 @@ export async function POST(
         ? 6 * 1024 * 1024
         : action === "native-append"
           ? 2 * 1024 * 1024
-          : 64 * 1024,
+          : action === "extension-complete"
+            ? 4 * 1024 * 1024
+            : 64 * 1024,
     );
     if (action === "cleanup-list")
       return Response.json(await store.workerCleanup(workerId));
@@ -66,6 +70,40 @@ export async function POST(
         requiredText(body.id, "ID", 100),
       );
       return Response.json({ ok: true });
+    }
+    if (action === "extension-claim") {
+      const worker = (await store.listWorkers()).find(
+        (item) => item.id === workerId,
+      );
+      const assignment = worker ? await store.extensions.claim(worker) : null;
+      if (!assignment) return Response.json(null);
+      // Secrets are opened here and travel only to the worker running the run.
+      return Response.json({
+        assignment: { ...assignment, secrets: null },
+        config: runConfig(
+          assignment.manifest,
+          assignment.config,
+          assignment.secrets,
+        ),
+      });
+    }
+    if (action === "extension-complete") {
+      const runId = requiredText(body.runId, "Run ID", 100);
+      let result: ReturnType<typeof parseExtensionRunResult>;
+      try {
+        result = parseExtensionRunResult(body.result);
+      } catch (error) {
+        // An oversized or malformed result still ends the run, as a failure.
+        result = {
+          events: [],
+          state: { set: {}, delete: [] },
+          logs: "",
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      return Response.json(
+        await completeExtensionRun(store, workerId, runId, result),
+      );
     }
     if (action === "report") {
       const target = await store.reportWorker(

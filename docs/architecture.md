@@ -649,3 +649,12 @@ leases serialize refresh rotation without replaying HTTP within database transac
 retries. Explicit Gmail label, file, sheet range and calendar allowlists supplement
 provider scopes. See [Google operations](google-integrations.md) for the scope map,
 recovery process and real-provider deployment gates. Eve remains a reference only.
+
+## Extensions
+
+Site-specific watchers (an inbox, a feed, a webhook) are extensions, not core
+code: an owner-approved manifest plus one module, run by workers with Deno in a
+sandbox limited to the manifest's hosts. Control fires their timers in the
+existing maintenance loop, stores webhook requests as runs, deduplicates emitted
+events and delivers new ones as one turn per subscribed session. No new resident
+process is added; a run is a short-lived Deno process. See [extensions](extensions.md).

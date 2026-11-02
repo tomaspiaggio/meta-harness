@@ -86,6 +86,7 @@ const sections = [
   { href: "/tasks", label: "Tasks" },
   { href: "/knowledge", label: "Decisions" },
   { href: "/schedules", label: "Schedules" },
+  { href: "/extensions", label: "Extensions" },
   { href: "/settings", label: "Settings" },
 ];
 export function conversationHref(
