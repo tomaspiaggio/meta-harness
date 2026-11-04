@@ -424,6 +424,7 @@ export async function browserStreamWorker(
   identity: { id: string; token: string; serverUrl: string },
   host: BrowserHost,
   signal: AbortSignal,
+  heartbeatMs = 15000,
 ) {
   if (host.backend !== "managed") return;
   const url = new URL(
@@ -455,6 +456,18 @@ export async function browserStreamWorker(
     const abort = () => socket.close();
     signal.addEventListener("abort", abort, { once: true });
     socket.on("error", () => {});
+    // A connection broken by sleep or a network change may never report
+    // closing, leaving control without this worker's stream. Reconnect when a
+    // ping goes unanswered.
+    let answered = true;
+    socket.on("pong", () => {
+      answered = true;
+    });
+    const heartbeat = setInterval(() => {
+      if (!answered) return socket.terminate();
+      answered = false;
+      if (socket.readyState === WebSocket.OPEN) socket.ping();
+    }, heartbeatMs);
     socket.on("message", async (raw) => {
       let viewId: string | undefined;
       try {
@@ -524,6 +537,7 @@ export async function browserStreamWorker(
       }
     });
     await new Promise<void>((resolve) => socket.once("close", () => resolve()));
+    clearInterval(heartbeat);
     signal.removeEventListener("abort", abort);
     opening.clear();
     for (const session of sessions.values()) await session.live.close();

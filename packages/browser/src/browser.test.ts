@@ -265,7 +265,7 @@ test("real Chromium: sessions share logins but each acts in its own tab", {
     response.setHeader("Content-Type", "text/html");
     if (request.url === "/login") response.setHeader("Set-Cookie", "who=owner");
     response.end(
-      `<html><head><title>${request.url}</title></head><body><h1>${request.url} ${request.headers.cookie ?? "no cookie"}</h1><button id="pop" onclick="window.open('/popup')">Pop</button></body></html>`,
+      `<html><head><title>${request.url}</title></head><body><h1>${request.url} ${request.headers.cookie ?? "no cookie"}</h1><button id="pop" onclick="window.open('/popup')">Pop</button><button id="later" onclick="setTimeout(() => window.open('/popup', '_blank', 'noopener'), 500)">Later</button></body></html>`,
     );
   });
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
@@ -347,6 +347,49 @@ test("real Chromium: sessions share logins but each acts in its own tab", {
     await reddit.current().close();
     assert.match(reddit.current().url(), /\/login$/);
     assert.ok(seen.length >= 2);
+    // A new session's tab never takes a popup that is still blank.
+    for (let index = 0; index < 3; index++) {
+      const [, page] = await Promise.all([
+        reddit.current().evaluate(() => {
+          window.open("about:blank");
+        }),
+        host
+          .livePage(assignment(`late-${index}`, "manual"))
+          .then((live) => live.current()),
+      ]);
+      assert.notEqual(page, reddit.current());
+      assert.ok(!(await page.evaluate(() => !!window.opener)));
+      await reddit.current().close();
+    }
+    assert.match(reddit.current().url(), /\/login$/);
+    // A window opened without an opener (Reddit's and Discord's links do)
+    // still belongs to the tab that opened it, even when another session
+    // acted in between.
+    await host.execute(assignment("reddit", "click", { selector: "#later" }));
+    await read("discord");
+    for (let i = 0; i < 50 && !/popup/.test(reddit.current().url()); i++)
+      await new Promise((done) => setTimeout(done, 100));
+    assert.match(reddit.current().url(), /\/popup$/);
+    assert.match(discord.current().url(), /\/discord$/);
+    assert.match(await read("discord"), /\/discord/);
+    await reddit.current().close();
+    // A session opening its first tab while someone watches another session
+    // live gets its own page; the watched tab keeps its page.
+    for (let index = 0; index < 3; index++) {
+      const watching = setInterval(discord.touch, 1);
+      try {
+        await host.execute(
+          assignment(`fresh-${index}`, "navigate", {
+            url: `${url}/fresh-${index}`,
+          }),
+        );
+      } finally {
+        clearInterval(watching);
+      }
+      assert.match(discord.current().url(), /\/discord$/);
+      assert.match(await read(`fresh-${index}`), /\/fresh/);
+      assert.match(await read("discord"), /\/discord/);
+    }
     // Sessions beyond the limit close the least recently used tab.
     for (let index = 0; index < 8; index++)
       await host.execute(
