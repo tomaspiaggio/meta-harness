@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS schedule_occurrences (
  id TEXT PRIMARY KEY, scheduleId TEXT NOT NULL REFERENCES schedules(id), revision INTEGER NOT NULL,
  plannedAt INTEGER NOT NULL, firedAt INTEGER NOT NULL, turnId TEXT REFERENCES turns(id), outcome TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS schedule_occurrences_turn ON schedule_occurrences(turnId);
 CREATE TABLE IF NOT EXISTS attachments (
  id TEXT PRIMARY KEY, sessionId TEXT NOT NULL REFERENCES sessions(id), name TEXT NOT NULL,
  mediaType TEXT NOT NULL, size INTEGER NOT NULL, hash TEXT NOT NULL, objectKey TEXT NOT NULL, createdAt INTEGER NOT NULL

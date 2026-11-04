@@ -276,6 +276,7 @@ model ScheduleOccurrences {
   related_turnId     Turns?    @relation("schedule_occurrences_turnId", fields: [turnId], references: [id], onDelete: Restrict)
   related_scheduleId Schedules @relation("schedule_occurrences_scheduleId", fields: [scheduleId], references: [id], onDelete: Restrict)
 
+  @@index([turnId], map: "schedule_occurrences_turn")
   @@map("schedule_occurrences")
 }
 
