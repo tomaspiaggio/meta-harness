@@ -2308,6 +2308,8 @@ ${blocks.reverse().join("\n\n---\n\n")}
     labels: unknown;
     message: string;
     reason: string;
+    /** Wait for the next maintenance window to end. */
+    afterMaintenance?: boolean;
   }): Promise<Turn> {
     const labels = parseLabels(input.labels);
     const message = requiredText(input.message, "Message", 20000);
@@ -2334,6 +2336,14 @@ ${blocks.reverse().join("\n\n---\n\n")}
           `This conversation already continued itself ${chain} times in a row. Finish here and report what is left, or ask the owner with request_input.`,
           409,
         );
+      const window = input.afterMaintenance
+        ? (await this.listMaintenance())[0]
+        : undefined;
+      if (input.afterMaintenance && !window)
+        throw new HarnessError(
+          "No maintenance is scheduled; start the work now.",
+          409,
+        );
       const turn = await this.createTurn(
         input.turnId,
         caller.sessionId,
@@ -2341,9 +2351,9 @@ ${blocks.reverse().join("\n\n---\n\n")}
       );
       await this.db
         .prepare(
-          "UPDATE turns SET requiredLabels = ?, placementReason = ? WHERE id = ?",
+          "UPDATE turns SET requiredLabels = ?, placementReason = ?, notBefore = ? WHERE id = ?",
         )
-        .run(labels.join(",") || null, reason, turn.id);
+        .run(labels.join(",") || null, reason, window?.endsAt ?? null, turn.id);
       const link = await this.delegationForTurn(caller.id);
       if (link && link.role !== "report") {
         // The task's report comes from the continuation, when the work ends.

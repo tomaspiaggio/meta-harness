@@ -119,3 +119,23 @@ test("agents on a small machine are told to move heavy builds to a larger one", 
   );
   assert.equal(machineSizes("pi", unknown, now), undefined);
 });
+
+test("agents hear about maintenance only while one is planned", () => {
+  assert.doesNotMatch(build(), /maintenance/i);
+  assert.doesNotMatch(build({ maintenance: [] }), /maintenance/i);
+  const text = build({
+    maintenance: [
+      {
+        startsAt: Date.parse("2026-11-07T18:00:00Z"),
+        endsAt: Date.parse("2026-11-07T22:00:00Z"),
+        machines: [],
+        note: "memory limits and reboot",
+      },
+    ],
+  });
+  assert.match(
+    text,
+    /Scheduled maintenance: Sat, Nov 7, 10:00 AM PST to Sat, Nov 7, 02:00 PM PST on all machines \(memory limits and reboot\)/,
+  );
+  assert.match(text, /continue_on with after_maintenance: true/);
+});

@@ -24,6 +24,13 @@ const RETRY_LIMIT = 10;
 export function retryDelay(retries: number): number {
   return Math.min(60000 * 2 ** retries, 60 * 60 * 1000);
 }
+/**
+ * A step the agent held until a time (after maintenance) doesn't hold up
+ * later messages in its session; a retried turn (retries > 0) still does.
+ * Binds the current time; used on a `prior` turn.
+ */
+export const HELD =
+  "(prior.status = 'queued' AND prior.notBefore > ? AND prior.retries = 0)";
 export function dataDirectory(): string {
   // pnpm supplies the repository root to every child via scripts/dev.mjs.
   return resolve(
@@ -508,9 +515,9 @@ export class SqliteStore implements TurnStore {
       const candidate = await this.db
         .prepare(`SELECT id FROM turns WHERE status = 'queued' AND (notBefore IS NULL OR notBefore <= ?) AND NOT EXISTS (
             SELECT 1 FROM turns AS prior WHERE prior.sessionId = turns.sessionId
-            AND (prior.status = 'running' OR (prior.status IN ('pending', 'queued') AND prior.rowid < turns.rowid))
+            AND (prior.status = 'running' OR (prior.status IN ('pending', 'queued') AND prior.rowid < turns.rowid AND NOT ${HELD}))
           ) ORDER BY createdAt, rowid LIMIT 1`)
-        .get(now);
+        .get(now, now);
       if (!candidate) return null;
       const id = String(candidate.id);
       await this.db

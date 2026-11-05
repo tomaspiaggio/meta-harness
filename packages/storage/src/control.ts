@@ -4,6 +4,7 @@ import {
   HarnessError,
   type Provider,
   type RuntimeEvent,
+  requiredText,
   type Session,
   type Turn,
 } from "@harness/core";
@@ -35,11 +36,31 @@ import {
   type WorkerUpdate,
 } from "@harness/core/scheduling";
 import { connectPostgres, LocalDatabase, type SqlDatabase } from "./database";
-import { SqliteStore } from "./index";
+import { HELD, SqliteStore } from "./index";
 
 const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 const LEASE_MS = 30000;
+/** Downtime the owner planned. No listed workers means every machine. */
+export interface MaintenanceWindow {
+  id: string;
+  startsAt: number;
+  endsAt: number;
+  workers: string[];
+  note: string;
+  createdAt: number;
+}
+const MAX_MAINTENANCE_MS = 7 * 24 * 60 * 60 * 1000;
+function maintenanceWindow(row: Record<string, unknown>): MaintenanceWindow {
+  return {
+    id: String(row.id),
+    startsAt: Number(row.startsAt),
+    endsAt: Number(row.endsAt),
+    workers: JSON.parse(String(row.workers)) as string[],
+    note: String(row.note),
+    createdAt: Number(row.createdAt),
+  };
+}
 /** A running turn survives a control stall this long; workers retry within it. */
 const TURN_LEASE_MS = 180000;
 // A busy home machine keeps a conversation this long before another takes it.
@@ -96,6 +117,10 @@ export class ControlStore extends SqliteStore {
       CREATE TABLE IF NOT EXISTS native_writes (
         sessionId TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, hash TEXT NOT NULL,
         PRIMARY KEY(sessionId, id)
+      );
+      CREATE TABLE IF NOT EXISTS maintenance_windows (
+        id TEXT PRIMARY KEY, startsAt INTEGER NOT NULL, endsAt INTEGER NOT NULL,
+        workers TEXT NOT NULL DEFAULT '[]', note TEXT NOT NULL DEFAULT '', createdAt INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS provider_cooldowns (
         workerId TEXT NOT NULL REFERENCES workers(id), provider TEXT NOT NULL,
@@ -644,9 +669,12 @@ export class ControlStore extends SqliteStore {
     const preceding = await this.db
       .prepare(`SELECT 1 FROM turns AS prior JOIN turns AS current ON current.id = ?
       WHERE prior.sessionId = current.sessionId AND prior.id != current.id AND
-      (prior.status = 'running' OR (prior.status IN ('pending', 'queued') AND prior.rowid < current.rowid)) LIMIT 1`)
-      .get(turn.id);
+      (prior.status = 'running' OR (prior.status IN ('pending', 'queued') AND prior.rowid < current.rowid AND NOT ${HELD})) LIMIT 1`)
+      .get(turn.id, now);
     if (preceding) return "Waiting for the preceding message in this session";
+    const maintenance = await this.maintenanceFor(worker.id, now);
+    if (maintenance)
+      return `Paused for maintenance until ${new Date(maintenance.endsAt).toISOString()}`;
     if (task?.paused) return "Task is paused";
     if (task?.targetWorkerId && task.targetWorkerId !== worker.id)
       return "Task is assigned to another worker";
@@ -708,7 +736,9 @@ export class ControlStore extends SqliteStore {
     if ((await this.taskForSession(turn.sessionId))?.paused)
       return "Task is paused";
     if (turn.notBefore && turn.notBefore > now)
-      return `Retrying at ${new Date(turn.notBefore).toISOString()} after losing its worker`;
+      return turn.retries
+        ? `Retrying at ${new Date(turn.notBefore).toISOString()} after losing its worker`
+        : `Held until ${new Date(turn.notBefore).toISOString()}, after maintenance`;
     if (turn.status === "pending") return "Waiting for workflow dispatch";
     const workers = await this.listWorkers();
     if (!workers.length) return "No workers enrolled";
@@ -831,9 +861,9 @@ export class ControlStore extends SqliteStore {
         .prepare(`SELECT turns.* FROM turns LEFT JOIN tasks ON tasks.sessionId = turns.sessionId
         WHERE turns.status = 'queued' AND (turns.notBefore IS NULL OR turns.notBefore <= ?) AND NOT EXISTS (
           SELECT 1 FROM turns AS prior WHERE prior.sessionId = turns.sessionId
-          AND (prior.status = 'running' OR (prior.status IN ('pending', 'queued') AND prior.rowid < turns.rowid))
+          AND (prior.status = 'running' OR (prior.status IN ('pending', 'queued') AND prior.rowid < turns.rowid AND NOT ${HELD}))
         ) ORDER BY COALESCE(tasks.priority, 0) DESC, turns.createdAt, turns.rowid LIMIT 100`)
-        .all(now)) as unknown as Turn[];
+        .all(now, now)) as unknown as Turn[];
       // The owner's messages and planners go before work between sessions.
       const background = await this.backgroundTurns(
         candidates.map((turn) => turn.id),
@@ -1456,6 +1486,98 @@ export class ControlStore extends SqliteStore {
         )
         .all(sessionId)
     ).map((row) => String(row.subpath));
+  }
+  /** Maintenance windows that haven't ended, soonest first. */
+  async listMaintenance(now = Date.now()): Promise<MaintenanceWindow[]> {
+    return (
+      await this.db
+        .prepare(
+          "SELECT * FROM maintenance_windows WHERE endsAt > ? ORDER BY startsAt, id",
+        )
+        .all(now)
+    ).map(maintenanceWindow);
+  }
+  /** The window pausing this worker now, if any. */
+  async maintenanceFor(
+    workerId: string,
+    now = Date.now(),
+  ): Promise<MaintenanceWindow | null> {
+    return (
+      (await this.listMaintenance(now)).find(
+        (window) =>
+          window.startsAt <= now &&
+          (!window.workers.length || window.workers.includes(workerId)),
+      ) ?? null
+    );
+  }
+  async scheduleMaintenance(
+    input: {
+      startsAt: unknown;
+      endsAt: unknown;
+      workers?: unknown;
+      note?: unknown;
+    },
+    now = Date.now(),
+  ): Promise<MaintenanceWindow> {
+    const time = (value: unknown, name: string) => {
+      const parsed =
+        typeof value === "string" ? Date.parse(value) : Number(value);
+      if (!Number.isSafeInteger(parsed) || parsed <= 0)
+        throw new HarnessError(`${name} must be a time.`);
+      return parsed;
+    };
+    const startsAt = time(input.startsAt, "Start");
+    const endsAt = time(input.endsAt, "End");
+    if (endsAt <= startsAt || endsAt <= now)
+      throw new HarnessError(
+        "Maintenance must end after it starts, in the future.",
+      );
+    if (endsAt - startsAt > MAX_MAINTENANCE_MS)
+      throw new HarnessError("Maintenance can last at most 7 days.");
+    const known = await this.listWorkers();
+    const workers = (Array.isArray(input.workers) ? input.workers : []).map(
+      (value) => {
+        const wanted = requiredText(value, "Machine", 100);
+        const worker = known.find(
+          (item) => item.id === wanted || item.name === wanted,
+        );
+        if (!worker) throw new HarnessError(`Unknown machine ${wanted}.`);
+        return worker.id;
+      },
+    );
+    const note =
+      input.note === undefined || input.note === null
+        ? ""
+        : requiredText(input.note, "Note", 500);
+    const id = crypto.randomUUID();
+    await this.db
+      .prepare(
+        "INSERT INTO maintenance_windows(id, startsAt, endsAt, workers, note, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        id,
+        startsAt,
+        endsAt,
+        JSON.stringify([...new Set(workers)]),
+        note,
+        now,
+      );
+    return maintenanceWindow(
+      (await this.db
+        .prepare("SELECT * FROM maintenance_windows WHERE id = ?")
+        .get(id)) as Record<string, unknown>,
+    );
+  }
+  /** Cancels a window that hasn't started, or ends one that has. */
+  async endMaintenance(id: string, now = Date.now()): Promise<void> {
+    await this.db
+      .prepare("DELETE FROM maintenance_windows WHERE id = ? AND startsAt > ?")
+      .run(id, now);
+    await this.db
+      .prepare(
+        "UPDATE maintenance_windows SET endsAt = ? WHERE id = ? AND endsAt > ?",
+      )
+      .run(now, id, now);
   }
   async coolDownProvider(
     workerId: string,
