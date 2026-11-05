@@ -58,6 +58,12 @@ export interface Turn {
   requiredLabels?: string | null;
   /** Why the agent moved this step, shown to the owner. */
   placementReason?: string | null;
+  /** When the agent was given this turn; until then a lost turn can be retried. */
+  launchedAt?: number | null;
+  /** Times this turn was retried after losing its worker before launching. */
+  retries?: number;
+  /** A retried turn waits until this time. */
+  notBefore?: number | null;
   createdAt: number;
 }
 export interface ClaimedTurn {

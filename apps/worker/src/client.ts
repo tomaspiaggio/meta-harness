@@ -12,10 +12,13 @@ export interface WorkerIdentity {
   serverUrl: string;
 }
 export class WorkerClient {
-  /** `retryMs` stays below the control's 3-minute turn lease. */
+  /**
+   * `retryMs` stays below control's one-hour outage grace, so a running agent
+   * rides out a control or network outage instead of failing.
+   */
   constructor(
     private identity: WorkerIdentity,
-    private retryMs = 150000,
+    private retryMs = 55 * 60 * 1000,
   ) {
     const url = new URL(identity.serverUrl);
     if (
@@ -83,7 +86,7 @@ export class WorkerClient {
     }
     let lastError: unknown;
     // Claims are polled anyway; a running turn rides out a control stall
-    // (restart, overloaded host) within its 3-minute lease.
+    // (restart, overloaded host, lost network), retrying ever more slowly.
     const started = Date.now();
     const patience = action === "claim" ? 0 : this.retryMs;
     for (
@@ -174,7 +177,7 @@ export class WorkerClient {
         if (error instanceof HarnessError && error.status < 500) throw error;
         lastError = error;
       }
-      await delay(Math.min(250 * (attempt + 1), 5000));
+      await delay(Math.min(250 * 2 ** attempt, 60000));
     }
     throw lastError;
   }

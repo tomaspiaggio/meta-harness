@@ -14,6 +14,16 @@ import {
 } from "@harness/core";
 import { parseModel } from "@harness/core/models";
 import { LocalDatabase, type SqlDatabase } from "./database";
+/**
+ * How long a running turn whose worker went quiet stays its worker's: an
+ * outage (control or network) shorter than this doesn't end the agent's work.
+ */
+export const OUTAGE_GRACE_MS = 60 * 60 * 1000;
+/** Retries of a turn whose agent never launched wait 1, 2, 4... minutes, at most an hour. */
+const RETRY_LIMIT = 10;
+export function retryDelay(retries: number): number {
+  return Math.min(60000 * 2 ** retries, 60 * 60 * 1000);
+}
 export function dataDirectory(): string {
   // pnpm supplies the repository root to every child via scripts/dev.mjs.
   return resolve(
@@ -68,9 +78,18 @@ export class SqliteStore implements TurnStore {
         ["interruptsTurnId", "TEXT"],
         ["requiredLabels", "TEXT"],
         ["placementReason", "TEXT"],
+        ["launchedAt", "INTEGER"],
+        ["retries", "INTEGER NOT NULL DEFAULT 0"],
+        ["notBefore", "INTEGER"],
       ]) {
-        if (!turnColumns.some((column) => column.name === name))
+        if (!turnColumns.some((column) => column.name === name)) {
           raw.exec(`ALTER TABLE turns ADD COLUMN ${name} ${type}`);
+          // Turns already running may have started their agent: never rerun them.
+          if (name === "launchedAt")
+            raw.exec(
+              "UPDATE turns SET launchedAt = createdAt WHERE status = 'running'",
+            );
+        }
       }
       if (
         !raw
@@ -418,16 +437,66 @@ export class SqliteStore implements TurnStore {
       .run(id);
   }
   async recoverExpired(now: number): Promise<number> {
+    let recovered = 0;
+    // A turn whose agent never launched has no effects yet: try it again later.
+    for (const turn of (await this.db
+      .prepare(
+        "SELECT id, retries FROM turns WHERE status = 'running' AND launchedAt IS NULL AND stopRequestedAt IS NULL AND leaseUntil <= ?",
+      )
+      .all(now)) as unknown as { id: string; retries: number }[]) {
+      recovered += await this.releaseTurn(
+        turn.id,
+        now,
+        "Lost its worker before the agent started.",
+      );
+    }
     // Never rerun an interrupted agent automatically: its effects are uncertain.
-    return Number(
-      (
-        await this.db
-          .prepare(`UPDATE turns SET status = 'interrupted', leaseUntil = NULL,
-      generation = generation + 1, error = 'Worker lease expired. Inspect partial work before continuing.'
-      WHERE status = 'running' AND leaseUntil <= ?`)
-          .run(now)
-      ).changes,
+    // A quiet worker keeps its turn through an outage; stopping ends it now.
+    return (
+      recovered +
+      Number(
+        (
+          await this.db
+            .prepare(`UPDATE turns SET status = 'interrupted', leaseUntil = NULL,
+      generation = generation + 1, error = 'Lost contact with its worker for an hour. Inspect partial work before continuing.'
+      WHERE status = 'running' AND leaseUntil <= ? AND (leaseUntil <= ? OR stopRequestedAt IS NOT NULL)`)
+            .run(now, now - OUTAGE_GRACE_MS)
+        ).changes,
+      )
     );
+  }
+  /**
+   * Takes a running turn from its worker: queued again after a growing delay
+   * when its agent never launched, otherwise interrupted.
+   */
+  protected async releaseTurn(
+    id: string,
+    now: number,
+    reason: string,
+  ): Promise<number> {
+    const turn = await this.getTurn(id);
+    if (turn.status !== "running") return 0;
+    const retries = Number(turn.retries ?? 0);
+    if (!turn.launchedAt && !turn.stopRequestedAt && retries < RETRY_LIMIT) {
+      const at = now + retryDelay(retries);
+      await this.db
+        .prepare(`UPDATE turns SET status = 'queued', workerId = NULL, leaseUntil = NULL,
+        generation = generation + 1, retries = retries + 1, notBefore = ?, error = ? WHERE id = ?`)
+        .run(at, `${reason} Retrying after ${new Date(at).toISOString()}.`, id);
+      return 1;
+    }
+    await this.db
+      .prepare(`UPDATE turns SET status = 'interrupted', leaseUntil = NULL,
+      generation = generation + 1, error = ? WHERE id = ?`)
+      .run(
+        turn.stopRequestedAt
+          ? "Stopped by you while its worker was out of contact."
+          : turn.launchedAt
+            ? `${reason} Inspect partial work before continuing.`
+            : `${reason} Gave up after ${retries} retries.`,
+        id,
+      );
+    return 1;
   }
   async claim(
     workerId: string,
@@ -437,18 +506,19 @@ export class SqliteStore implements TurnStore {
     return await this.transaction(async () => {
       await this.recoverExpired(now);
       const candidate = await this.db
-        .prepare(`SELECT id FROM turns WHERE status = 'queued' AND NOT EXISTS (
+        .prepare(`SELECT id FROM turns WHERE status = 'queued' AND (notBefore IS NULL OR notBefore <= ?) AND NOT EXISTS (
             SELECT 1 FROM turns AS prior WHERE prior.sessionId = turns.sessionId
             AND (prior.status = 'running' OR (prior.status IN ('pending', 'queued') AND prior.rowid < turns.rowid))
           ) ORDER BY createdAt, rowid LIMIT 1`)
-        .get();
+        .get(now);
       if (!candidate) return null;
       const id = String(candidate.id);
       await this.db
         .prepare(
-          "UPDATE turns SET status = 'running', workerId = ?, generation = generation + 1, leaseUntil = ? WHERE id = ?",
+          // This store runs the agent as soon as it claims.
+          "UPDATE turns SET status = 'running', workerId = ?, generation = generation + 1, leaseUntil = ?, launchedAt = ? WHERE id = ?",
         )
-        .run(workerId, now + leaseMs, id);
+        .run(workerId, now + leaseMs, now, id);
       const turn = await this.getTurn(id);
       const session = await this.getSession(turn.sessionId);
       return {
@@ -471,7 +541,7 @@ export class SqliteStore implements TurnStore {
             .prepare(
               "UPDATE turns SET leaseUntil = ? WHERE id = ? AND generation = ? AND status = 'running' AND leaseUntil > ?",
             )
-            .run(now + leaseMs, id, generation, now)
+            .run(now + leaseMs, id, generation, now - OUTAGE_GRACE_MS)
         ).changes,
       ) === 1
     );
@@ -484,7 +554,7 @@ export class SqliteStore implements TurnStore {
     if (
       turn.status !== "running" ||
       turn.generation !== generation ||
-      (turn.leaseUntil ?? 0) <= Date.now()
+      (turn.leaseUntil ?? 0) <= Date.now() - OUTAGE_GRACE_MS
     ) {
       throw new HarnessError("Turn ownership expired.", 409);
     }

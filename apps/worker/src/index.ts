@@ -223,6 +223,7 @@ function report(): WorkerReport {
     loadPerCpu: loadavg()[0] / availableParallelism(),
     maxLoadPerCpu: maxLoad,
     draining: shutdown.signal.aborted || paused(),
+    runningTurns: [...runningTurns],
     ...(build ? { build } : {}),
     ...(releaseRoot ? { updatable: true } : {}),
     ...(updating ? { update: updating } : {}),
@@ -316,11 +317,13 @@ async function performUpdate(target: string) {
   }
 }
 const activeSessions = new Set<string>();
+const runningTurns = new Set<string>();
 async function run(assignment: WorkerAssignment): Promise<void> {
   const { claim, checkpoint } = assignment;
   running++;
   activeSessions.add(claim.session.id);
   const { id: turnId, generation } = claim.turn;
+  runningTurns.add(turnId);
   const controller = new AbortController();
   const stop = () => controller.abort(shutdown.signal.reason);
   shutdown.signal.addEventListener("abort", stop, { once: true });
@@ -555,6 +558,7 @@ async function run(assignment: WorkerAssignment): Promise<void> {
   } finally {
     running--;
     activeSessions.delete(claim.session.id);
+    runningTurns.delete(turnId);
     clearInterval(heartbeat);
     clearTimeout(timeout);
     shutdown.signal.removeEventListener("abort", stop);
@@ -595,6 +599,9 @@ function cleanupLocal() {
 }
 async function lane() {
   let idleDelay = pollMs;
+  // A claim whose reply was lost is asked for again under the same ID, so
+  // control hands back the turn it already gave this worker.
+  let requestId = crypto.randomUUID();
   while (!shutdown.signal.aborted) {
     if (paused()) {
       await delay(idlePollMs, undefined, { signal: shutdown.signal }).catch(
@@ -609,8 +616,9 @@ async function lane() {
       let assignment: WorkerAssignment | null;
       try {
         assignment = await client.post<WorkerAssignment | null>("claim", {
-          requestId: crypto.randomUUID(),
+          requestId,
         });
+        requestId = crypto.randomUUID();
       } finally {
         // run() counts the turn before its first await, so the update never
         // sees this claim as neither claiming nor running.

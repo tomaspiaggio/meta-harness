@@ -90,6 +90,14 @@ decision publication; it cannot retract an in-flight website request. Interrupt 
 send records the stop and follow-up together. The follow-up waits for the earlier
 execution to release ownership. No implicit native steering/resume is assumed.
 
+A running turn's lease lasts three minutes between heartbeats, but a worker out of
+contact keeps its turn for an hour: its agent keeps running, and the worker retries
+control with growing delays (up to a minute apart) until it is back. Stopping such a
+turn ends it at once. A worker that reports in without a turn it held has lost it.
+A lost turn is retried only when its agent never launched (the worker had not yet
+fetched its context), after 1, 2, 4… minutes, at most an hour apart; once launched,
+a lost turn is interrupted, never rerun, since the agent may have acted.
+
 ## Persistence and portability
 
 `SqlDatabase` is an async, bound-parameter transaction port. SQLite remains an
