@@ -68,6 +68,7 @@ export class SqliteStore implements TurnStore {
         ["interruptsTurnId", "TEXT"],
         ["requiredLabels", "TEXT"],
         ["placementReason", "TEXT"],
+        ["startedAt", "INTEGER"],
       ]) {
         if (!turnColumns.some((column) => column.name === name))
           raw.exec(`ALTER TABLE turns ADD COLUMN ${name} ${type}`);
@@ -380,7 +381,7 @@ export class SqliteStore implements TurnStore {
   ): Promise<{ turns: Turn[]; older: boolean }> {
     const rows = (await this.db
       .prepare(
-        `SELECT * FROM turns WHERE sessionId = ?${
+        `SELECT turns.*, (SELECT createdAt FROM session_attention WHERE turnId = turns.id) AS finishedAt FROM turns WHERE sessionId = ?${
           before
             ? " AND EXISTS (SELECT 1 FROM turns AS cursor WHERE cursor.id = ? AND (turns.createdAt < cursor.createdAt OR (turns.createdAt = cursor.createdAt AND turns.rowid < cursor.rowid)))"
             : ""
@@ -446,9 +447,9 @@ export class SqliteStore implements TurnStore {
       const id = String(candidate.id);
       await this.db
         .prepare(
-          "UPDATE turns SET status = 'running', workerId = ?, generation = generation + 1, leaseUntil = ? WHERE id = ?",
+          "UPDATE turns SET status = 'running', workerId = ?, generation = generation + 1, leaseUntil = ?, startedAt = ? WHERE id = ?",
         )
-        .run(workerId, now + leaseMs, id);
+        .run(workerId, now + leaseMs, now, id);
       const turn = await this.getTurn(id);
       const session = await this.getSession(turn.sessionId);
       return {

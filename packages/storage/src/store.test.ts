@@ -37,10 +37,20 @@ test("submission is idempotent and serializes queued messages per session", asyn
     );
     await store.enqueue(turn.id);
     await store.enqueue(turn.id);
-    const claim = await store.claim("worker", Date.now(), 30000);
+    const claimedAt = Date.now();
+    const claim = await store.claim("worker", claimedAt, 30000);
     assert.ok(claim);
+    assert.equal(claim.turn.startedAt, claimedAt);
     assert.equal(await store.claim("other", Date.now(), 30000), null);
     await store.finish(turn.id, claim.turn.generation, "completed");
+    const shown = (await store.turnPage(session.id, 5)).turns.find(
+      (each) => each.id === turn.id,
+    );
+    assert.equal(shown?.startedAt, claimedAt, "the page shows when it started");
+    assert.ok(
+      shown?.finishedAt && shown.finishedAt >= claimedAt,
+      "and when it finished",
+    );
     await store.enqueue(turn.id);
     assert.equal(
       (await store.getTurn(turn.id)).status,

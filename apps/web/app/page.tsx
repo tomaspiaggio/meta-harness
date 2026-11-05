@@ -786,6 +786,7 @@ function Conversation() {
                     : isTerminal(turn.status)
                       ? "No worker ran this message"
                       : "Waiting for a worker to pick this up"}
+                  <span title={turnTimesTitle(turn)}>{turnTimes(turn)}</span>
                 </p>
                 <div className="px-0.5 pt-5">
                   <Role className="text-primary">
@@ -1291,6 +1292,46 @@ function Conversation() {
       </div>
     </section>
   );
+}
+/** A time of day, with the date when it isn't the same day as `since`. */
+function clock(at: number, since = Date.now()) {
+  const sameDay =
+    new Date(at).toDateString() === new Date(since).toDateString();
+  return new Date(at).toLocaleString(undefined, {
+    ...(sameDay ? {} : { month: "short", day: "numeric" }),
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+function span(ms: number) {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+type TurnTimes = Pick<Turn, "createdAt" | "startedAt" | "finishedAt">;
+/** When a message was sent, picked up and finished, as the line under it shows them. */
+function turnTimes(turn: TurnTimes) {
+  const parts = [`sent ${clock(turn.createdAt)}`];
+  if (turn.startedAt)
+    parts.push(`started ${clock(turn.startedAt, turn.createdAt)}`);
+  // A turn that ran again after ending keeps its first end; hide it then.
+  if (turn.finishedAt && turn.finishedAt >= (turn.startedAt ?? 0))
+    parts.push(
+      `finished ${clock(turn.finishedAt, turn.startedAt ?? turn.createdAt)}${turn.startedAt ? ` (${span(turn.finishedAt - turn.startedAt)})` : ""}`,
+    );
+  return ` · ${parts.join(" · ")}`;
+}
+function turnTimesTitle(turn: TurnTimes) {
+  const full = (at: number) => new Date(at).toLocaleString();
+  return [
+    `Sent ${full(turn.createdAt)}`,
+    turn.startedAt && `Started ${full(turn.startedAt)}`,
+    turn.finishedAt && `Finished ${full(turn.finishedAt)}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 /** The machine the previous step ran on, when this step ran elsewhere. */
 function movedFrom(
