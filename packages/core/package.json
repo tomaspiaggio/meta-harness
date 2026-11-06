@@ -11,6 +11,7 @@
     "./native-store": "./src/native-store.ts",
     "./knowledge": "./src/knowledge.ts",
     "./briefs": "./src/briefs.ts",
+    "./goals": "./src/goals.ts",
     "./automations": "./src/automations.ts",
     "./attachments": "./src/attachments.ts",
     "./browser": "./src/browser.ts",
