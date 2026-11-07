@@ -256,7 +256,7 @@ const tools = [
   {
     name: "continue_on",
     description:
-      "Continue this conversation in a new step that runs only on machines with these labels (an empty list: any machine), for example to verify on the machine with the chip tools after coding elsewhere, or to go back to any machine afterwards. Check machines_list first. Only move at a natural break: files, clones and uncommitted work stay on this machine, so commit and push what the next step needs before calling this. If the next step runs on another machine, its agent starts fresh with the conversation so far instead of your memory. Write the message as a self-contained note to yourself (what to do next, which branch or commit, how to check it) and give the owner a one-sentence reason. Then end your turn; the step is queued and does not wait for you. On a task from another session, call task_report done only in the last step.",
+      "Run the next step of this conversation on another of the owner's machines: the one(s) with these labels (an empty list: any machine). This is how you run commands on or change another machine (for example update software on the Pi), verify on the machine with the chip tools after coding elsewhere, or go back to any machine afterwards; never SSH between the owner's machines. machines_list shows each machine's labels. Only move at a natural break: files, clones and uncommitted work stay on this machine, so commit and push what the next step needs before calling this. If the next step runs on another machine, its agent starts fresh with the conversation so far instead of your memory. Write the message as a self-contained note to yourself (what to do next, which branch or commit, how to check it) and give the owner a one-sentence reason. Then end your turn; the step is queued and does not wait for you. On a task from another session, call task_report done only in the last step.",
     inputSchema: {
       ...object,
       properties: {
@@ -306,7 +306,7 @@ const tools = [
   {
     name: "machines_list",
     description:
-      "The owner's machines with their host names, labels (agents, browser, tools such as asap7), whether each is online and whether it is paused, plus the labels this session and this step require. A paused machine is being updated and takes new work again shortly; it is not offline. Use it to decide where work can run and to explain waits.",
+      "The owner's machines with their host names, labels (agents, browser, tools such as asap7), whether each is online and whether it is paused, plus the labels this session and this step require. A paused machine is being updated and takes new work again shortly; it is not offline. Use it to decide where work can run (continue_on moves your next step to a machine by its labels) and to explain waits.",
     inputSchema: { ...object, properties: {} },
   },
   {

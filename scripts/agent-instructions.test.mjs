@@ -102,6 +102,7 @@ test("agents on a small machine are told to move heavy builds to a larger one", 
   assert.deepEqual(sizes, {
     totalMemoryMiB: 8192,
     larger: { name: "mac", labels: ["mac"], totalMemoryMiB: 24576 },
+    others: [{ name: "mac", labels: ["mac"] }],
   });
   const text = build({ machines: sizes });
   assert.match(text, /This machine has 8 GB of memory/);
@@ -117,5 +118,27 @@ test("agents on a small machine are told to move heavy builds to a larger one", 
       ? { ...worker, report: { ...worker.report, totalMemoryMiB: undefined } }
       : worker,
   );
-  assert.equal(machineSizes("pi", unknown, now), undefined);
+  assert.doesNotMatch(
+    build({ machines: machineSizes("pi", unknown, now) }),
+    /This machine has/,
+  );
+});
+
+test("agents are told how to act on the owner's other machines", () => {
+  const text = build({
+    machines: {
+      others: [
+        { name: "raspberry-pi", labels: ["pi"] },
+        { name: "studio", labels: ["codex", "browser"] },
+      ],
+    },
+  });
+  assert.match(
+    text,
+    /other machines taking work now: raspberry-pi \(labels \["pi"\]\), studio \(labels \["codex","browser"\]\)/,
+  );
+  assert.match(text, /call continue_on with that machine's labels/);
+  assert.match(text, /Never use SSH/);
+  // Alone, there is nowhere to move.
+  assert.doesNotMatch(build({ machines: { others: [] } }), /continue_on/);
 });
