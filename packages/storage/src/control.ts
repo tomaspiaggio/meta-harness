@@ -853,9 +853,9 @@ export class ControlStore extends SqliteStore {
           .run(candidate.sessionId);
       await this.db
         .prepare(
-          "UPDATE turns SET status = 'running', workerId = ?, generation = generation + 1, leaseUntil = ?, error = NULL WHERE id = ?",
+          "UPDATE turns SET status = 'running', workerId = ?, generation = generation + 1, leaseUntil = ?, startedAt = ?, error = NULL WHERE id = ?",
         )
-        .run(id, now + TURN_LEASE_MS, candidate.id);
+        .run(id, now + TURN_LEASE_MS, now, candidate.id);
       const turn = await this.getTurn(candidate.id);
       await this.db
         .prepare("INSERT INTO worker_claims VALUES (?, ?, ?, ?, ?)")

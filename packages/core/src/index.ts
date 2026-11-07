@@ -58,6 +58,10 @@ export interface Turn {
   requiredLabels?: string | null;
   /** Why the agent moved this step, shown to the owner. */
   placementReason?: string | null;
+  /** When a worker last picked this turn up. */
+  startedAt?: number | null;
+  /** When the turn first ended. */
+  finishedAt?: number | null;
   createdAt: number;
 }
 export interface ClaimedTurn {

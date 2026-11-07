@@ -76,6 +76,7 @@ model Turns {
   interruptsTurnId            String?
   requiredLabels              String?
   placementReason             String?
+  startedAt                   BigInt?
   rowid                       BigInt                @unique @default(autoincrement())
   related_sessionId           Sessions              @relation("turns_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
   session_attention_turnId    SessionAttention?     @relation("session_attention_turnId")
