@@ -46,6 +46,8 @@ export interface WorkerReport {
   draining: boolean;
   /** Short commit of the code this worker runs, when it can tell. */
   build?: string;
+  /** Turns this worker is running now; one it held but lists no longer is lost. */
+  runningTurns?: string[];
   /** Installed with the release launcher, so it can update itself. */
   updatable?: boolean;
   /** Progress of an update control asked for, or why it failed. */
@@ -327,6 +329,13 @@ export function parseWorkerReport(value: unknown): WorkerReport {
     loadPerCpu: row.loadPerCpu as number,
     maxLoadPerCpu: row.maxLoadPerCpu as number,
     draining: row.draining,
+    ...(Array.isArray(row.runningTurns) &&
+    row.runningTurns.length <= 100 &&
+    row.runningTurns.every(
+      (turn) => typeof turn === "string" && turn.length <= 200,
+    )
+      ? { runningTurns: row.runningTurns as string[] }
+      : {}),
     ...(typeof row.build === "string" && COMMIT.test(row.build)
       ? { build: row.build }
       : {}),

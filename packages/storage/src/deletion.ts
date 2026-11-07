@@ -145,6 +145,9 @@ export async function deleteResource(
           .prepare("DELETE FROM delegation_turns WHERE delegationId = ?")
           .run(delegation.id);
         await db
+          .prepare("DELETE FROM goal_links WHERE kind = 'task' AND refId = ?")
+          .run(delegation.id);
+        await db
           .prepare("DELETE FROM delegations WHERE id = ?")
           .run(delegation.id);
       }
@@ -153,6 +156,13 @@ export async function deleteResource(
           "DELETE FROM session_notes WHERE fromSessionId = ? OR toSessionId = ?",
         )
         .run(sessionId, sessionId);
+      await db
+        .prepare(
+          "DELETE FROM goal_links WHERE kind = 'input' AND refId IN (SELECT id FROM input_requests WHERE sessionId = ?)",
+        )
+        .run(sessionId);
+      // A planner's goals go with it.
+      await deleteGoals(db, "sessionId", sessionId);
       for (const attachment of await db
         .prepare("SELECT objectKey FROM attachments WHERE sessionId = ?")
         .all(sessionId))
@@ -193,8 +203,22 @@ export async function deleteResource(
         .prepare("DELETE FROM workspace_resources WHERE workspaceId = ?")
         .run(id);
       await db.prepare("DELETE FROM briefs WHERE workspaceId = ?").run(id);
+      await deleteGoals(db, "workspaceId", id);
       await db.prepare("DELETE FROM workspaces WHERE id = ?").run(id);
       await tombstone("workspace", id);
     }
   });
+}
+async function deleteGoals(
+  db: SqlDatabase,
+  column: "sessionId" | "workspaceId",
+  id: string,
+) {
+  for (const table of ["goal_events", "goal_links"])
+    await db
+      .prepare(
+        `DELETE FROM ${table} WHERE goalId IN (SELECT id FROM goals WHERE ${column} = ?)`,
+      )
+      .run(id);
+  await db.prepare(`DELETE FROM goals WHERE ${column} = ?`).run(id);
 }

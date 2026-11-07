@@ -57,6 +57,8 @@ export function visibleUserAgent(value: string): string {
 /** One session's page in a shared browser, and the live views watching it. */
 type Tab = {
   page: Page;
+  /** Pages covered by popups shown in this tab; they close with it. */
+  under: Page[];
   lastUsed: number;
   listeners: Set<(page: Page) => void>;
 };
@@ -75,8 +77,6 @@ type Context = {
    * personal Chrome has only the one tab the harness owns.
    */
   tabs: Map<string, Tab>;
-  /** The tab that acted last; a popup without an opener belongs to it. */
-  current: string;
   closed?: boolean;
   /** Pages the harness opened itself, which aren't popups. */
   opening?: Set<Page>;
@@ -89,6 +89,12 @@ type Context = {
   notices?: NativeNotice[];
   noticeListeners?: Set<(value: NativeNotice) => void>;
 };
+/** Closes a tab's page and the pages its popups cover. */
+async function closeTab(tab: Tab) {
+  await Promise.all(
+    [tab.page, ...tab.under].map((page) => page.close().catch(() => {})),
+  );
+}
 /** Points a tab at another page and tells its live views. */
 function show(tab: Tab, page: Page) {
   tab.page = page;
@@ -380,9 +386,11 @@ export class BrowserHost {
         attached: true,
         context,
         tabs: new Map([
-          [DEFAULT_TAB, { page, lastUsed: Date.now(), listeners: new Set() }],
+          [
+            DEFAULT_TAB,
+            { page, under: [], lastUsed: Date.now(), listeners: new Set() },
+          ],
         ]),
-        current: DEFAULT_TAB,
         lastUsed: Date.now(),
         generation: identity.generation,
       };
@@ -564,7 +572,6 @@ export class BrowserHost {
         downloads,
         context,
         tabs: new Map(),
-        current: DEFAULT_TAB,
         lastUsed: Date.now(),
         generation: identity.generation,
         notices,
@@ -576,6 +583,8 @@ export class BrowserHost {
       // A popup (sign-in, OAuth, a link to a new window) takes over the tab
       // that opened it, as the newest window does in a person's browser, and
       // hands it back when it closes. Pages the harness opens have no opener.
+      // A page without an opener belongs to no session's tab: giving it to
+      // the tab that acted last let one session's new tab take over another's.
       const opening = new Set<Page>();
       result.opening = opening;
       context.on("page", (opened) => {
@@ -584,13 +593,15 @@ export class BrowserHost {
           .opener()
           .catch(() => null)
           .then((opener) => {
-            const owner =
-              [...result.tabs.values()].find((tab) => tab.page === opener) ??
-              result.tabs.get(result.current);
+            const owner = [...result.tabs.values()].find(
+              (tab) => tab.page === opener,
+            );
             if (!owner || opening.has(opened)) return;
             const previous = owner.page;
+            owner.under.push(previous);
             show(owner, opened);
             opened.on("close", () => {
+              owner.under = owner.under.filter((page) => page !== previous);
               if (owner.page === opened && !previous.isClosed())
                 show(owner, previous);
             });
@@ -607,7 +618,6 @@ export class BrowserHost {
   /** A session's page, opened on first use and reopened if it was closed. */
   private async tab(context: Context, key = DEFAULT_TAB): Promise<Tab> {
     if (context.attached) key = DEFAULT_TAB;
-    context.current = key;
     const existing = context.tabs.get(key);
     if (existing && !existing.page.isClosed()) {
       existing.lastUsed = Date.now();
@@ -631,7 +641,7 @@ export class BrowserHost {
           open.sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0] ?? [];
         if (oldest !== undefined && tab) {
           context.tabs.delete(oldest);
-          await tab.page.close().catch(() => {});
+          await closeTab(tab);
         }
       }
       const created = context.context.newPage();
@@ -645,7 +655,12 @@ export class BrowserHost {
       existing.lastUsed = Date.now();
       return existing;
     }
-    const tab: Tab = { page, lastUsed: Date.now(), listeners: new Set() };
+    const tab: Tab = {
+      page,
+      under: [],
+      lastUsed: Date.now(),
+      listeners: new Set(),
+    };
     context.tabs.set(key, tab);
     return tab;
   }
@@ -663,7 +678,7 @@ export class BrowserHost {
         !browserLoginState(tab.page.url())
       ) {
         context.tabs.delete(key);
-        await tab.page.close().catch(() => {});
+        await closeTab(tab);
       }
     }
   }
@@ -706,7 +721,6 @@ export class BrowserHost {
       touch: () => {
         context.lastUsed = Date.now();
         tab.lastUsed = Date.now();
-        context.current = assignment.command.tab ?? DEFAULT_TAB;
       },
     };
   }

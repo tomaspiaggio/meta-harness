@@ -90,6 +90,23 @@ decision publication; it cannot retract an in-flight website request. Interrupt 
 send records the stop and follow-up together. The follow-up waits for the earlier
 execution to release ownership. No implicit native steering/resume is assumed.
 
+A running turn's lease lasts three minutes between heartbeats, but a worker out of
+contact keeps its turn for an hour: its agent keeps running, and the worker retries
+control with growing delays (up to a minute apart) until it is back. Stopping such a
+turn ends it at once. A worker that reports in without a turn it held has lost it.
+A lost turn is retried only when its agent never launched (the worker had not yet
+fetched its context), after 1, 2, 4… minutes, at most an hour apart; once launched,
+a lost turn is interrupted, never rerun, since the agent may have acted.
+
+The owner plans downtime as maintenance windows (Settings, or the `maintenance`
+tool when the owner asks). During a window its machines (or all of them) claim no
+new turns; queued messages wait and run when it ends, and running turns are not
+touched. While any window is planned, each turn's instructions name it, so an
+agent about to start long work (a day-long validation, say) that wouldn't finish
+first holds it: it tells the owner and calls `continue_on` with
+`after_maintenance`, queuing its next step until the window ends. A held step does
+not hold up later messages in its session.
+
 ## Persistence and portability
 
 `SqlDatabase` is an async, bound-parameter transaction port. SQLite remains an
@@ -382,6 +399,30 @@ and latest progress and report in the session, and can cancel it. This is the
 in-harness form of the inter-harness message model (request, report, question,
 answer, with who decided what), without the permission filtering that a
 different owner's harness would need.
+
+### Goals on the home page
+
+Tasks are how a planner gets work done; the owner follows **goals**: the
+outcomes they asked for, as they would name them ("First circuit board"), a
+few per workspace. Each planner keeps its workspace's goals with `goal_list`
+and `goal_set` (planner sessions only). A goal is tracked by steps (questions
+or milestones, each `done` only once the planner accepted the result and with
+a one-sentence answer) or by targets (counts toward numbers the planner sets
+and changes). It carries why it exists, one line on what is happening now, an
+estimated finish only while a long run is going, and its status: active, next
+(with when it starts), done or dropped. Every update records one plain sentence
+in `goal_events` with the progress at that moment, plus any decisions and who
+made them; that history is the goal's timeline and the home page's past week.
+`session_send` and `request_input` take a `goal_id`, recorded in `goal_links`,
+so the page shows who works on a goal and which open questions belong to it.
+
+Everything a goal shows is for an owner without context, so control rejects
+text that contains internal references (IDs, commit hashes, PR and ticket
+numbers, decision keys, file paths) and asks the agent to say what the thing
+is instead. The home page lists, in order: what needs the owner (open
+questions and sign-ins, with their goal), active goals with a progress bar
+and the answers so far on hover, planned goals, the past week of goal
+history, then the daily briefs.
 
 ## Browser identity and optional capacity
 

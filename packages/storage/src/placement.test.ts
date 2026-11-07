@@ -372,3 +372,81 @@ test("the owner's messages go first and always keep a slot; agents reserve no CP
     await store.close();
   }
 });
+
+test("maintenance pauses its machines, and long work held until after it doesn't block the owner", async () => {
+  const { store, mac, pi, session } = await setup();
+  try {
+    const now = Date.now();
+    const hour = 60 * 60 * 1000;
+    const online = async (at: number) => {
+      await store.reportWorker(mac.id, report, at);
+      await store.reportWorker(pi.id, report, at);
+    };
+    await queue(store, "code", session.id);
+    const coding = await store.claimForWorker(pi.id, now);
+    assert.equal(coding?.claim.turn.id, "code");
+    await assert.rejects(
+      store.continueOn({
+        turnId: "continue:none",
+        callerTurnId: "code",
+        labels: [],
+        message: "Start the RTL validation.",
+        reason: "It runs for a day.",
+        afterMaintenance: true,
+      }),
+      /No maintenance/,
+    );
+    const window = await store.scheduleMaintenance(
+      { startsAt: now + hour, endsAt: now + 3 * hour, note: "reboot" },
+      now,
+    );
+    const held = await store.continueOn({
+      turnId: "continue:validate",
+      callerTurnId: "code",
+      labels: [],
+      message: "Start the RTL validation.",
+      reason: "It runs for a day; maintenance starts in an hour.",
+      afterMaintenance: true,
+    });
+    assert.equal(held.notBefore, window.endsAt);
+    await store.enqueue(held.id);
+    await finish(store, pi.id, "code", coding.claim.turn.generation, "t");
+    assert.match(String(await store.waitingReason(held.id)), /Held until/);
+
+    await queue(store, "owner", session.id);
+    // The Pi has this conversation's agent memory, so it takes it.
+    const owner = await store.claimForWorker(pi.id, now);
+    assert.equal(owner?.claim.turn.id, "owner", "the held step doesn't block");
+    await finish(store, pi.id, "owner", owner.claim.turn.generation, "t");
+
+    const during = now + 2 * hour;
+    await online(during);
+    await queue(store, "late", session.id);
+    assert.equal(await store.claimForWorker(mac.id, during), null);
+    assert.equal(await store.claimForWorker(pi.id, during), null);
+    assert.ok(await store.maintenanceFor(mac.id, during));
+
+    const after = window.endsAt + 1000;
+    await online(after);
+    assert.equal(
+      (await store.claimForWorker(pi.id, after))?.claim.turn.id,
+      held.id,
+      "the held step runs once maintenance ends",
+    );
+    assert.deepEqual(await store.listMaintenance(after), []);
+
+    const next = await store.scheduleMaintenance(
+      { startsAt: after + hour, endsAt: after + 2 * hour, workers: ["pi"] },
+      after,
+    );
+    assert.deepEqual(next.workers, [pi.id]);
+    await store.endMaintenance(next.id, after);
+    assert.deepEqual(
+      await store.listMaintenance(after),
+      [],
+      "a window that hasn't started is cancelled",
+    );
+  } finally {
+    await store.close();
+  }
+});

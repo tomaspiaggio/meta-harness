@@ -826,6 +826,7 @@ function WorkspaceArranger({
 const tones: Record<string, string> = {
   running: "bg-live-soft text-live",
   stopping: "bg-warning-soft text-warning",
+  reconnecting: "bg-warning-soft text-warning",
   queued: "bg-warning-soft text-warning",
   pending: "bg-warning-soft text-warning",
   draining: "bg-warning-soft text-warning",

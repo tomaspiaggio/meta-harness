@@ -76,6 +76,10 @@ model Turns {
   interruptsTurnId            String?
   requiredLabels              String?
   placementReason             String?
+  startedAt                   BigInt?
+  launchedAt                  BigInt?
+  retries                     Int                   @default(0)
+  notBefore                   BigInt?
   rowid                       BigInt                @unique @default(autoincrement())
   related_sessionId           Sessions              @relation("turns_sessionId", fields: [sessionId], references: [id], onDelete: Restrict)
   session_attention_turnId    SessionAttention?     @relation("session_attention_turnId")
@@ -207,6 +211,17 @@ model NativeWrites {
   @@map("native_writes")
 }
 
+model MaintenanceWindows {
+  id        String @id
+  startsAt  BigInt
+  endsAt    BigInt
+  workers   String @default("[]")
+  note      String @default("")
+  createdAt BigInt
+
+  @@map("maintenance_windows")
+}
+
 model ProviderCooldowns {
   workerId         String
   provider         String
@@ -276,6 +291,7 @@ model ScheduleOccurrences {
   related_turnId     Turns?    @relation("schedule_occurrences_turnId", fields: [turnId], references: [id], onDelete: Restrict)
   related_scheduleId Schedules @relation("schedule_occurrences_scheduleId", fields: [scheduleId], references: [id], onDelete: Restrict)
 
+  @@index([turnId], map: "schedule_occurrences_turn")
   @@map("schedule_occurrences")
 }
 
@@ -793,4 +809,50 @@ model GoogleOAuthStates {
  connection IntegrationConnections @relation(fields:[connectionId],references:[id],onDelete:Cascade)
  @@index([expiresAt],map:"google_oauth_expiry")
  @@map("google_oauth_states")
+}
+
+model Goals {
+  id          String  @id
+  workspaceId String
+  sessionId   String
+  title       String
+  summary     String
+  why         String
+  status      String
+  currently   String
+  etaAt       BigInt?
+  startsWhen  String
+  steps       String
+  targets     String
+  targetNote  String
+  createdAt   BigInt
+  updatedAt   BigInt
+  finishedAt  BigInt?
+
+  @@index([workspaceId, status], map: "goals_workspace")
+  @@map("goals")
+}
+
+model GoalEvents {
+  id     String @id
+  goalId String
+  kind   String
+  text   String
+  author String
+  done   Int
+  total  Int
+  at     BigInt
+
+  @@index([goalId, at], map: "goal_events_goal")
+  @@index([at], map: "goal_events_at")
+  @@map("goal_events")
+}
+
+model GoalLinks {
+  kind   String
+  refId  String
+  goalId String
+
+  @@id([kind, refId])
+  @@map("goal_links")
 }

@@ -1,7 +1,9 @@
+import { goalSchema } from "./goals";
 import { googleSchema } from "./google-schema";
 import { mcpSchema } from "./mcp-schema";
 export const featureSchema = `${mcpSchema}
 ${googleSchema}
+${goalSchema}
 CREATE TABLE IF NOT EXISTS deleted_resources (kind TEXT NOT NULL, id TEXT NOT NULL, createdAt INTEGER NOT NULL, PRIMARY KEY(kind,id));
 CREATE TABLE IF NOT EXISTS worker_cleanup (workerId TEXT NOT NULL REFERENCES workers(id), kind TEXT NOT NULL, resourceId TEXT NOT NULL, PRIMARY KEY(workerId,kind,resourceId));
 CREATE TABLE IF NOT EXISTS cleanup_jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, nextAt INTEGER NOT NULL, leaseUntil INTEGER, error TEXT);
@@ -16,6 +18,7 @@ CREATE TABLE IF NOT EXISTS schedule_occurrences (
  id TEXT PRIMARY KEY, scheduleId TEXT NOT NULL REFERENCES schedules(id), revision INTEGER NOT NULL,
  plannedAt INTEGER NOT NULL, firedAt INTEGER NOT NULL, turnId TEXT REFERENCES turns(id), outcome TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS schedule_occurrences_turn ON schedule_occurrences(turnId);
 CREATE TABLE IF NOT EXISTS attachments (
  id TEXT PRIMARY KEY, sessionId TEXT NOT NULL REFERENCES sessions(id), name TEXT NOT NULL,
  mediaType TEXT NOT NULL, size INTEGER NOT NULL, hash TEXT NOT NULL, objectKey TEXT NOT NULL, createdAt INTEGER NOT NULL

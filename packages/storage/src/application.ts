@@ -53,6 +53,7 @@ import { ControlStore } from "./control";
 import { connectPostgres, LocalDatabase, type SqlDatabase } from "./database";
 import { deleteResource } from "./deletion";
 import { featureSchema } from "./features-schema";
+import { GoalStore } from "./goals";
 
 export interface ChannelBinding {
   sessionId: string;
@@ -210,8 +211,31 @@ const delegationTitle = (message: string) => {
   return line.length > 80 ? `${line.slice(0, 77)}…` : line;
 };
 
+/** SQL true for a worker's task turn or a note between sessions. */
+const taskWork = (turn: string) =>
+  `(EXISTS (SELECT 1 FROM session_notes WHERE turnId = ${turn})
+  OR EXISTS (SELECT 1 FROM delegation_turns WHERE turnId = ${turn} AND role != 'report'))`;
+/**
+ * SQL true for a planner's turn handling a report, a scheduled agent run (a
+ * reminder is for the owner), or the daily briefs' writing (the briefs
+ * themselves are read on Home).
+ */
+const routineWork = (turn: string) =>
+  `(EXISTS (SELECT 1 FROM delegation_turns WHERE turnId = ${turn} AND role = 'report')
+  OR EXISTS (SELECT 1 FROM schedule_occurrences AS run JOIN schedules ON schedules.id = run.scheduleId
+    WHERE run.turnId = ${turn} AND schedules.kind != 'reminder')
+  OR EXISTS (SELECT 1 FROM brief_runs WHERE turnId = ${turn}))`;
+/** SQL for the message an agent's continuation continues; NULL for others. */
+const continuationOrigin = (turn: string, session: string) =>
+  `(SELECT origin.id FROM turns AS origin WHERE ${turn} LIKE 'continue:%'
+  AND origin.sessionId = ${session} AND origin.id NOT LIKE 'continue:%'
+  AND origin.createdAt <= (SELECT createdAt FROM turns WHERE id = ${turn})
+  ORDER BY origin.createdAt DESC LIMIT 1)`;
+
 /** Application persistence shared by local and hosted control planes. */
 export class HarnessStore extends ControlStore {
+  /** What the owner asked for, kept by the planners for the home page. */
+  readonly goals = new GoalStore(this.db);
   databaseConnection(): SqlDatabase {
     return this.db;
   }
@@ -870,6 +894,20 @@ ${blocks.reverse().join("\n\n---\n\n")}
       )
       .run(id, sessionId, kind, referenceId, now, now);
   }
+  /**
+   * Unread counts only what notifies (see notificationIsQuiet): work between
+   * sessions and scheduled runs are not new to the owner unless an agent
+   * raises them with notify_owner.
+   */
+  protected override quietAttention(): string {
+    const origin = continuationOrigin(
+      "attention.turnId",
+      "attention.sessionId",
+    );
+    return `${taskWork("attention.turnId")} OR ${taskWork(origin)}
+      OR ((${routineWork("attention.turnId")} OR ${routineWork(origin)})
+        AND NOT EXISTS (SELECT 1 FROM owner_alerts WHERE turnId = attention.turnId))`;
+  }
   /** A worker's task, feedback and continuation turns, and notes between sessions. */
   protected override async backgroundTurns(
     ids: string[],
@@ -905,7 +943,9 @@ ${blocks.reverse().join("\n\n---\n\n")}
   /**
    * Work between sessions reaches the owner through the planner: a worker's
    * task turns and notes never notify, and a planner's turn that only handles
-   * a report notifies when it asks the owner something or calls notify_owner.
+   * a report, like a scheduled run, notifies when it asks the owner something
+   * or calls notify_owner. An agent's continuation is judged by the message it
+   * continues.
    */
   async notificationIsQuiet(item: {
     kind: string;
@@ -920,17 +960,17 @@ ${blocks.reverse().join("\n\n---\n\n")}
       turnId = String(request.turnId);
     } else if (!["completed", "failed", "interrupted"].includes(item.kind))
       return false;
-    if (
-      await this.db
-        .prepare("SELECT 1 AS quiet FROM session_notes WHERE turnId = ?")
-        .get(turnId)
-    )
-      return true;
-    const link = await this.db
-      .prepare("SELECT role FROM delegation_turns WHERE turnId = ?")
+    const origin = continuationOrigin("subject.id", "subject.sessionId");
+    const row = await this.db
+      .prepare(
+        `SELECT ${taskWork("subject.id")} OR ${taskWork(origin)} AS task,
+          ${routineWork("subject.id")} OR ${routineWork(origin)} AS routine
+        FROM turns AS subject WHERE subject.id = ?`,
+      )
       .get(turnId);
-    if (!link) return false;
-    if (link.role !== "report") return true;
+    if (!row) return false;
+    if (row.task) return true;
+    if (!row.routine) return false;
     if (item.kind === "needs-input" || (await this.ownerAlert(turnId)))
       return false;
     return !(await this.db
@@ -2308,6 +2348,8 @@ ${blocks.reverse().join("\n\n---\n\n")}
     labels: unknown;
     message: string;
     reason: string;
+    /** Wait for the next maintenance window to end. */
+    afterMaintenance?: boolean;
   }): Promise<Turn> {
     const labels = parseLabels(input.labels);
     const message = requiredText(input.message, "Message", 20000);
@@ -2334,6 +2376,14 @@ ${blocks.reverse().join("\n\n---\n\n")}
           `This conversation already continued itself ${chain} times in a row. Finish here and report what is left, or ask the owner with request_input.`,
           409,
         );
+      const window = input.afterMaintenance
+        ? (await this.listMaintenance())[0]
+        : undefined;
+      if (input.afterMaintenance && !window)
+        throw new HarnessError(
+          "No maintenance is scheduled; start the work now.",
+          409,
+        );
       const turn = await this.createTurn(
         input.turnId,
         caller.sessionId,
@@ -2341,9 +2391,9 @@ ${blocks.reverse().join("\n\n---\n\n")}
       );
       await this.db
         .prepare(
-          "UPDATE turns SET requiredLabels = ?, placementReason = ? WHERE id = ?",
+          "UPDATE turns SET requiredLabels = ?, placementReason = ?, notBefore = ? WHERE id = ?",
         )
-        .run(labels.join(",") || null, reason, turn.id);
+        .run(labels.join(",") || null, reason, window?.endsAt ?? null, turn.id);
       const link = await this.delegationForTurn(caller.id);
       if (link && link.role !== "report") {
         // The task's report comes from the continuation, when the work ends.

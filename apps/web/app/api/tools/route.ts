@@ -10,12 +10,13 @@ export const maxDuration = 60;
 import { createHash } from "node:crypto";
 import { HarnessError, requiredText } from "@harness/core";
 import { BRIEFS_WORKSPACE, parseBrief, parseDay } from "@harness/core/briefs";
+import { goalProgress, parseGoalChange } from "@harness/core/goals";
 import { filterDecisions } from "@harness/core/knowledge";
 import {
   controlUpdateStatus,
   startControlUpdate,
 } from "../../../server/control-update";
-import { REPORT_RULES } from "../../../server/delegation";
+import { GOAL_RULES, REPORT_RULES } from "../../../server/delegation";
 import { flushDispatch } from "../../../server/dispatcher";
 import { verifyAttemptGrant } from "../../../server/grants";
 import { failure, readJson } from "../../../server/http";
@@ -182,6 +183,10 @@ const tools = [
           ...text,
           description: "An open task you gave, for feedback or answers",
         },
+        goal_id: {
+          ...text,
+          description: "For a new task: the goal it works toward (goal_list)",
+        },
         message: text,
       },
       required: ["message"],
@@ -256,7 +261,7 @@ const tools = [
   {
     name: "continue_on",
     description:
-      "Continue this conversation in a new step that runs only on machines with these labels (an empty list: any machine), for example to verify on the machine with the chip tools after coding elsewhere, or to go back to any machine afterwards. Check machines_list first. Only move at a natural break: files, clones and uncommitted work stay on this machine, so commit and push what the next step needs before calling this. If the next step runs on another machine, its agent starts fresh with the conversation so far instead of your memory. Write the message as a self-contained note to yourself (what to do next, which branch or commit, how to check it) and give the owner a one-sentence reason. Then end your turn; the step is queued and does not wait for you. On a task from another session, call task_report done only in the last step.",
+      "Run the next step of this conversation on another of the owner's machines: the one(s) with these labels (an empty list: any machine). This is how you run commands on or change another machine (for example update software on the Pi), verify on the machine with the chip tools after coding elsewhere, or go back to any machine afterwards; never SSH between the owner's machines. machines_list shows each machine's labels. Only move at a natural break: files, clones and uncommitted work stay on this machine, so commit and push what the next step needs before calling this. If the next step runs on another machine, its agent starts fresh with the conversation so far instead of your memory. Write the message as a self-contained note to yourself (what to do next, which branch or commit, how to check it) and give the owner a one-sentence reason. Then end your turn; the step is queued and does not wait for you. On a task from another session, call task_report done only in the last step.",
     inputSchema: {
       ...object,
       properties: {
@@ -267,6 +272,11 @@ const tools = [
         },
         message: text,
         reason: text,
+        after_maintenance: {
+          type: "boolean",
+          description:
+            "Hold the step until the next scheduled maintenance ends, for long work that wouldn't finish before it starts",
+        },
       },
       required: ["labels", "message", "reason"],
     },
@@ -304,10 +314,164 @@ const tools = [
     },
   },
   {
+    name: "maintenance",
+    description:
+      "The owner's planned downtime of their machines. action list: upcoming and current windows. action schedule (only when the owner asks): starts_at and ends_at (ISO time with offset, or Unix ms), optional machines (names; none means every machine) and note. During a window its machines take no new work; messages wait and run when it ends. action end (only when the owner asks): cancels a window that hasn't started or ends one early.",
+    inputSchema: {
+      ...object,
+      properties: {
+        action: { type: "string", enum: ["list", "schedule", "end"] },
+        id: text,
+        starts_at: { type: ["string", "number"] },
+        ends_at: { type: ["string", "number"] },
+        machines: { type: "array", items: { type: "string" } },
+        note: text,
+      },
+      required: ["action"],
+    },
+  },
+  {
     name: "machines_list",
     description:
-      "The owner's machines with their host names, labels (agents, browser, tools such as asap7), whether each is online and whether it is paused, plus the labels this session and this step require. A paused machine is being updated and takes new work again shortly; it is not offline. Use it to decide where work can run and to explain waits.",
+      "The owner's machines with their host names, labels (agents, browser, tools such as asap7), whether each is online and whether it is paused, plus the labels this session and this step require. A paused machine is being updated and takes new work again shortly; it is not offline. Use it to decide where work can run (continue_on moves your next step to a machine by its labels) and to explain waits.",
     inputSchema: { ...object, properties: {} },
+  },
+  {
+    name: "goal_list",
+    description:
+      "The goals of this workspace that the owner sees on the home page (active, next, and recently finished), with their IDs, steps or targets and progress. Planning sessions only.",
+    inputSchema: { ...object, properties: {} },
+  },
+  {
+    name: "goal_set",
+    description: `Create a goal (no goal_id) or update one (goal_id; fields left out keep their value). Planning sessions only. ${GOAL_RULES}`,
+    inputSchema: {
+      ...object,
+      properties: {
+        goal_id: text,
+        title: {
+          ...text,
+          description:
+            'A name readable at a glance, 3-5 words, at most 40 characters, e.g. "First circuit board"',
+        },
+        summary: {
+          ...text,
+          description:
+            'The goal in one sentence, e.g. "Design the first circuit board for the chip and get a manufacturing quote"',
+        },
+        why: {
+          ...text,
+          description:
+            "Why we are doing it, for someone who missed the conversation: 1-3 sentences",
+        },
+        status: {
+          type: "string",
+          enum: ["active", "next", "done", "dropped"],
+          description:
+            "active: being worked on; next: planned but waiting (say when in starts_when); done; dropped",
+        },
+        now: {
+          ...text,
+          description:
+            "What is happening right now, one line; empty when nothing is",
+        },
+        eta: {
+          ...text,
+          description:
+            "ISO time a long run going on now should finish (a validation, simulation, eval or long build), estimated from past runs on that machine; empty otherwise. Never for coding.",
+        },
+        starts_when: {
+          ...text,
+          description:
+            'For a goal that waits, e.g. "After Saturday\'s maintenance"',
+        },
+        steps: {
+          type: "array",
+          maxItems: 30,
+          description:
+            "The questions to answer or milestones to reach, in order. Use steps or targets, not both. Send the full list each time.",
+          items: {
+            ...object,
+            properties: {
+              label: {
+                ...text,
+                description:
+                  'A question or milestone in plain words, e.g. "Does the model fit on one chip with an older process?"',
+              },
+              status: {
+                type: "string",
+                enum: [
+                  "done",
+                  "review",
+                  "working",
+                  "waiting",
+                  "todo",
+                  "postponed",
+                ],
+                description:
+                  "done only once you accepted the result; review while a reviewer checks it; postponed no longer counts toward the goal",
+              },
+              answer: {
+                ...text,
+                description:
+                  'Required when done: what came out of it in one short sentence, e.g. "Only at 7nm or newer"',
+              },
+              detail: {
+                ...text,
+                description:
+                  "A sentence or two more for the goal's page: what is left, what it is waiting on",
+              },
+            },
+            required: ["label", "status"],
+          },
+        },
+        targets: {
+          type: "array",
+          maxItems: 8,
+          description:
+            "For a goal measured by counts, e.g. meetings booked this week. You set the numbers and change them as plans change. Send the full list each time.",
+          items: {
+            ...object,
+            properties: {
+              label: text,
+              current: { type: "number" },
+              target: { type: "number" },
+              note: text,
+            },
+            required: ["label", "current", "target"],
+          },
+        },
+        target_note: {
+          ...text,
+          description:
+            "Who set the targets and the last change to them, with the reason",
+        },
+        change: {
+          ...text,
+          description:
+            'What changed since the last update, one plain sentence for the goal\'s history, e.g. "Parts placed and the high-speed connections drawn"',
+        },
+        decisions: {
+          type: "array",
+          maxItems: 10,
+          description:
+            "Decisions made along the way since the last update, with who made them",
+          items: {
+            ...object,
+            properties: {
+              text: text,
+              by: {
+                ...text,
+                description:
+                  'Who decided: "Owner", "Planner" or the agent\'s name',
+              },
+            },
+            required: ["text", "by"],
+          },
+        },
+      },
+      required: ["change"],
+    },
   },
   {
     name: "task_report",
@@ -347,10 +511,16 @@ const tools = [
   {
     name: "request_input",
     description:
-      "Persist a question requiring the user. Then end the turn; do not keep an agent process waiting. The answer will continue the same session.",
+      "Persist a question requiring the user. Then end the turn; do not keep an agent process waiting. The answer will continue the same session. Write the question for someone without context: say what it is about and what each choice means, with no IDs, ticket codes or PR numbers.",
     inputSchema: {
       ...object,
-      properties: { question: text },
+      properties: {
+        question: text,
+        goal_id: {
+          ...text,
+          description: "The goal this question is about, if any (goal_list)",
+        },
+      },
       required: ["question"],
     },
   },
@@ -448,8 +618,9 @@ export async function POST(request: Request) {
         tools: [
           ...tools.filter(
             (tool) =>
-              tool.name !== "brief_publish" ||
-              session.workspaceId === BRIEFS_WORKSPACE,
+              (tool.name !== "brief_publish" ||
+                session.workspaceId === BRIEFS_WORKSPACE) &&
+              (!tool.name.startsWith("goal_") || session.role === "planner"),
           ),
           ...(await integrationToolDescriptors(store, session.workspaceId)),
         ],
@@ -526,6 +697,10 @@ export async function POST(request: Request) {
           args.action,
         );
       } else if (parameters?.name === "request_input") {
+        const goalId =
+          typeof args.goal_id === "string" && args.goal_id
+            ? (await store.goals.get(args.goal_id)).id
+            : null;
         result = await store.requestInput(
           `input-${createHash("sha256")
             .update(`${grant.turnId}:${String(id)}`)
@@ -536,6 +711,12 @@ export async function POST(request: Request) {
           "question",
           requiredText(args.question, "Question", 4000),
         );
+        if (goalId)
+          await store.goals.link(
+            "input",
+            String((result as { id: string }).id),
+            goalId,
+          );
       } else if (parameters?.name === "session_send") {
         const taskTurnId = `task:${createHash("sha256")
           .update(`${grant.turnId}:${String(id)}`)
@@ -566,6 +747,12 @@ export async function POST(request: Request) {
               requiredText(worker.title, "Worker title", 60),
             );
         }
+        const goal =
+          typeof args.goal_id === "string" && args.goal_id
+            ? await store.goals.get(args.goal_id)
+            : null;
+        if (goal && goal.workspaceId !== session.workspaceId)
+          throw new HarnessError("That goal belongs to another workspace.");
         const { delegation, turn: sent } = await store.sendDelegation({
           turnId: taskTurnId,
           callerTurnId: turn.id,
@@ -577,6 +764,7 @@ export async function POST(request: Request) {
                 toSessionId: requiredText(toSessionId, "Session ID", 100),
               }),
         });
+        if (goal) await store.goals.link("task", delegation.id, goal.id);
         await flushDispatch();
         result = {
           task_id: delegation.id,
@@ -584,6 +772,52 @@ export async function POST(request: Request) {
           queued_turn: sent.id,
           note: "Queued. Its report will arrive in this session as a new message when that turn ends; finish your turn instead of waiting.",
         };
+      } else if (
+        parameters?.name === "goal_list" ||
+        parameters?.name === "goal_set"
+      ) {
+        if (session.role !== "planner")
+          throw new HarnessError(
+            "Only a workspace's planner keeps its goals.",
+            403,
+          );
+        if (parameters.name === "goal_set") {
+          const goalId =
+            typeof args.goal_id === "string" && args.goal_id
+              ? args.goal_id
+              : null;
+          const goal = goalId
+            ? await store.goals.update(
+                goalId,
+                session.workspaceId,
+                parseGoalChange(args, await store.goals.get(goalId)),
+              )
+            : await store.goals.create(
+                `goal-${createHash("sha256")
+                  .update(`${grant.turnId}:${String(id)}`)
+                  .digest("hex")
+                  .slice(0, 24)}`,
+                session.workspaceId,
+                session.id,
+                parseGoalChange(args),
+              );
+          result = {
+            goal_id: goal.id,
+            progress: goalProgress(goal),
+            note: "Saved. The owner sees it on the home page.",
+          };
+        } else
+          result = (
+            await store.goals.list({
+              workspaceId: session.workspaceId,
+              endedSince: Date.now() - 7 * 86_400_000,
+            })
+          ).map((goal) => ({
+            goal_id: goal.id,
+            ...goal,
+            id: undefined,
+            progress: goalProgress(goal),
+          }));
       } else if (parameters?.name === "notify_owner") {
         await store.addOwnerAlert(
           turn.id,
@@ -633,13 +867,49 @@ export async function POST(request: Request) {
           labels: args.labels,
           message: requiredText(args.message, "Message", 20000),
           reason: requiredText(args.reason, "Reason", 500),
+          afterMaintenance: args.after_maintenance === true,
         });
         await flushDispatch();
         result = {
           queued_turn: next.id,
           labels: next.requiredLabels?.split(",") ?? [],
-          note: "Queued after this turn. End your turn now; the next step continues from your note.",
+          ...(next.notBefore
+            ? { starts_after: new Date(next.notBefore).toISOString() }
+            : {}),
+          note: next.notBefore
+            ? "Held until maintenance ends. Tell the owner, then end your turn; the next step continues from your note."
+            : "Queued after this turn. End your turn now; the next step continues from your note.",
         };
+      } else if (parameters?.name === "maintenance") {
+        const known = await store.listWorkers();
+        const iso = (window: {
+          id: string;
+          startsAt: number;
+          endsAt: number;
+          workers: string[];
+          note: string;
+        }) => ({
+          id: window.id,
+          starts_at: new Date(window.startsAt).toISOString(),
+          ends_at: new Date(window.endsAt).toISOString(),
+          machines: window.workers.map(
+            (id) => known.find((worker) => worker.id === id)?.name ?? id,
+          ),
+          note: window.note,
+        });
+        if (args.action === "schedule")
+          result = iso(
+            await store.scheduleMaintenance({
+              startsAt: args.starts_at,
+              endsAt: args.ends_at,
+              workers: args.machines,
+              note: args.note,
+            }),
+          );
+        else if (args.action === "end") {
+          await store.endMaintenance(requiredText(args.id, "ID", 100));
+          result = { ended: args.id };
+        } else result = (await store.listMaintenance()).map(iso);
       } else if (parameters?.name === "control_update") {
         result =
           args.status === true

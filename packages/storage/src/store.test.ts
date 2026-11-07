@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { executeTurn } from "@harness/core";
-import { SqliteStore } from "./index";
+import { OUTAGE_GRACE_MS, SqliteStore } from "./index";
 
 async function setup() {
   const store = new SqliteStore(":memory:");
@@ -37,10 +37,20 @@ test("submission is idempotent and serializes queued messages per session", asyn
     );
     await store.enqueue(turn.id);
     await store.enqueue(turn.id);
-    const claim = await store.claim("worker", Date.now(), 30000);
+    const claimedAt = Date.now();
+    const claim = await store.claim("worker", claimedAt, 30000);
     assert.ok(claim);
+    assert.equal(claim.turn.startedAt, claimedAt);
     assert.equal(await store.claim("other", Date.now(), 30000), null);
     await store.finish(turn.id, claim.turn.generation, "completed");
+    const shown = (await store.turnPage(session.id, 5)).turns.find(
+      (each) => each.id === turn.id,
+    );
+    assert.equal(shown?.startedAt, claimedAt, "the page shows when it started");
+    assert.ok(
+      shown?.finishedAt && shown.finishedAt >= claimedAt,
+      "and when it finished",
+    );
     await store.enqueue(turn.id);
     assert.equal(
       (await store.getTurn(turn.id)).status,
@@ -63,7 +73,20 @@ test("expired ownership rejects old writes and requires explicit continuation", 
     const claim = await store.claim("worker", Date.now(), 30000);
     assert.ok(claim);
     await store.appendOutput("one", claim.turn.generation, "partial result");
-    assert.equal(await store.recoverExpired(Date.now() + 60000), 1);
+    assert.equal(
+      await store.recoverExpired(Date.now() + 60000),
+      0,
+      "a worker out of contact keeps its turn through an outage",
+    );
+    assert.equal(
+      await store.heartbeat("one", claim.turn.generation, Date.now(), 30000),
+      true,
+      "and picks it back up",
+    );
+    assert.equal(
+      await store.recoverExpired(Date.now() + OUTAGE_GRACE_MS + 60000),
+      1,
+    );
     assert.equal((await store.getTurn("one")).status, "interrupted");
     assert.equal((await store.getTurn("one")).output, "partial result");
     await assert.rejects(

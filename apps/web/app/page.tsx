@@ -41,6 +41,7 @@ import {
   WorkersBoard,
 } from "./delegations";
 import { MarkdownMessage } from "./markdown";
+import { type IndexEntry, MessageIndex } from "./message-index";
 import { ModelPicker } from "./model-picker";
 import { type Placement, PlacementPanel } from "./placement";
 import { ScheduleCard } from "./schedule-card";
@@ -627,385 +628,403 @@ function Conversation() {
         )}
       </div>
 
-      <div
-        ref={scroller}
-        // The browser's own scroll anchoring would shift a second time.
-        className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          pinned.current =
-            element.scrollHeight - element.scrollTop - element.clientHeight <
-            80;
-          setAtBottom(pinned.current);
-          if (element.scrollTop < 600) void loadOlder();
-        }}
-      >
-        <div className="mx-auto max-w-3xl px-6 py-8">
-          {isPlanner && view === "workers" && sessionId && (
-            <WorkersBoard
-              sessionId={sessionId}
-              delegations={given}
-              sessions={tree.sessions}
-              onChange={() => void refresh.current()}
-            />
-          )}
-          <div hidden={isPlanner && view === "workers"}>
-            {isPlanner && activeTasks > 0 && (
-              <button
-                type="button"
-                onClick={() => setView("workers")}
-                className="mb-6 flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-card px-4 py-2.5 text-left text-sm hover:bg-accent"
-              >
-                <span className="font-medium">Workers</span>
-                {(["needs", "review", "working"] as const).map(
-                  (phase) =>
-                    !!phaseCounts[phase] && (
-                      <span key={phase} className="text-muted-foreground">
-                        {phaseCounts[phase]} {phaseLabel(phase)}
-                      </span>
-                    ),
-                )}
-                <span className="ml-auto text-primary">Open board →</span>
-              </button>
-            )}
-            {!sessionId && (
-              <div className="animate-in fade-in slide-in-from-bottom-2 pt-[12vh] duration-500">
-                <div className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-                  {workspace?.name ?? "Workspace"} · new session
-                </div>
-                <h1 className="mt-3 mb-4 font-serif text-5xl font-normal tracking-tight">
-                  What should we <em className="text-primary">work on</em>?
-                </h1>
-                {workspace?.instructions && (
-                  <p className="mb-4 whitespace-pre-wrap border-l-2 border-primary pl-4 font-serif text-lg italic text-foreground/75">
-                    {workspace.instructions}
-                  </p>
-                )}
-                <p className="text-muted-foreground">
-                  {workspaceId
-                    ? "Each session is its own conversation inside this workspace. Pick an agent, then send the first instruction."
-                    : "Create a workspace using the + button in the sidebar to get started."}
-                </p>
-              </div>
-            )}
-            {loading && <TurnPlaceholders count={3} />}
-            {sessionId && selected && !loading && !turns.length && (
-              <div className="pt-[12vh]">
-                <h1 className="font-serif text-5xl font-normal tracking-tight">
-                  Ready when <em className="text-primary">you are</em>.
-                </h1>
-                <p className="mt-3 text-muted-foreground">
-                  Send the first instruction below.
-                </p>
-              </div>
-            )}
-            {olderLoading && <TurnPlaceholders count={2} />}
-            {turns.map((turn, index) => (
-              <article
-                key={turn.id}
-                className="animate-in fade-in border-b py-7 first:pt-0 last:border-0"
-              >
-                <div className="rounded-lg bg-muted px-4 py-3">
-                  {turn.note ? (
-                    <>
-                      <Role className="flex-wrap normal-case tracking-normal">
-                        Note from <SessionLink session={turn.note.from} />
-                      </Role>
-                      <MarkdownMessage>{turn.prompt}</MarkdownMessage>
-                    </>
-                  ) : turn.id.startsWith("continue:") ? (
-                    <>
-                      <Role className="flex-wrap normal-case tracking-normal">
-                        Next step queued by the agent ·{" "}
-                        {turn.requiredLabels
-                          ? `needs ${turn.requiredLabels.split(",").join(", ")}`
-                          : "any machine"}
-                      </Role>
-                      {turn.placementReason && (
-                        <p className="mb-2 text-sm text-muted-foreground">
-                          Why: {turn.placementReason}
-                        </p>
-                      )}
-                      <MarkdownMessage>{turn.prompt}</MarkdownMessage>
-                    </>
-                  ) : turn.delegation ? (
-                    <>
-                      <Role className="flex-wrap normal-case tracking-normal">
-                        {turn.delegation.role === "report" ? (
-                          <>
-                            Report from{" "}
-                            <SessionLink session={turn.delegation.peer} />
-                            {turn.delegation.status && (
-                              <StatusBadge status={turn.delegation.status} />
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            {turn.delegation.role === "task"
-                              ? "Task from"
-                              : "Follow-up from"}{" "}
-                            <SessionLink session={turn.delegation.peer} />
-                            {turn.delegation.round > 1 &&
-                              ` · round ${turn.delegation.round}`}
-                          </>
-                        )}
-                      </Role>
-                      <MarkdownMessage>
-                        {turn.delegation.role === "report"
-                          ? turn.prompt.replace(/^[^\n]*\n+/, "")
-                          : turn.prompt}
-                      </MarkdownMessage>
-                    </>
-                  ) : (
-                    <>
-                      <Role>You</Role>
-                      <div className="whitespace-pre-wrap break-words">
-                        {turn.prompt}
-                      </div>
-                    </>
-                  )}
-                  {!!turn.attachments?.length && (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {turn.attachments.map((file) => (
-                        <a
-                          key={file.id}
-                          href={`/api/attachments?id=${encodeURIComponent(file.id)}`}
-                          className="rounded border bg-background px-3 py-1 text-xs underline"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {file.name}
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <p className="mt-1.5 px-1 font-mono text-[11px] text-muted-foreground">
-                  {turn.worker
-                    ? `Picked up by ${turn.worker.name}${turn.worker.hostname && turn.worker.hostname !== turn.worker.name ? ` · ${turn.worker.hostname}` : ""}${movedFrom(turns, index) ? ` · moved from ${movedFrom(turns, index)}` : ""}`
-                    : isTerminal(turn.status)
-                      ? "No worker ran this message"
-                      : "Waiting for a worker to pick this up"}
-                </p>
-                <div className="px-0.5 pt-5">
-                  <Role className="text-primary">
-                    {selected?.provider ?? "agent"}
-                    <StatusBadge
-                      status={
-                        turn.status === "running" && turn.stopRequestedAt
-                          ? "stopping"
-                          : turn.status
-                      }
-                    />
-                    {!isTerminal(turn.status) && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={busy || !!turn.stopRequestedAt}
-                        onClick={() => stopTurn(turn.id)}
-                        className="h-6 px-2 text-xs normal-case tracking-normal"
-                      >
-                        <Square className="size-3" />{" "}
-                        {turn.stopRequestedAt ? "Stopping…" : "Stop"}
-                      </Button>
-                    )}
-                  </Role>
-                  {turn.output && (
-                    <MarkdownMessage>{turn.output}</MarkdownMessage>
-                  )}
-                  {!turn.output && !isTerminal(turn.status) && (
-                    <p className="flex items-center gap-3 text-muted-foreground">
-                      <span
-                        aria-hidden
-                        className="h-0.5 w-7 animate-pulse rounded bg-primary"
-                      />
-                      {turn.stopRequestedAt
-                        ? "Stopping the worker; preserving partial output…"
-                        : turn.status === "running"
-                          ? "Working…"
-                          : (turn.waitingReason ??
-                            "Waiting for an eligible worker…")}
-                    </p>
-                  )}
-                  <BrowserSteps
-                    steps={browserSteps.filter(
-                      (step) => step.turnId === turn.id,
-                    )}
-                    onWatch={() => setBrowserOpen(true)}
-                  />
-                  {turn.model && (
-                    <p className="mb-2 text-xs text-muted-foreground">
-                      {turn.model}
-                    </p>
-                  )}
-                  {turn.error && <ErrorNote>{turn.error}</ErrorNote>}
-                  {!!turn.publications?.length && (
-                    <div className="mt-4 flex flex-wrap items-center gap-1.5 text-xs text-success">
-                      Published to shared decisions
-                      {turn.publications.map((decision) => (
-                        <Badge
-                          key={`${decision.key}-${decision.revision}`}
-                          variant="outline"
-                          asChild
-                          className="font-mono font-normal"
-                        >
-                          <Link href="/knowledge">
-                            {decision.key} · r{decision.revision}
-                          </Link>
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </article>
-            ))}
-            {sessionId && (
-              <BrowserPanel
-                key={`${workspaceId}:${sessionId}`}
-                workspaceId={workspaceId}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {!(isPlanner && view === "workers") && (
+          <MessageIndex entries={turns.map(indexEntry)} scroller={scroller} />
+        )}
+        <div
+          ref={scroller}
+          // The browser's own scroll anchoring would shift a second time.
+          className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            pinned.current =
+              element.scrollHeight - element.scrollTop - element.clientHeight <
+              80;
+            setAtBottom(pinned.current);
+            if (element.scrollTop < 600) void loadOlder();
+          }}
+        >
+          <div className="mx-auto max-w-3xl px-6 py-8">
+            {isPlanner && view === "workers" && sessionId && (
+              <WorkersBoard
                 sessionId={sessionId}
-                open={browserOpen}
-                onOpenChange={setBrowserOpen}
-                onSteps={setBrowserSteps}
-                needsLogin={state.inputRequests?.some(
-                  (request) =>
-                    request.sessionId === sessionId &&
-                    request.kind === "browser-login",
-                )}
-              />
-            )}
-            {sessionId && !isPlanner && (
-              <DelegationsCard
-                sessionId={sessionId}
-                delegations={state.delegations ?? []}
+                delegations={given}
+                sessions={tree.sessions}
                 onChange={() => void refresh.current()}
               />
             )}
-            {state.schedules
-              ?.filter(
-                (schedule) =>
-                  schedule.sessionId === sessionId &&
-                  schedule.status === "draft",
-              )
-              .map((schedule) => (
-                <ScheduleCard
-                  key={`${schedule.id}:${schedule.revision}`}
-                  schedule={schedule}
-                  onChange={() => {
-                    void refresh.current();
-                    refreshTree();
-                  }}
-                />
-              ))}
-            {state.inputRequests
-              ?.filter(
-                (request) =>
-                  request.sessionId === sessionId &&
-                  request.kind === "browser-login",
-              )
-              .slice(0, 1)
-              .map((request) => (
-                <div
-                  key={request.id}
-                  className="my-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warning bg-warning/5 px-3 py-2 text-sm"
+            <div hidden={isPlanner && view === "workers"}>
+              {isPlanner && activeTasks > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setView("workers")}
+                  className="mb-6 flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-card px-4 py-2.5 text-left text-sm hover:bg-accent"
                 >
-                  <p className="min-w-0 flex-1">
-                    <span className="font-medium">Sign-in needed.</span>{" "}
-                    <span className="text-muted-foreground">
-                      {request.message}
-                    </span>
-                  </p>
-                  {!browserOpen && (
-                    <Button size="sm" onClick={() => setBrowserOpen(true)}>
-                      <Globe2 /> Sign in
-                    </Button>
+                  <span className="font-medium">Workers</span>
+                  {(["needs", "review", "working"] as const).map(
+                    (phase) =>
+                      !!phaseCounts[phase] && (
+                        <span key={phase} className="text-muted-foreground">
+                          {phaseCounts[phase]} {phaseLabel(phase)}
+                        </span>
+                      ),
                   )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() =>
-                      void perform(async () => {
-                        await post("browser", {
-                          action: "dismiss",
-                          workspaceId,
-                          sessionId,
-                        });
-                        setBrowserOpen(false);
-                        await refresh.current();
-                        refreshTree();
-                      })
-                    }
-                  >
-                    Dismiss
-                  </Button>
-                </div>
-              ))}
-            {state.inputRequests
-              ?.filter(
-                (request) =>
-                  request.sessionId === sessionId &&
-                  request.kind !== "browser-login",
-              )
-              .map((request) => (
-                <div
-                  key={request.id}
-                  className="my-4 rounded-lg border border-warning p-4"
-                >
-                  <p className="mb-3 text-sm text-warning">
-                    Needs your input: {request.message}
+                  <span className="ml-auto text-primary">Open board →</span>
+                </button>
+              )}
+              {!sessionId && (
+                <div className="animate-in fade-in slide-in-from-bottom-2 pt-[12vh] duration-500">
+                  <div className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+                    {workspace?.name ?? "Workspace"} · new session
+                  </div>
+                  <h1 className="mt-3 mb-4 font-serif text-5xl font-normal tracking-tight">
+                    What should we <em className="text-primary">work on</em>?
+                  </h1>
+                  {workspace?.instructions && (
+                    <p className="mb-4 whitespace-pre-wrap border-l-2 border-primary pl-4 font-serif text-lg italic text-foreground/75">
+                      {workspace.instructions}
+                    </p>
+                  )}
+                  <p className="text-muted-foreground">
+                    {workspaceId
+                      ? "Each session is its own conversation inside this workspace. Pick an agent, then send the first instruction."
+                      : "Create a workspace using the + button in the sidebar to get started."}
                   </p>
-                  {request.kind !== "browser-login" && (
-                    <form
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        const response = String(
-                          new FormData(event.currentTarget).get("response") ??
-                            "",
-                        );
-                        void perform(async () => {
-                          await post("inputs", { id: request.id, response });
-                          await refresh.current();
-                          refreshTree();
-                        });
-                      }}
-                    >
-                      <input
-                        name="response"
-                        aria-label="Answer the agent"
-                        required
-                        className="mb-2 w-full rounded border bg-background p-2 text-sm"
+                </div>
+              )}
+              {loading && <TurnPlaceholders count={3} />}
+              {sessionId && selected && !loading && !turns.length && (
+                <div className="pt-[12vh]">
+                  <h1 className="font-serif text-5xl font-normal tracking-tight">
+                    Ready when <em className="text-primary">you are</em>.
+                  </h1>
+                  <p className="mt-3 text-muted-foreground">
+                    Send the first instruction below.
+                  </p>
+                </div>
+              )}
+              {olderLoading && <TurnPlaceholders count={2} />}
+              {turns.map((turn, index) => (
+                <article
+                  key={turn.id}
+                  data-turn={turn.id}
+                  className="animate-in fade-in border-b py-7 first:pt-0 last:border-0"
+                >
+                  <div
+                    className={cn(
+                      "rounded-lg px-4 py-3",
+                      indexEntry(turn).mine
+                        ? "bg-primary/10 ring-1 ring-primary/25"
+                        : "bg-muted",
+                    )}
+                  >
+                    {turn.note ? (
+                      <>
+                        <Role className="flex-wrap normal-case tracking-normal">
+                          Note from <SessionLink session={turn.note.from} />
+                        </Role>
+                        <MarkdownMessage>{turn.prompt}</MarkdownMessage>
+                      </>
+                    ) : turn.id.startsWith("continue:") ? (
+                      <>
+                        <Role className="flex-wrap normal-case tracking-normal">
+                          Next step queued by the agent ·{" "}
+                          {turn.requiredLabels
+                            ? `needs ${turn.requiredLabels.split(",").join(", ")}`
+                            : "any machine"}
+                        </Role>
+                        {turn.placementReason && (
+                          <p className="mb-2 text-sm text-muted-foreground">
+                            Why: {turn.placementReason}
+                          </p>
+                        )}
+                        <MarkdownMessage>{turn.prompt}</MarkdownMessage>
+                      </>
+                    ) : turn.delegation ? (
+                      <>
+                        <Role className="flex-wrap normal-case tracking-normal">
+                          {turn.delegation.role === "report" ? (
+                            <>
+                              Report from{" "}
+                              <SessionLink session={turn.delegation.peer} />
+                              {turn.delegation.status && (
+                                <StatusBadge status={turn.delegation.status} />
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              {turn.delegation.role === "task"
+                                ? "Task from"
+                                : "Follow-up from"}{" "}
+                              <SessionLink session={turn.delegation.peer} />
+                              {turn.delegation.round > 1 &&
+                                ` · round ${turn.delegation.round}`}
+                            </>
+                          )}
+                        </Role>
+                        <MarkdownMessage>
+                          {turn.delegation.role === "report"
+                            ? turn.prompt.replace(/^[^\n]*\n+/, "")
+                            : turn.prompt}
+                        </MarkdownMessage>
+                      </>
+                    ) : (
+                      <>
+                        <Role>You</Role>
+                        <div className="whitespace-pre-wrap break-words">
+                          {turn.prompt}
+                        </div>
+                      </>
+                    )}
+                    {!!turn.attachments?.length && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {turn.attachments.map((file) => (
+                          <a
+                            key={file.id}
+                            href={`/api/attachments?id=${encodeURIComponent(file.id)}`}
+                            className="rounded border bg-background px-3 py-1 text-xs underline"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {file.name}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <p className="mt-1.5 px-1 font-mono text-[11px] text-muted-foreground">
+                    {turn.worker
+                      ? `Picked up by ${turn.worker.name}${turn.worker.hostname && turn.worker.hostname !== turn.worker.name ? ` · ${turn.worker.hostname}` : ""}${movedFrom(turns, index) ? ` · moved from ${movedFrom(turns, index)}` : ""}`
+                      : isTerminal(turn.status)
+                        ? "No worker ran this message"
+                        : "Waiting for a worker to pick this up"}
+                    <span title={turnTimesTitle(turn)}>{turnTimes(turn)}</span>
+                  </p>
+                  <div className="px-0.5 pt-5">
+                    <Role className="text-primary">
+                      {selected?.provider ?? "agent"}
+                      <StatusBadge
+                        status={
+                          turn.status === "running" && turn.stopRequestedAt
+                            ? "stopping"
+                            : // Its worker went quiet; the agent may still be working.
+                              turn.status === "running" &&
+                                (turn.leaseUntil ?? Infinity) < Date.now()
+                              ? "reconnecting"
+                              : turn.status
+                        }
                       />
-                      <div className="flex gap-2">
-                        <Button size="sm" disabled={busy}>
-                          Send answer
-                        </Button>
+                      {!isTerminal(turn.status) && (
                         <Button
                           type="button"
-                          size="sm"
                           variant="ghost"
-                          disabled={busy}
-                          title="Hide this question without sending anything"
-                          onClick={() =>
-                            void perform(async () => {
-                              await post(
-                                "inputs",
-                                { id: request.id },
-                                "DELETE",
-                              );
-                              await refresh.current();
-                              refreshTree();
-                            })
-                          }
+                          size="sm"
+                          disabled={busy || !!turn.stopRequestedAt}
+                          onClick={() => stopTurn(turn.id)}
+                          className="h-6 px-2 text-xs normal-case tracking-normal"
                         >
-                          Dismiss
+                          <Square className="size-3" />{" "}
+                          {turn.stopRequestedAt ? "Stopping…" : "Stop"}
                         </Button>
+                      )}
+                    </Role>
+                    {turn.output && (
+                      <MarkdownMessage>{turn.output}</MarkdownMessage>
+                    )}
+                    {!turn.output && !isTerminal(turn.status) && (
+                      <p className="flex items-center gap-3 text-muted-foreground">
+                        <span
+                          aria-hidden
+                          className="h-0.5 w-7 animate-pulse rounded bg-primary"
+                        />
+                        {turn.stopRequestedAt
+                          ? "Stopping the worker; preserving partial output…"
+                          : turn.status === "running"
+                            ? "Working…"
+                            : (turn.waitingReason ??
+                              "Waiting for an eligible worker…")}
+                      </p>
+                    )}
+                    <BrowserSteps
+                      steps={browserSteps.filter(
+                        (step) => step.turnId === turn.id,
+                      )}
+                      onWatch={() => setBrowserOpen(true)}
+                    />
+                    {turn.model && (
+                      <p className="mb-2 text-xs text-muted-foreground">
+                        {turn.model}
+                      </p>
+                    )}
+                    {turn.error && <ErrorNote>{turn.error}</ErrorNote>}
+                    {!!turn.publications?.length && (
+                      <div className="mt-4 flex flex-wrap items-center gap-1.5 text-xs text-success">
+                        Published to shared decisions
+                        {turn.publications.map((decision) => (
+                          <Badge
+                            key={`${decision.key}-${decision.revision}`}
+                            variant="outline"
+                            asChild
+                            className="font-mono font-normal"
+                          >
+                            <Link href="/knowledge">
+                              {decision.key} · r{decision.revision}
+                            </Link>
+                          </Badge>
+                        ))}
                       </div>
-                    </form>
-                  )}
-                </div>
+                    )}
+                  </div>
+                </article>
               ))}
+              {sessionId && (
+                <BrowserPanel
+                  key={`${workspaceId}:${sessionId}`}
+                  workspaceId={workspaceId}
+                  sessionId={sessionId}
+                  open={browserOpen}
+                  onOpenChange={setBrowserOpen}
+                  onSteps={setBrowserSteps}
+                  needsLogin={state.inputRequests?.some(
+                    (request) =>
+                      request.sessionId === sessionId &&
+                      request.kind === "browser-login",
+                  )}
+                />
+              )}
+              {sessionId && !isPlanner && (
+                <DelegationsCard
+                  sessionId={sessionId}
+                  delegations={state.delegations ?? []}
+                  onChange={() => void refresh.current()}
+                />
+              )}
+              {state.schedules
+                ?.filter(
+                  (schedule) =>
+                    schedule.sessionId === sessionId &&
+                    schedule.status === "draft",
+                )
+                .map((schedule) => (
+                  <ScheduleCard
+                    key={`${schedule.id}:${schedule.revision}`}
+                    schedule={schedule}
+                    onChange={() => {
+                      void refresh.current();
+                      refreshTree();
+                    }}
+                  />
+                ))}
+              {state.inputRequests
+                ?.filter(
+                  (request) =>
+                    request.sessionId === sessionId &&
+                    request.kind === "browser-login",
+                )
+                .slice(0, 1)
+                .map((request) => (
+                  <div
+                    key={request.id}
+                    className="my-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warning bg-warning/5 px-3 py-2 text-sm"
+                  >
+                    <p className="min-w-0 flex-1">
+                      <span className="font-medium">Sign-in needed.</span>{" "}
+                      <span className="text-muted-foreground">
+                        {request.message}
+                      </span>
+                    </p>
+                    {!browserOpen && (
+                      <Button size="sm" onClick={() => setBrowserOpen(true)}>
+                        <Globe2 /> Sign in
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() =>
+                        void perform(async () => {
+                          await post("browser", {
+                            action: "dismiss",
+                            workspaceId,
+                            sessionId,
+                          });
+                          setBrowserOpen(false);
+                          await refresh.current();
+                          refreshTree();
+                        })
+                      }
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                ))}
+              {state.inputRequests
+                ?.filter(
+                  (request) =>
+                    request.sessionId === sessionId &&
+                    request.kind !== "browser-login",
+                )
+                .map((request) => (
+                  <div
+                    key={request.id}
+                    className="my-4 rounded-lg border border-warning p-4"
+                  >
+                    <p className="mb-3 text-sm text-warning">
+                      Needs your input: {request.message}
+                    </p>
+                    {request.kind !== "browser-login" && (
+                      <form
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          const response = String(
+                            new FormData(event.currentTarget).get("response") ??
+                              "",
+                          );
+                          void perform(async () => {
+                            await post("inputs", { id: request.id, response });
+                            await refresh.current();
+                            refreshTree();
+                          });
+                        }}
+                      >
+                        <input
+                          name="response"
+                          aria-label="Answer the agent"
+                          required
+                          className="mb-2 w-full rounded border bg-background p-2 text-sm"
+                        />
+                        <div className="flex gap-2">
+                          <Button size="sm" disabled={busy}>
+                            Send answer
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            disabled={busy}
+                            title="Hide this question without sending anything"
+                            onClick={() =>
+                              void perform(async () => {
+                                await post(
+                                  "inputs",
+                                  { id: request.id },
+                                  "DELETE",
+                                );
+                                await refresh.current();
+                                refreshTree();
+                              })
+                            }
+                          >
+                            Dismiss
+                          </Button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+                ))}
+            </div>
           </div>
         </div>
       </div>
@@ -1291,6 +1310,66 @@ function Conversation() {
       </div>
     </section>
   );
+}
+/** Who sent a turn's message, for the message index. */
+function indexEntry(turn: State["turns"][number]): IndexEntry {
+  const sender = turn.note
+    ? `Note from ${turn.note.from?.title ?? "a deleted session"}`
+    : turn.id.startsWith("continue:")
+      ? "Next step queued by the agent"
+      : turn.delegation
+        ? `${{ report: "Report", task: "Task", reply: "Follow-up" }[turn.delegation.role]} from ${turn.delegation.peer?.title ?? "a deleted session"}`
+        : null;
+  const text =
+    turn.delegation?.role === "report"
+      ? turn.prompt.replace(/^[^\n]*\n+/, "")
+      : turn.prompt;
+  return {
+    id: turn.id,
+    mine: !sender,
+    label: sender ?? "You",
+    text: text.length > 400 ? `${text.slice(0, 400)}…` : text,
+  };
+}
+/** A time of day, with the date when it isn't the same day as `since`. */
+function clock(at: number, since = Date.now()) {
+  const sameDay =
+    new Date(at).toDateString() === new Date(since).toDateString();
+  return new Date(at).toLocaleString(undefined, {
+    ...(sameDay ? {} : { month: "short", day: "numeric" }),
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+function span(ms: number) {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+type TurnTimes = Pick<Turn, "createdAt" | "startedAt" | "finishedAt">;
+/** When a message was sent, picked up and finished, as the line under it shows them. */
+function turnTimes(turn: TurnTimes) {
+  const parts = [`sent ${clock(turn.createdAt)}`];
+  if (turn.startedAt)
+    parts.push(`started ${clock(turn.startedAt, turn.createdAt)}`);
+  // A turn that ran again after ending keeps its first end; hide it then.
+  if (turn.finishedAt && turn.finishedAt >= (turn.startedAt ?? 0))
+    parts.push(
+      `finished ${clock(turn.finishedAt, turn.startedAt ?? turn.createdAt)}${turn.startedAt ? ` (${span(turn.finishedAt - turn.startedAt)})` : ""}`,
+    );
+  return ` · ${parts.join(" · ")}`;
+}
+function turnTimesTitle(turn: TurnTimes) {
+  const full = (at: number) => new Date(at).toLocaleString();
+  return [
+    `Sent ${full(turn.createdAt)}`,
+    turn.startedAt && `Started ${full(turn.startedAt)}`,
+    turn.finishedAt && `Finished ${full(turn.finishedAt)}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 /** The machine the previous step ran on, when this step ran elsewhere. */
 function movedFrom(
