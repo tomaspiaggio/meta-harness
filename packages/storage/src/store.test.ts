@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { executeTurn } from "@harness/core";
-import { SqliteStore } from "./index";
+import { OUTAGE_GRACE_MS, SqliteStore } from "./index";
 
 async function setup() {
   const store = new SqliteStore(":memory:");
@@ -73,7 +73,20 @@ test("expired ownership rejects old writes and requires explicit continuation", 
     const claim = await store.claim("worker", Date.now(), 30000);
     assert.ok(claim);
     await store.appendOutput("one", claim.turn.generation, "partial result");
-    assert.equal(await store.recoverExpired(Date.now() + 60000), 1);
+    assert.equal(
+      await store.recoverExpired(Date.now() + 60000),
+      0,
+      "a worker out of contact keeps its turn through an outage",
+    );
+    assert.equal(
+      await store.heartbeat("one", claim.turn.generation, Date.now(), 30000),
+      true,
+      "and picks it back up",
+    );
+    assert.equal(
+      await store.recoverExpired(Date.now() + OUTAGE_GRACE_MS + 60000),
+      1,
+    );
     assert.equal((await store.getTurn("one")).status, "interrupted");
     assert.equal((await store.getTurn("one")).output, "partial result");
     await assert.rejects(

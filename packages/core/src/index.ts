@@ -62,6 +62,12 @@ export interface Turn {
   startedAt?: number | null;
   /** When the turn first ended. */
   finishedAt?: number | null;
+  /** When the agent was given this turn; until then a lost turn can be retried. */
+  launchedAt?: number | null;
+  /** Times this turn was retried after losing its worker before launching. */
+  retries?: number;
+  /** A retried turn waits until this time. */
+  notBefore?: number | null;
   createdAt: number;
 }
 export interface ClaimedTurn {

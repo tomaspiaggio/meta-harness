@@ -200,7 +200,8 @@ export async function POST(
         await store.readWorkerDecisions(workerId, turnId, generation),
       );
     if (action === "context") {
-      await store.assertAssignment(workerId, turnId, generation);
+      // Context is the last step before the agent starts.
+      await store.launchWorkerTurn(workerId, turnId, generation);
       const session = await store.getSession(
         (await store.getTurn(turnId)).sessionId,
       );

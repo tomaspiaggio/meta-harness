@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { WorkerReport } from "@harness/core/scheduling";
 import { ControlStore } from "./control";
+import { OUTAGE_GRACE_MS } from "./index";
 
 const report: WorkerReport = {
   hostname: "bench",
@@ -216,6 +217,11 @@ test("native agent interruptions never replay, and continuation prefers its orig
     const work = await task(store, "native", 0, "claude");
     const attempt = await store.claimForWorker(mac.id);
     assert.ok(attempt);
+    await store.launchWorkerTurn(
+      mac.id,
+      attempt.claim.turn.id,
+      attempt.claim.turn.generation,
+    );
     await store.applyWorkerEvent(
       mac.id,
       attempt.claim.turn.id,
@@ -224,6 +230,12 @@ test("native agent interruptions never replay, and continuation prefers its orig
       { type: "native-session", id: "claude-native" },
     );
     await store.recoverExpired(Date.now() + 240000);
+    assert.equal(
+      (await store.getTurn(attempt.claim.turn.id)).status,
+      "running",
+      "an outage shorter than an hour keeps the agent's turn",
+    );
+    await store.recoverExpired(Date.now() + OUTAGE_GRACE_MS + 240000);
     assert.equal(
       (await store.getTurn(attempt.claim.turn.id)).status,
       "interrupted",
@@ -246,6 +258,84 @@ test("native agent interruptions never replay, and continuation prefers its orig
       (await store.claimForWorker(mac.id))?.claim.turn.id,
       "follow-up",
     );
+  } finally {
+    await store.close();
+  }
+});
+test("a turn lost before its agent launched is retried later, one already launched never is", async () => {
+  const store = new ControlStore(":memory:");
+  try {
+    const mac = await enroll(store, "mac");
+    const work = await task(store, "lost", 0, "claude");
+    const start = Date.now();
+    const lost = await store.claimForWorker(mac.id, start);
+    assert.ok(lost);
+    const id = lost.claim.turn.id;
+    // The worker restarted and never ran it: its report no longer lists it.
+    await store.reportWorker(mac.id, { ...report, runningTurns: [] }, start);
+    assert.equal(
+      (await store.getTurn(id)).status,
+      "running",
+      "a turn still within its lease isn't judged by a report",
+    );
+    const later = start + 4 * 60000;
+    await store.reportWorker(mac.id, { ...report, runningTurns: [] }, later);
+    const queued = await store.getTurn(id);
+    assert.equal(queued.status, "queued");
+    assert.equal(
+      queued.notBefore,
+      later + 60000,
+      "the first retry waits a minute",
+    );
+    assert.equal(await store.claimForWorker(mac.id, later + 30000), null);
+    assert.match(
+      (await store.waitingReason(id, later + 30000)) ?? "",
+      /Retrying/,
+    );
+    // A worker is online while it keeps reporting.
+    const online = (at: number) =>
+      store.reportWorker(mac.id, { ...report, runningTurns: [] }, at);
+    await online(later + 60000);
+    const again = await store.claimForWorker(mac.id, later + 60000);
+    assert.equal(again?.claim.turn.id, id);
+    await store.recoverExpired(later + 60000 + 4 * 60000);
+    assert.equal(
+      (await store.getTurn(id)).notBefore,
+      later + 60000 + 4 * 60000 + 120000,
+      "then two minutes",
+    );
+    await online(later + 10 * 60000);
+    const third = await store.claimForWorker(mac.id, later + 10 * 60000);
+    assert.ok(third);
+    await store.launchWorkerTurn(mac.id, id, third.claim.turn.generation);
+    await store.reportWorker(
+      mac.id,
+      { ...report, runningTurns: [] },
+      later + 20 * 60000,
+    );
+    assert.equal(
+      (await store.getTurn(id)).status,
+      "interrupted",
+      "a launched agent may have acted, so it's never rerun",
+    );
+    assert.equal(work.sessionId, (await store.getTurn(id)).sessionId);
+  } finally {
+    await store.close();
+  }
+});
+test("stopping a turn whose worker is out of contact ends it at once", async () => {
+  const store = new ControlStore(":memory:");
+  try {
+    const mac = await enroll(store, "mac");
+    await task(store, "quiet", 0, "claude");
+    const start = Date.now();
+    const claim = await store.claimForWorker(mac.id, start);
+    assert.ok(claim);
+    const { id, generation } = claim.claim.turn;
+    await store.launchWorkerTurn(mac.id, id, generation);
+    await store.requestStop(id);
+    await store.recoverExpired(start + 4 * 60000);
+    assert.equal((await store.getTurn(id)).status, "interrupted");
   } finally {
     await store.close();
   }

@@ -808,7 +808,11 @@ function Conversation() {
                         status={
                           turn.status === "running" && turn.stopRequestedAt
                             ? "stopping"
-                            : turn.status
+                            : // Its worker went quiet; the agent may still be working.
+                              turn.status === "running" &&
+                                (turn.leaseUntil ?? Infinity) < Date.now()
+                              ? "reconnecting"
+                              : turn.status
                         }
                       />
                       {!isTerminal(turn.status) && (

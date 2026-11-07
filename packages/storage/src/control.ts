@@ -272,6 +272,21 @@ export class ControlStore extends SqliteStore {
       await this.db
         .prepare("UPDATE workers SET report = ?, seenAt = ? WHERE id = ?")
         .run(JSON.stringify(report), now, id);
+      // A worker back in contact without a turn it held has lost it (it
+      // restarted, or never got the claim); it can't be running that agent.
+      // Turns it still heartbeats keep their lease, so only quiet ones count.
+      if (report.runningTurns)
+        for (const row of await this.db
+          .prepare(
+            "SELECT id FROM turns WHERE workerId = ? AND status = 'running' AND leaseUntil <= ?",
+          )
+          .all(id, now))
+          if (!report.runningTurns.includes(String(row.id)))
+            await this.releaseTurn(
+              String(row.id),
+              now,
+              "Its worker no longer had this turn.",
+            );
       const update = await this.workerUpdate(id);
       if (!update || !updateActive(update)) return null;
       let next: WorkerUpdate = update;
@@ -692,6 +707,8 @@ export class ControlStore extends SqliteStore {
     if (turn.status !== "pending" && turn.status !== "queued") return null;
     if ((await this.taskForSession(turn.sessionId))?.paused)
       return "Task is paused";
+    if (turn.notBefore && turn.notBefore > now)
+      return `Retrying at ${new Date(turn.notBefore).toISOString()} after losing its worker`;
     if (turn.status === "pending") return "Waiting for workflow dispatch";
     const workers = await this.listWorkers();
     if (!workers.length) return "No workers enrolled";
@@ -812,11 +829,11 @@ export class ControlStore extends SqliteStore {
       if (!worker) throw new HarnessError("Worker not found.", 404);
       const candidates = (await this.db
         .prepare(`SELECT turns.* FROM turns LEFT JOIN tasks ON tasks.sessionId = turns.sessionId
-        WHERE turns.status = 'queued' AND NOT EXISTS (
+        WHERE turns.status = 'queued' AND (turns.notBefore IS NULL OR turns.notBefore <= ?) AND NOT EXISTS (
           SELECT 1 FROM turns AS prior WHERE prior.sessionId = turns.sessionId
           AND (prior.status = 'running' OR (prior.status IN ('pending', 'queued') AND prior.rowid < turns.rowid))
         ) ORDER BY COALESCE(tasks.priority, 0) DESC, turns.createdAt, turns.rowid LIMIT 100`)
-        .all()) as unknown as Turn[];
+        .all(now)) as unknown as Turn[];
       // The owner's messages and planners go before work between sessions.
       const background = await this.backgroundTurns(
         candidates.map((turn) => turn.id),
@@ -888,6 +905,26 @@ export class ControlStore extends SqliteStore {
     await this.requireOwnership(turnId, generation);
     if ((await this.getTurn(turnId)).workerId !== workerId)
       throw new HarnessError("This turn belongs to another worker.", 403);
+  }
+  /**
+   * The worker is about to give the turn to its agent. From here a lost turn
+   * is never retried, since the agent may have acted.
+   */
+  async launchWorkerTurn(
+    workerId: string,
+    turnId: string,
+    generation: number,
+  ): Promise<void> {
+    await this.transaction(async () => {
+      await this.requireWorkerOwnership(workerId, turnId, generation);
+      if ((await this.getTurn(turnId)).stopRequestedAt)
+        throw new HarnessError("This turn is stopping.", 409);
+      await this.db
+        .prepare(
+          "UPDATE turns SET launchedAt = COALESCE(launchedAt, ?) WHERE id = ? AND generation = ?",
+        )
+        .run(Date.now(), turnId, generation);
+    });
   }
   async heartbeatWorkerTurn(
     workerId: string,
