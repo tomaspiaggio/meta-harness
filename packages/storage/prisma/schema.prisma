@@ -211,6 +211,17 @@ model NativeWrites {
   @@map("native_writes")
 }
 
+model MaintenanceWindows {
+  id        String @id
+  startsAt  BigInt
+  endsAt    BigInt
+  workers   String @default("[]")
+  note      String @default("")
+  createdAt BigInt
+
+  @@map("maintenance_windows")
+}
+
 model ProviderCooldowns {
   workerId         String
   provider         String

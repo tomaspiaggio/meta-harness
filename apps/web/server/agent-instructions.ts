@@ -103,6 +103,35 @@ function sizing(machines?: MachineSizes): string {
   // server and browser running there.
   return `${here} Before a build, compile or simulation likely to need more than ${gib(machines.totalMemoryMiB / 4)} of memory, move it to ${larger.name} (${gib(larger.totalMemoryMiB)}): commit and push, then continue_on with labels ${JSON.stringify(larger.labels)}.`;
 }
+/** Planned downtime, with machine names; none named means every machine. */
+export interface MaintenanceNotice {
+  startsAt: number;
+  endsAt: number;
+  machines: string[];
+  note: string;
+}
+/** Said only while maintenance is planned: long work must not start into it. */
+function maintenance(windows: MaintenanceNotice[] = [], timezone = "UTC") {
+  if (!windows.length) return "";
+  const at = (time: number) =>
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(time);
+  const list = windows
+    .slice(0, 3)
+    .map(
+      (window) =>
+        `${at(window.startsAt)} to ${at(window.endsAt)} on ${window.machines.length ? window.machines.join(", ") : "all machines"}${window.note ? ` (${window.note})` : ""}`,
+    )
+    .join("; ");
+  return ` Scheduled maintenance: ${list}. Machines stop then, and anything running on them (agents, builds, validations, other processes) is cut off. Most work is unaffected. Only before starting something long (a validation, simulation, build, eval or other process that may run for hours), estimate whether it finishes before maintenance starts on the machines it uses. If it may not, don't start it: tell the owner why, then call continue_on with after_maintenance: true and a self-contained note of what to start, and end your turn; that step runs once maintenance ends. If the owner says to go ahead anyway, do.`;
+}
 /**
  * How to act on another machine. Without this an agent asked to update "the
  * Pi" reached for SSH credentials instead of moving its next step there.
@@ -128,9 +157,10 @@ export function agentInstructions(input: {
   unfinishedOperations: unknown[];
   timezone: string;
   machines?: MachineSizes;
+  maintenance?: MaintenanceNotice[];
   now?: Date;
 }): string {
   const { host, session, workspace } = input;
-  const harness = `You are running inside Meta Harness, the owner's self-hosted, distributed agent harness (the owner may call it "the harness" or "meta harness"). A control server at ${host.controlUrl} keeps workspaces, sessions (conversations), shared decisions, schedules and the owner's web UI, which they also use as a phone app. It dispatches each turn to one of the owner's worker machines (for example a Mac or a Raspberry Pi), each running Claude Code or Codex. This turn runs as ${session.provider} on worker host ${host.hostname}, in workspace ${JSON.stringify(workspace.name)}, session ${JSON.stringify(session.title)}. Turns of one conversation can run on different hosts: files, CLI logins, installed tools and browser sign-ins belong to the host they were made on. Each host's browser is shared live with the owner in the UI. Sessions in a workspace share its browser's logins, but each session acts in its own tab, so another session's navigation never moves your page.${folderContext(host, session, workspace)}${elsewhere(input.machines)}${sizing(input.machines)}`;
+  const harness = `You are running inside Meta Harness, the owner's self-hosted, distributed agent harness (the owner may call it "the harness" or "meta harness"). A control server at ${host.controlUrl} keeps workspaces, sessions (conversations), shared decisions, schedules and the owner's web UI, which they also use as a phone app. It dispatches each turn to one of the owner's worker machines (for example a Mac or a Raspberry Pi), each running Claude Code or Codex. This turn runs as ${session.provider} on worker host ${host.hostname}, in workspace ${JSON.stringify(workspace.name)}, session ${JSON.stringify(session.title)}. Turns of one conversation can run on different hosts: files, CLI logins, installed tools and browser sign-ins belong to the host they were made on. Each host's browser is shared live with the owner in the UI. Sessions in a workspace share its browser's logins, but each session acts in its own tab, so another session's navigation never moves your page.${folderContext(host, session, workspace)}${elsewhere(input.machines)}${sizing(input.machines)}${maintenance(input.maintenance, input.timezone)}`;
   return `${harness}\n${workspace.instructions}\n${decisionInstructions(input.knowledge, workspace.id)}\nCurrent time: ${(input.now ?? new Date()).toISOString()}. Unfinished operations from this session: ${JSON.stringify(input.unfinishedOperations)}. Reconcile these against current external state before repeating any mutation; never change an operation ID just to bypass an unknown outcome. Browser connection failures confirmed as not_started are reconciled as failed, not unknown, and may be explicitly retried with the same operation_id once Chrome is connected; they do not require the owner to clear platform state. The owner’s scheduling timezone is ${input.timezone}. Interpret natural-language dates in that timezone and include it in schedule proposals. Harness MCP tools are available for current shared decisions, schedule proposals, user questions, authorized browser work, and reading the owner's past conversations in any workspace (decision_source for the conversation behind a decision, session_read, history_search, workspace_list). When a decision or reference lacks context, read its source instead of asking the owner to paste it. The current conversation title is ${JSON.stringify(session.title)} (source: ${session.titleSource ?? "prompt"}). When it merely repeats the opening request, call session_title once near the start with a clear 2–5 word title of at most 45 characters describing the goal. Preserve manual titles. This uses the current turn, not another model request. For any requested schedule, call schedule_propose with the exact future prompt; it creates an inactive review card, not an active schedule. Use schedule_list to inspect existing schedules. A question requiring a person should use request_input, then finish the turn instead of keeping a process waiting. For spreadsheet CRM work, opening Google Sheets is not enough: use browser_action sheet_read to inspect bounded cell rows for the correct gid; use read accessibility and screenshots for other app details. Verify actual content before claiming success. Browser login happens in the UI's shared browser; never ask for credentials in chat. Use the browser host selected by the harness; it need not be the Mac. If that host is signed out, navigate to the page you actually need (its sign-in redirect is where the owner resumes), fill in what you already know such as the account email, and call browser_action needs_login, then finish the turn; the owner signs in (password, MFA) in the shared browser and replies with a new message when done. Reuse valid host-local logins. If no browser host is available, report the resource error rather than asking for passwords in chat. Do not ask the owner to enable remote debugging or approve repeated Chrome connections. A different host may require a new manual login; never assume it has another machine’s accounts. Existing Chrome credentials stay in Chrome; do not read or copy credential files.`;
 }

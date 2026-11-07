@@ -19,6 +19,7 @@ import {
   McpConnectionSettings,
   McpIntegrationSetup,
 } from "./McpIntegrationSetup";
+import { MaintenanceCard } from "./maintenance";
 import { NotificationsCard } from "./notifications";
 import { WorkersCard } from "./workers";
 export default function Page() {
@@ -231,6 +232,7 @@ function Settings() {
       </Card>
       <NotificationsCard onError={setError} />
       <WorkersCard api={api} onError={setError} />
+      <MaintenanceCard api={api} onError={setError} />
       <BackupsCard api={api} onError={setError} />
       <Card>
         <CardHeader>

@@ -208,6 +208,7 @@ export async function POST(
       const policy = await store.resourcePolicy(session.workspaceId);
       const unfinishedOperations = await store.unfinishedOperations(session.id);
       const host = parseHostFacts(body.host);
+      const workers = await store.listWorkers();
       return Response.json({
         ...(host
           ? {
@@ -224,7 +225,14 @@ export async function POST(
                 timezone: String(
                   (policy as { timezone?: unknown }).timezone ?? "UTC",
                 ),
-                machines: machineSizes(workerId, await store.listWorkers()),
+                machines: machineSizes(workerId, workers),
+                maintenance: (await store.listMaintenance()).map((window) => ({
+                  ...window,
+                  machines: window.workers.map(
+                    (id) =>
+                      workers.find((worker) => worker.id === id)?.name ?? id,
+                  ),
+                })),
               }),
             }
           : {}),

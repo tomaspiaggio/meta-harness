@@ -98,6 +98,15 @@ A lost turn is retried only when its agent never launched (the worker had not ye
 fetched its context), after 1, 2, 4… minutes, at most an hour apart; once launched,
 a lost turn is interrupted, never rerun, since the agent may have acted.
 
+The owner plans downtime as maintenance windows (Settings, or the `maintenance`
+tool when the owner asks). During a window its machines (or all of them) claim no
+new turns; queued messages wait and run when it ends, and running turns are not
+touched. While any window is planned, each turn's instructions name it, so an
+agent about to start long work (a day-long validation, say) that wouldn't finish
+first holds it: it tells the owner and calls `continue_on` with
+`after_maintenance`, queuing its next step until the window ends. A held step does
+not hold up later messages in its session.
+
 ## Persistence and portability
 
 `SqlDatabase` is an async, bound-parameter transaction port. SQLite remains an

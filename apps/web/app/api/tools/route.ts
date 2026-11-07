@@ -267,6 +267,11 @@ const tools = [
         },
         message: text,
         reason: text,
+        after_maintenance: {
+          type: "boolean",
+          description:
+            "Hold the step until the next scheduled maintenance ends, for long work that wouldn't finish before it starts",
+        },
       },
       required: ["labels", "message", "reason"],
     },
@@ -301,6 +306,23 @@ const tools = [
         },
         status: { type: "boolean" },
       },
+    },
+  },
+  {
+    name: "maintenance",
+    description:
+      "The owner's planned downtime of their machines. action list: upcoming and current windows. action schedule (only when the owner asks): starts_at and ends_at (ISO time with offset, or Unix ms), optional machines (names; none means every machine) and note. During a window its machines take no new work; messages wait and run when it ends. action end (only when the owner asks): cancels a window that hasn't started or ends one early.",
+    inputSchema: {
+      ...object,
+      properties: {
+        action: { type: "string", enum: ["list", "schedule", "end"] },
+        id: text,
+        starts_at: { type: ["string", "number"] },
+        ends_at: { type: ["string", "number"] },
+        machines: { type: "array", items: { type: "string" } },
+        note: text,
+      },
+      required: ["action"],
     },
   },
   {
@@ -633,13 +655,49 @@ export async function POST(request: Request) {
           labels: args.labels,
           message: requiredText(args.message, "Message", 20000),
           reason: requiredText(args.reason, "Reason", 500),
+          afterMaintenance: args.after_maintenance === true,
         });
         await flushDispatch();
         result = {
           queued_turn: next.id,
           labels: next.requiredLabels?.split(",") ?? [],
-          note: "Queued after this turn. End your turn now; the next step continues from your note.",
+          ...(next.notBefore
+            ? { starts_after: new Date(next.notBefore).toISOString() }
+            : {}),
+          note: next.notBefore
+            ? "Held until maintenance ends. Tell the owner, then end your turn; the next step continues from your note."
+            : "Queued after this turn. End your turn now; the next step continues from your note.",
         };
+      } else if (parameters?.name === "maintenance") {
+        const known = await store.listWorkers();
+        const iso = (window: {
+          id: string;
+          startsAt: number;
+          endsAt: number;
+          workers: string[];
+          note: string;
+        }) => ({
+          id: window.id,
+          starts_at: new Date(window.startsAt).toISOString(),
+          ends_at: new Date(window.endsAt).toISOString(),
+          machines: window.workers.map(
+            (id) => known.find((worker) => worker.id === id)?.name ?? id,
+          ),
+          note: window.note,
+        });
+        if (args.action === "schedule")
+          result = iso(
+            await store.scheduleMaintenance({
+              startsAt: args.starts_at,
+              endsAt: args.ends_at,
+              workers: args.machines,
+              note: args.note,
+            }),
+          );
+        else if (args.action === "end") {
+          await store.endMaintenance(requiredText(args.id, "ID", 100));
+          result = { ended: args.id };
+        } else result = (await store.listMaintenance()).map(iso);
       } else if (parameters?.name === "control_update") {
         result =
           args.status === true
