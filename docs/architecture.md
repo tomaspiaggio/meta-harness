@@ -400,6 +400,30 @@ in-harness form of the inter-harness message model (request, report, question,
 answer, with who decided what), without the permission filtering that a
 different owner's harness would need.
 
+### Goals on the home page
+
+Tasks are how a planner gets work done; the owner follows **goals**: the
+outcomes they asked for, as they would name them ("First circuit board"), a
+few per workspace. Each planner keeps its workspace's goals with `goal_list`
+and `goal_set` (planner sessions only). A goal is tracked by steps (questions
+or milestones, each `done` only once the planner accepted the result and with
+a one-sentence answer) or by targets (counts toward numbers the planner sets
+and changes). It carries why it exists, one line on what is happening now, an
+estimated finish only while a long run is going, and its status: active, next
+(with when it starts), done or dropped. Every update records one plain sentence
+in `goal_events` with the progress at that moment, plus any decisions and who
+made them; that history is the goal's timeline and the home page's past week.
+`session_send` and `request_input` take a `goal_id`, recorded in `goal_links`,
+so the page shows who works on a goal and which open questions belong to it.
+
+Everything a goal shows is for an owner without context, so control rejects
+text that contains internal references (IDs, commit hashes, PR and ticket
+numbers, decision keys, file paths) and asks the agent to say what the thing
+is instead. The home page lists, in order: what needs the owner (open
+questions and sign-ins, with their goal), active goals with a progress bar
+and the answers so far on hover, planned goals, the past week of goal
+history, then the daily briefs.
+
 ## Browser identity and optional capacity
 
 ### Agreed target: browser resources on any eligible worker

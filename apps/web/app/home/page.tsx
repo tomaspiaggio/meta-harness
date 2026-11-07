@@ -20,6 +20,7 @@ import {
   Shell,
 } from "../shell";
 import { BriefView } from "./brief-view";
+import { GoalPage, GoalsOverview } from "./goals";
 
 interface Overview {
   days: { day: string; count: number }[];
@@ -59,6 +60,7 @@ function Home() {
   const router = useRouter();
   const day = params.get("day");
   const briefId = params.get("brief");
+  const goalId = params.get("goal");
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -114,6 +116,7 @@ function Home() {
       setBusy(false);
     }
   };
+  if (goalId) return <GoalPage id={goalId} />;
   if (briefId)
     return (
       <Reader
@@ -131,9 +134,22 @@ function Home() {
   const shownDay = day ?? overview?.yesterday;
   return (
     <section className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6">
+      {!day && (
+        <>
+          <PageHeading
+            eyebrow={new Date().toLocaleDateString(undefined, {
+              weekday: "long",
+              month: "long",
+              day: "numeric",
+            })}
+            title="Home"
+          />
+          <GoalsOverview />
+        </>
+      )}
       <PageHeading
         eyebrow={day ? "Daily brief" : "Latest from each workspace"}
-        title={day ? dayLabel(day) : "Home"}
+        title={day ? dayLabel(day) : "Daily briefs"}
       >
         {overview && shownDay && (
           <Button

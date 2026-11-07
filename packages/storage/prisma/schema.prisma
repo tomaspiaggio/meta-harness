@@ -810,3 +810,49 @@ model GoogleOAuthStates {
  @@index([expiresAt],map:"google_oauth_expiry")
  @@map("google_oauth_states")
 }
+
+model Goals {
+  id          String  @id
+  workspaceId String
+  sessionId   String
+  title       String
+  summary     String
+  why         String
+  status      String
+  currently   String
+  etaAt       BigInt?
+  startsWhen  String
+  steps       String
+  targets     String
+  targetNote  String
+  createdAt   BigInt
+  updatedAt   BigInt
+  finishedAt  BigInt?
+
+  @@index([workspaceId, status], map: "goals_workspace")
+  @@map("goals")
+}
+
+model GoalEvents {
+  id     String @id
+  goalId String
+  kind   String
+  text   String
+  author String
+  done   Int
+  total  Int
+  at     BigInt
+
+  @@index([goalId, at], map: "goal_events_goal")
+  @@index([at], map: "goal_events_at")
+  @@map("goal_events")
+}
+
+model GoalLinks {
+  kind   String
+  refId  String
+  goalId String
+
+  @@id([kind, refId])
+  @@map("goal_links")
+}

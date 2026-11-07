@@ -53,6 +53,7 @@ import { ControlStore } from "./control";
 import { connectPostgres, LocalDatabase, type SqlDatabase } from "./database";
 import { deleteResource } from "./deletion";
 import { featureSchema } from "./features-schema";
+import { GoalStore } from "./goals";
 
 export interface ChannelBinding {
   sessionId: string;
@@ -233,6 +234,8 @@ const continuationOrigin = (turn: string, session: string) =>
 
 /** Application persistence shared by local and hosted control planes. */
 export class HarnessStore extends ControlStore {
+  /** What the owner asked for, kept by the planners for the home page. */
+  readonly goals = new GoalStore(this.db);
   databaseConnection(): SqlDatabase {
     return this.db;
   }
