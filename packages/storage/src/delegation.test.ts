@@ -260,7 +260,7 @@ test("workers coordinate with notes; a note that unblocks a task reports to the 
     await store.close();
   }
 });
-test("only the planner notifies the owner: workers, notes and report handling stay quiet", async () => {
+test("only the planner notifies the owner or counts as new: workers, notes and report handling stay quiet", async () => {
   const store = new HarnessStore(":memory:");
   await store.ready;
   try {
@@ -268,9 +268,12 @@ test("only the planner notifies the owner: workers, notes and report handling st
     const worker = await store.createSession("tech", "Worker", "codex");
     const quiet = (kind: string, referenceId: string) =>
       store.notificationIsQuiet({ kind, referenceId });
+    const unread = async (id: string) =>
+      (await store.getSession(id)).unreadCount;
     const plan = await store.submitMessage("plan", planner.id, "Plan");
     await finish(store, plan.id);
     assert.equal(await quiet("completed", plan.id), false, "owner's own turn");
+    assert.equal(await unread(planner.id), 1);
 
     const { turn: task } = await store.sendDelegation({
       turnId: "task:q",
@@ -282,13 +285,16 @@ test("only the planner notifies the owner: workers, notes and report handling st
     await finish(store, task.id);
     assert.equal(await quiet("completed", task.id), true, "worker task turn");
     assert.equal(await quiet("needs-input", "ask"), true, "worker question");
+    assert.equal(await unread(worker.id), 0);
 
     const report = await store.deliverDelegationReport(task.id);
     assert.ok(report);
     await finish(store, report.id);
     assert.equal(await quiet("completed", report.id), true, "routine report");
+    assert.equal(await unread(planner.id), 1);
     await store.addOwnerAlert(report.id, "All three tasks are done.");
     assert.equal(await quiet("completed", report.id), false, "notify_owner");
+    assert.equal(await unread(planner.id), 2);
     assert.equal(
       await store.ownerAlert(report.id),
       "All three tasks are done.",
@@ -301,9 +307,52 @@ test("only the planner notifies the owner: workers, notes and report handling st
       message: "FYI",
     });
     assert.equal(await quiet("completed", note.id), true, "note");
+    await finish(store, note.id);
+    assert.equal(await unread(worker.id), 0);
+    // The agent's own next step after a note is still not the owner's message.
+    const step = await store.continueOn({
+      turnId: "continue:note",
+      callerTurnId: note.id,
+      labels: [],
+      message: "Next step",
+      reason: "Needs the Mac",
+    });
+    await finish(store, step.id);
+    assert.equal(await quiet("completed", step.id), true, "continued note");
+    assert.equal(await unread(worker.id), 0);
+
+    // A scheduled run is routine unless it raises something with the owner.
+    const draft = await store.draftSchedule("checks", {
+      name: "Checks",
+      prompt: "Check the inbox",
+      sessionId: worker.id,
+      kind: "agent",
+      trigger: { type: "cron", expression: "* * * * *", timezone: "UTC" },
+    });
+    const active = await store.changeSchedule(
+      draft.id,
+      draft.revision,
+      "activate",
+    );
+    assert.ok(active.nextAt);
+    const run = await store.scheduledOccurrence(
+      active.id,
+      active.revision,
+      active.nextAt,
+      active.nextAt,
+    );
+    assert.ok(run?.turnId);
+    await finish(store, run.turnId);
+    assert.equal(await quiet("completed", run.turnId), true, "scheduled run");
+    assert.equal(await unread(worker.id), 0);
+    await store.addOwnerAlert(run.turnId, "Someone replied.");
+    assert.equal(await quiet("completed", run.turnId), false, "raised");
+    assert.equal(await unread(worker.id), 1);
     // The owner writing to a worker directly still hears back.
     const direct = await store.submitMessage("direct", worker.id, "Status?");
     assert.equal(await quiet("completed", direct.id), false, "owner to worker");
+    await finish(store, direct.id);
+    assert.equal(await unread(worker.id), 2);
     assert.equal(await quiet("title", worker.id), false);
   } finally {
     await store.close();

@@ -225,9 +225,13 @@ export class SqliteStore implements TurnStore {
     if (!row) throw new HarnessError("Session not found.", 404);
     return row as unknown as Session;
   }
+  /** SQL true for an attention row (aliased `attention`) the owner needn't see. */
+  protected quietAttention(): string {
+    return "0 = 1";
+  }
   private sessionProjection(): string {
     return `SELECT sessions.*,
-      (SELECT COUNT(*) FROM session_attention WHERE sessionId = sessions.id AND sequence > sessions.readThroughSequence) AS unreadCount,
+      (SELECT COUNT(*) FROM session_attention AS attention WHERE sessionId = sessions.id AND sequence > sessions.readThroughSequence AND NOT (${this.quietAttention()})) AS unreadCount,
       COALESCE((SELECT MAX(sequence) FROM session_attention WHERE sessionId = sessions.id), 0) AS attentionSequence,
       MAX(createdAt,
         COALESCE((SELECT MAX(createdAt) FROM turns WHERE sessionId = sessions.id), 0),
