@@ -81,7 +81,8 @@ export function MessageIndex({
   return (
     <nav
       aria-label="Messages"
-      className="absolute top-1/2 left-1 z-10 hidden max-h-[80%] -translate-y-1/2 flex-col overflow-y-auto py-1 [scrollbar-width:none] lg:flex"
+      // Phones get a narrower strip inside the page margin; tapping jumps.
+      className="absolute top-1/2 left-0 z-10 flex max-h-[80%] -translate-y-1/2 flex-col overflow-y-auto py-1 [scrollbar-width:none] lg:left-1"
     >
       {entries.map((entry) => {
         const active = entry.id === current;
@@ -94,13 +95,13 @@ export function MessageIndex({
                 aria-label={entry.label}
                 aria-current={active ? "location" : undefined}
                 onClick={() => jump(entry.id)}
-                className="group flex h-3 w-10 shrink-0 items-center px-2"
+                className="group flex h-3 w-5 shrink-0 items-center px-1 lg:w-10 lg:px-2"
               >
                 <span
                   className={cn(
                     "h-1 rounded-full transition-all group-hover:w-6",
                     entry.mine ? "bg-primary" : "bg-muted-foreground/45",
-                    active ? "w-6" : "w-3",
+                    active ? "w-3.5 lg:w-6" : "w-2 lg:w-3",
                   )}
                 />
               </button>
